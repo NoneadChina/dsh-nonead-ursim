@@ -269,6 +269,13 @@ test('★ 离线仿真目标不弹人工确认；真机 IP 与"没开仿真"的�
   assert.deepEqual(calls.map((c) => c.op), ['sim_start', 'movej'])
   assert.equal(calls[1].params.ip, '127.0.0.1')
 
+  // ③b 带首尾空白的回环地址：宿主必须**先归一化再判定**。旧写法是严格相等，于是 `" 127.0.0.1 "`
+  //     被判成"真机目标"去弹审批（approval=never 的会话里表现为"命令被拒"，极易误诊成 worker
+  //     故障），而 Python 侧却会 trim 后按仿真执行 —— 两侧口径不一致。
+  await registered.get('ursim_movej').execute({ ip: ' 127.0.0.1 ', q: [0, 0, 0, 0, 0, 0] }, exec)
+  assert.equal(approvalRequests.length, 1, '★ 带空白的回环地址同样不得弹人工确认')
+  assert.equal(calls.at(-1).params.ip, '127.0.0.1', 'ip 必须归一化（trim）后再下发')
+
   // ④ 同一时刻对**真机** IP 的运动指令：照旧必须弹（本例 outcome=denied ⇒ 被拒）
   await assert.rejects(
     () => registered.get('ursim_movej').execute({ ip: '192.168.1.77', q: [0, 0, 0, 0, 0, 0] }, exec),
@@ -276,7 +283,7 @@ test('★ 离线仿真目标不弹人工确认；真机 IP 与"没开仿真"的�
     '★ 真机 IP 的审批绝不能因为仿真开着而被跳过',
   )
   assert.equal(approvalRequests.length, 2, '真机那次必须恰好再问一次')
-  assert.equal(calls.length, 2, '被拒的真机指令不得下发')
+  assert.equal(calls.length, 3, '被拒的真机指令不得下发')
 
   // ⑤ 关掉仿真后，回环地址重新受门禁
   await registered.get('ursim_sim_stop').execute({}, exec)
@@ -285,6 +292,7 @@ test('★ 离线仿真目标不弹人工确认；真机 IP 与"没开仿真"的�
     /未获人工批准/,
     '仿真关掉后，回环地址必须重新受门禁',
   )
+  // 计数说明：① 与 ④、⑤ 共三次（① 未开仿真、④ 真机、⑤ 关掉仿真后）；②③③b 都不该问。
   assert.equal(approvalRequests.length, 3)
 })
 
@@ -504,5 +512,30 @@ test('声明层守卫：APPROVAL_OPS 里每个名字都必须是真实存在的 
       gated.has(b),
       `${a} 与 ${b} 副作用同类（都改变力/力矩测量基准），不得一个门禁一个不门禁`,
     )
+  }
+
+  // 3) 安全审计 H-1 补齐之后，这些"物理副作用家族"必须成组受门禁（回归线）：
+  //    `set_tcp` 与 `motion_version` 都改"此后每一次运动"的参考/规划；
+  //    工具法兰三件套改变同一对针脚的语义（TCI 打开还会禁用工具端模拟输入）；
+  //    写 I/O 的两个 op 能致动夹爪/传送带/焊机等外设；`set_conveyor_tick` 是
+  //    `conveyor_tracking` 的兄弟 op。
+  for (const [a, b] of [
+    ['set_tcp', 'motion_version'],
+    ['set_tool_voltage', 'set_tool_output_mode'],
+    ['set_tool_output_mode', 'tool_communication'],
+    ['set_digital_out', 'set_analog_out'],
+    ['set_conveyor_tick', 'conveyor_tracking'],
+  ]) {
+    assert.equal(
+      gated.has(a),
+      gated.has(b),
+      `${a} 与 ${b} 副作用同类（持久改变物理行为或致动外设），不得一个门禁一个不门禁`,
+    )
+  }
+  for (const op of [
+    'set_tcp', 'set_tool_output_mode', 'set_tool_voltage', 'tool_communication',
+    'set_digital_out', 'set_analog_out', 'set_conveyor_tick',
+  ]) {
+    assert.ok(gated.has(op), `${op} 会持久改变物理行为或致动外设，必须受人工审批`)
   }
 })

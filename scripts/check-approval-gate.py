@@ -33,6 +33,14 @@ MUST_BE_GATED = {
     # anything that re-zeros or re-defines the force/torque reference, or how motion is planned
     "zero_ftsensor", "set_payload", "set_payload_inertia", "set_gravity",
     "conveyor_tracking", "motion_version",
+    # security audit H-1 (2026-10-13): these persist a physical-behaviour change or actuate
+    # external equipment, and were reachable **without** approval before the fix:
+    #   set_tcp rewrites the reference frame of *every later* motion (sibling of motion_version);
+    #   tool-flange semantics / voltage / serial (enabling TCI disables the tool analog inputs);
+    #   digital & analog outputs drive grippers, conveyors, welders;
+    #   set_conveyor_tick is the sibling of the already-gated conveyor_tracking.
+    "set_tcp", "set_tool_output_mode", "set_tool_voltage", "tool_communication",
+    "set_digital_out", "set_analog_out", "set_conveyor_tick",
 }
 
 failures = []
