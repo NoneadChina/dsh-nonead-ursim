@@ -48,6 +48,18 @@ export const ARM_LINKS = [0.15, 0.12, 0.24, 0.21, 0.085, 0.092, 0.092]
 const cache = new Map()
 
 /**
+ * 正在加载中的型号：`id → Promise<entry>`（并发去重，见 `loadRobotModel`）。
+ * 加载结束（成功或失败）即删除该键。
+ */
+const pending = new Map()
+
+/**
+ * 缓存上限。内置型号只有 14 个，但**未知型号**（机器人报出一个我们没有资产的型号）也会被逐个
+ * 缓存，回退臂的几何体同样占显存 —— 所以上限必须存在。
+ */
+const MAX_CACHED_MODELS = 20
+
+/**
  * 缺省加载器：走 host 资产路由取 GLB（[Ruling 7] 插件静态路径只服务 client.js，GLB 必须走路由）。
  *
  * 复用**同一个** `GLTFLoader` 实例：它内部持有解析器注册表与纹理缓存，每次新建都等于把
@@ -210,6 +222,33 @@ export async function loadRobotModel(modelId, deps = {}) {
     return makeHandle(cached)
   }
 
+  // 并发去重：同一型号在**同一次 await 窗口**里被请求两次（换型号抖动、两个消费方同时挂载）时，
+  // 旧写法会各自发起一次 GLTFLoader.loadAsync、各自 assemble() 出一套 Group，只有后写的那份进缓存
+  // —— 先做的那套几何体在从未入场景的情况下就这么丢了：多下一次 1.5–3.5 MB，还漏一次释放。
+  // 这里第二次调用直接等同一份 promise。
+  const inFlight = pending.get(id)
+  const built = inFlight ?? buildEntry(id, deps)
+  if (inFlight === undefined) {
+    pending.set(id, built)
+    // 清理 in-flight 表（两个分支都吞掉自己的 promise；真正的失败由下面的 await 交给调用方）
+    built.then(() => pending.delete(id), () => pending.delete(id))
+  }
+  const entry = await built
+  entry.refs += 1
+  return makeHandle(entry)
+}
+
+/**
+ * 真正加载并装配一个型号（只应由 `loadRobotModel` 调用）。
+ *
+ * 返回条目的 `refs` **从 0 起算**：引用计数统一由调用方 `+1`，于是"缓存命中"与"并发去重"两条
+ * 路径共用同一套记账 —— 这也是旧写法在并发路径下配不平的原因（它把 refs 从 1 起算）。
+ *
+ * @param {string} id 小写型号 id
+ * @param {{loadGltf?: (url: string) => Promise<object>, armLinks?: number[]}} deps 注入点与回退长度
+ * @returns {Promise<object>} 装配条目
+ */
+async function buildEntry(id, deps) {
   const loadGltf = typeof deps.loadGltf === 'function' ? deps.loadGltf : defaultLoadGltf
   let root
   let usedFallback = false
@@ -229,7 +268,7 @@ export async function loadRobotModel(modelId, deps = {}) {
   /** @type {{id: string, refs: number, root: object, groups: object[], usedFallback: boolean, applyFK: Function}} */
   const entry = {
     id,
-    refs: 1, // 本次调用自己持有的那一份
+    refs: 0, // 由调用方 +1（见上面的说明）
     root,
     groups,
     usedFallback,
@@ -243,8 +282,20 @@ export async function loadRobotModel(modelId, deps = {}) {
     },
   }
 
-  cache.set(id, entry)
-  return makeHandle(entry)
+  rememberEntry(entry)
+  return entry
+}
+
+/** 入缓存并维持上限：超限时逐出**最早一个 `refs <= 0`** 的条目（正在用的绝不逐出）。 */
+function rememberEntry(entry) {
+  cache.set(entry.id, entry)
+  if (cache.size <= MAX_CACHED_MODELS) return
+  for (const [key, value] of cache) {
+    if (value === entry || value.refs > 0) continue
+    disposeObject3D(value.root)
+    cache.delete(key)
+    return
+  }
 }
 
 /**
@@ -306,14 +357,32 @@ function makeHandle(entry) {
   }
 }
 
-/** 递归释放 GPU 资源（几何体 + 材质及其贴图），再从父节点摘下。 */
+/**
+ * 材质上**可能由本模型拥有**的贴图槽位（three.js 的约定字段名）。
+ *
+ * 只释放这些槽位里的纹理 —— **绝不**遍历材质对象的每个属性去找 `dispose()`：
+ * 那样会把任何带 `dispose` 的字段一并释放，而 `envMap` 一旦被设置，指向的往往是**场景共享**的
+ * 环境贴图（PMREM）：释放它会让**全场 PBR 材质同时变黑**，而换型号正是走这条路径 —— 代价与收益
+ * 完全不成比例。所以 `envMap` 有意不在名单里：它属于场景，不属于模型。
+ */
+const OWNED_TEXTURE_SLOTS = [
+  'map', 'lightMap', 'aoMap', 'emissiveMap', 'bumpMap', 'normalMap', 'displacementMap',
+  'roughnessMap', 'metalnessMap', 'alphaMap',
+  'clearcoatMap', 'clearcoatNormalMap', 'clearcoatRoughnessMap',
+  'iridescenceMap', 'iridescenceThicknessMap',
+  'sheenColorMap', 'sheenRoughnessMap',
+  'specularMap', 'specularColorMap', 'specularIntensityMap',
+  'transmissionMap', 'thicknessMap', 'anisotropyMap', 'gradientMap',
+]
+
+/** 递归释放 GPU 资源（几何体 + 材质**自有**贴图），再从父节点摘下。 */
 export function disposeObject3D(obj) {
   obj?.traverse?.((n) => {
     n.geometry?.dispose?.()
     const mats = Array.isArray(n.material) ? n.material : n.material ? [n.material] : []
     for (const m of mats) {
-      for (const k of Object.keys(m)) m[k]?.dispose?.()
-      m.dispose?.()
+      for (const slot of OWNED_TEXTURE_SLOTS) m?.[slot]?.dispose?.()
+      m?.dispose?.()
     }
   })
   obj?.parent?.remove?.(obj)

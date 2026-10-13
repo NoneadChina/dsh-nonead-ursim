@@ -354,3 +354,64 @@ test('disposeObject3D：调用 geometry/material（含贴图）的 dispose 并�
   disposeObject3D(orphan)
   assert.equal(orphan.parent, null)
 })
+
+test('★ disposeObject3D 只释放材质**自有**的贴图槽位：绝不碰 envMap 与其它带 dispose 的字段', () => {
+  const disposed = []
+  const tex = (name) => ({ name, dispose: () => disposed.push(name) })
+  const material = {
+    map: tex('map'),
+    normalMap: tex('normalMap'),
+    // 场景共享的环境贴图（PMREM）：释放它会让**全场 PBR 材质同时变黑**，而换型号正走这条路径。
+    envMap: tex('envMap'),
+    // 非贴图槽位：旧写法遍历 Object.keys(material) 时会把任何带 dispose 的字段一并释放。
+    userData: { dispose: () => disposed.push('userData') },
+    dispose: () => disposed.push('material'),
+  }
+  const mesh = {
+    isMesh: true,
+    geometry: { dispose: () => disposed.push('geometry') },
+    material,
+  }
+  const root = { traverse: (fn) => fn(mesh), parent: { remove: () => {} } }
+
+  disposeObject3D(root)
+
+  assert.deepEqual(
+    disposed.slice().sort(),
+    ['geometry', 'map', 'material', 'normalMap'],
+    '只应释放 geometry、材质自有的贴图槽位与材质本身；envMap 与 userData 一律不动',
+  )
+})
+
+/* ------------------------------------------------------------------ *
+ * 用例 7：并发去重 —— 同一次 await 窗口里的两次请求只加载一份
+ * ------------------------------------------------------------------ */
+
+test('★ 并发去重：同型号两次并发调用只触发一次 loadGltf，且两个句柄共享同一份 root', async () => {
+  let calls = 0
+  let release
+  const gate = new Promise((resolve) => { release = resolve })
+  const loader = async () => {
+    calls += 1
+    await gate // 停在 await 里，制造"同一次 await 窗口"
+    return { scene: fakeGltfScene() }
+  }
+
+  const p1 = loadRobotModel('concurrent-dedupe', { loadGltf: loader })
+  const p2 = loadRobotModel('concurrent-dedupe', { loadGltf: loader })
+  release()
+  const [h1, h2] = await Promise.all([p1, p2])
+
+  assert.equal(calls, 1, '并发两次调用只能触发一次 loadGltf（旧写法会各自加载并丢弃一套几何体）')
+  assert.equal(h1.root, h2.root, '两个句柄必须共享同一份 root')
+
+  // 引用计数必须配平：两个句柄都释放后缓存清空 ⇒ 下一次加载重新拉取。
+  h1.dispose()
+  h2.dispose()
+  let again = 0
+  const h3 = await loadRobotModel('concurrent-dedupe', {
+    loadGltf: async () => { again += 1; return { scene: fakeGltfScene() } },
+  })
+  assert.equal(again, 1, '两个引用都释放后缓存必须已清空')
+  h3.dispose()
+})
