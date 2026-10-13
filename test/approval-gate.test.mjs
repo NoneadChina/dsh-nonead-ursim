@@ -98,6 +98,8 @@ async function harness({ config = {}, approvalOutcome = 'allowed-once', approval
       : {
           async request(req) {
             approvalRequests.push(req)
+            // 允许传函数：用于测试"审批进行中载荷被改动"这类时序场景（M-1）。
+            if (typeof approvalOutcome === 'function') return approvalOutcome(req)
             if (approvalOutcome instanceof Error) throw approvalOutcome
             return approvalOutcome
           },
@@ -150,6 +152,43 @@ test('受门禁的 op：批准前绝不下发；批准后才下发', async () =>
   assert.deepEqual(ok.calls.map((c) => c.op), ['movej'], '批准后必须下发到 worker')
   assert.equal(ok.approvalRequests.length, 1, '必须恰好请求一次人工确认')
   assert.equal(ok.approvalRequests[0].toolName, 'ursim_movej')
+})
+
+test('★ M-1：send_script 的审批理由必须给出全文规模与载荷指纹（不再只看前 240 字符）', async () => {
+  const script = 'def dance():\n  movej([0, 0, 0, 0, 0, 0], a=1.2, v=0.25)\n  sleep(0.05)\nend\n'
+  const { registered, calls, approvalRequests } = await harness({ approvalOutcome: 'allowed-once' })
+  await registered.get('ursim_send_script').execute({ ip: '1.2.3.4', script }, exec)
+
+  const reason = approvalRequests[0]?.reason ?? ''
+  assert.match(reason, /4 行/, `审批理由必须给出行数（编辑器口径），实测：${reason}`)
+  assert.match(reason, /字节/, `审批理由必须给出字节数，实测：${reason}`)
+  assert.match(reason, /载荷 [0-9a-f]{16}/, `审批理由必须给出载荷指纹，实测：${reason}`)
+  assert.ok(!reason.includes('sleep(0.05)') || reason.length < 400, '长脚本不得只靠截断示意')
+  assert.deepEqual(calls.map((c) => c.op), ['send_script'], '批准后照常下发')
+})
+
+test('★ M-1：审批通过后载荷若被改动，一律不得下发（载荷指纹绑定）', async () => {
+  // `sanitizeArgs()` 是浅拷贝 ⇒ 嵌套数组与调用方共享引用，审批窗口里**真的能**被改掉。
+  // 真机上把 `task_frame` 改一格，力控压向的方向就变了 —— 这正是这条绑定要拦的。
+  const taskFrame = [0, 0, 0, 0, 0, 0]
+  const args = {
+    ip: '1.2.3.4',
+    task_frame: taskFrame,
+    selection_vector: [0, 0, 1, 0, 0, 0],
+    wrench: [0, 0, -10, 0, 0, 0],
+  }
+  const { registered, calls } = await harness({
+    approvalOutcome: () => {
+      taskFrame[2] = 999 // 审批进行中偷改载荷
+      return 'allowed-once'
+    },
+  })
+  await assert.rejects(
+    () => registered.get('ursim_force_mode').execute(args, exec),
+    /载荷在审批期间发生了变化/,
+    '指纹不符必须拦住（否则等于批准了一个人没看过的载荷）',
+  )
+  assert.equal(calls.length, 0, '被改动的载荷绝不能到达 worker')
 })
 
 test('未受门禁的只读 op 不请求确认，且照常下发', async () => {
