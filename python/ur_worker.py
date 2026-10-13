@@ -1347,11 +1347,17 @@ def op_list_programs(p):
     import paramiko
     ip = str(p["ip"])
     username = p.get("username", "root")
-    password = p.get("password", "easybot")
+    # 不再内置默认口令：旧默认 root/easybot 是一个可被全网扫描到的弱凭据，把口令写在源码里
+    # 等于把它当"官方默认"传播。口令现在必须由调用方显式给出。
+    password = p.get("password")
+    if not isinstance(password, str) or password == "":
+        return err("SSH 需要显式提供 password：本插件不再内置任何默认口令（旧默认 root/easybot 已移除）。")
     programs_dir = _sanitize_path(p.get("programs_dir"), "programs_dir")
 
     ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    # RejectPolicy：未知主机密钥**直接拒绝**。旧写法 AutoAddPolicy 会无差别接受任何主机密钥，
+    # 那等于把这条 SSH 通道对中间人透明 —— 而这个 op 恰恰要在控制器上执行命令。
+    ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
     try:
         ssh.connect(hostname=ip, port=22, username=username, password=password,
                     timeout=8)
