@@ -5,7 +5,7 @@
 > **是否受人工审批门禁**、**仿真会怎么处理它** —— 这两件事以前是"沉默的默认值"，
 > H-1（七个带物理副作用的 op 免审批）就是这样溜过去的。
 
-共 **86** 个 op：受门禁 **47**、仿真实现 **40**、仿真透传 **6**、仿真明确不支持 **40**。
+共 **86** 个 op：受门禁 **47**、仿真实现 **45**、仿真透传 **6**、仿真明确不支持 **35**。
 
 | op | 工具 | 审批门禁 | 仿真 | 声明理由 |
 | --- | --- | --- | --- | --- |
@@ -30,20 +30,20 @@
 | `get_freedrive_status` | `ursim_get_freedrive_status` | 否 | unsupported |  |
 | `get_int_register` | `ursim_get_int_register` | 否 | simulated |  |
 | `get_joint_pose` | `ursim_get_joint_pose` | 否 | simulated |  |
-| `get_joint_temperatures` | `ursim_get_joint_temperatures` | 否 | unsupported |  |
+| `get_joint_temperatures` | `ursim_get_joint_temperatures` | 否 | simulated |  |
 | `get_program_state` | `ursim_get_program_state` | 否 | simulated |  |
-| `get_robot_current` | `ursim_get_robot_current` | 否 | unsupported |  |
+| `get_robot_current` | `ursim_get_robot_current` | 否 | simulated |  |
 | `get_robot_mode` | `ursim_get_robot_mode` | 否 | simulated |  |
 | `get_robot_model` | `ursim_get_robot_model` | 否 | simulated |  |
-| `get_robot_voltage` | `ursim_get_robot_voltage` | 否 | unsupported |  |
-| `get_runtime_telemetry` | `ursim_get_runtime_telemetry` | 否 | unsupported |  |
+| `get_robot_voltage` | `ursim_get_robot_voltage` | 否 | simulated |  |
+| `get_runtime_telemetry` | `ursim_get_runtime_telemetry` | 否 | simulated |  |
 | `get_safety_mode` | `ursim_get_safety_mode` | 否 | simulated |  |
 | `get_safety_status` | `ursim_get_safety_status` | 否 | unsupported |  |
 | `get_serial_number` | `ursim_get_serial_number` | 否 | simulated |  |
 | `get_software_version` | `ursim_get_software_version` | 否 | simulated |  |
 | `get_speed_scaling` | `ursim_get_speed_scaling` | 否 | simulated |  |
 | `get_target_values` | `ursim_get_target_values` | 否 | simulated |  |
-| `get_tcp_force` | `ursim_get_tcp_force` | 否 | unsupported |  |
+| `get_tcp_force` | `ursim_get_tcp_force` | 否 | simulated |  |
 | `get_tcp_pose` | `ursim_get_tcp_pose` | 否 | simulated |  |
 | `get_time` | `ursim_get_uptime` | 否 | simulated |  |
 | `get_tool_analog_in` | `ursim_get_tool_analog_in` | 否 | unsupported |  |

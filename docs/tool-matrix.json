@@ -87,7 +87,7 @@
     },
     "get_joint_temperatures": {
       "gated": false,
-      "sim": "unsupported"
+      "sim": "simulated"
     },
     "get_program_state": {
       "gated": false,
@@ -95,7 +95,7 @@
     },
     "get_robot_current": {
       "gated": false,
-      "sim": "unsupported"
+      "sim": "simulated"
     },
     "get_robot_mode": {
       "gated": false,
@@ -107,11 +107,11 @@
     },
     "get_robot_voltage": {
       "gated": false,
-      "sim": "unsupported"
+      "sim": "simulated"
     },
     "get_runtime_telemetry": {
       "gated": false,
-      "sim": "unsupported"
+      "sim": "simulated"
     },
     "get_safety_mode": {
       "gated": false,
@@ -139,7 +139,7 @@
     },
     "get_tcp_force": {
       "gated": false,
-      "sim": "unsupported"
+      "sim": "simulated"
     },
     "get_tcp_pose": {
       "gated": false,

@@ -314,14 +314,18 @@ def sim_capabilities():
         "io": ["ursim_set_digital_out", "ursim_get_digital_out_bits", "ursim_get_digital_in",
                "ursim_get_digital_in_bits", "ursim_set_analog_out", "ursim_get_analog_in",
                "ursim_get_int_register", "ursim_get_double_register", "ursim_get_bit_register"],
-        "not_simulated": ["力控（ursim_force_mode 系列）", "RTDE 遥测（温度/电流/电压/受力/加速度）",
+        "telemetry": ["ursim_get_runtime_telemetry", "ursim_get_robot_current",
+                      "ursim_get_robot_voltage", "ursim_get_joint_temperatures",
+                      "ursim_get_tcp_force"],
+        "not_simulated": ["力控（ursim_force_mode 系列）",
                           "安全状态位（ursim_get_safety_status）", "程序加载与执行（ursim_load_program / ursim_run_program）",
                           "原始脚本（ursim_send_script）", "传送带",
                           "电源/刹车/自由驱动/示教等机械状态变更"],
         "note": ("运动学级：只有正解/逆解与轨迹插值，没有动力学、没有安全功能、没有控制器。"
                  "速度与加速度只用来决定每段运动的时长（近似），不做 jerk 限幅。"
                  "I/O 与寄存器是**内存态**：输出可写可读回，输入没有信号源（恒 0），"
-                 "寄存器没有写入口（恒初值）。"),
+                 "寄存器没有写入口（恒初值）。遥测是**运动学估算**：由有限差分加量级模型推出，"
+                 "带 estimated 标记，不是 RTDE 测量。"),
     }
 
 
@@ -3764,8 +3768,22 @@ def _sim_get_speed_scaling(sim, p):
 
 def _sim_status(sim, p):
     data = sim.status()
+    # ⚠️ 孪生面板的遥测行读的是**这条 `status`**（见 lib/twin-routes.js 里 body.detail 的字段清单：
+    # robot_voltage / robot_current / joint_temperatures / joint_currents / tcp_force / tcp_speed），
+    # 不是 `get_runtime_telemetry`。所以估算值必须出现在这里 —— 否则"面板遥测行在仿真下是空的"
+    # 这件事根本没被修好（B1 的用户可见结果就在这一处）。
+    est = _sim_estimate(sim)
+    data.update({
+        "robot_voltage": _SIM_NOMINAL_VOLTAGE,
+        "robot_current": est["robot_current"],
+        "joint_temperatures": est["temps"],
+        "joint_currents": est["currents"],
+        "tcp_force": est["force"],
+        "tcp_speed": est["tcp_speed"],
+        "telemetry_estimated": True,
+    })
     return ok({"message": ("离线仿真状态：型号 %s，%s，速度倍率 %.2f。"
-                           "（运动学级：没有动力学/安全/程序/遥测）"
+                           "（运动学级：没有动力学/安全/程序；遥测列为**估算值**）"
                            % (data["robot_model"], "运动中" if data["running"] else "静止",
                               data["speed_scaling"])),
                "data": data})
@@ -4194,6 +4212,133 @@ def _sim_get_bit_register(sim, p):
                         "note": "本插件没有写寄存器的工具：仿真里它恒为初值 False。"}})
 
 
+# ---------------------------------------------------------------------------
+# 遥测的**运动学估算**（B1）
+#
+# 过去这一组 op 一律 `SIM_UNSUPPORTED`，于是孪生面板的遥测行在仿真下永远是空的。现在按**有限差分
+# + 量级模型**给出估算值：关节速度/加速度由相邻两次采样差分得到，力矩/电流/电压/温度/受力再由一个
+# 刻意粗的量级模型推出。
+#
+# ⚠️ 每一条返回值都带 `estimated: true` 与 `note`：这是**估算，不是测量**。没有控制器就没有 RTDE，
+# 没有动力学就没有真实力矩 —— 把估算值当测量值用会得出错误结论，所以标注是这套实现的一部分，
+# 不是可选的装饰。
+_SIM_TELEMETRY_NOTE = (
+    "由**运动学估算**，不是测量：本仿真没有控制器、没有动力学。关节速度/加速度来自相邻两次采样的"
+    "有限差分，电流/电压/力矩/温度/受力再按一个量级模型推出。可用于演示与回归，不可用于工程判断。")
+
+_SIM_AMBIENT_C = 28.0
+_SIM_NOMINAL_VOLTAGE = 48.0
+_SIM_TOOL_MASS_KG = 1.0  # 受力估算的名义负载
+_SIM_TORQUE_PER_ACC = (12.0, 12.0, 9.0, 5.0, 4.0, 3.0)  # N·m per rad/s²
+_SIM_AMPS_PER_TORQUE = (2.2, 2.2, 1.8, 1.2, 1.0, 0.8)  # A per N·m
+_SIM_RATED_SPEED = (3.14, 3.14, 3.14, 3.2, 3.2, 3.2)  # rad/s
+
+
+def _sim_telemetry_track(sim):
+    """每台仿真各持一份采样历史（速度/加速度/TCP 速度靠它做差分，温度靠它积分）。"""
+    track = getattr(sim, "_dsh_telemetry", None)
+    if track is None:
+        track = {"t": None, "q": None, "dq": None, "tcp": None, "tcp_speed": None,
+                 "temp": [_SIM_AMBIENT_C] * 6}
+        sim._dsh_telemetry = track
+    return track
+
+
+def _sim_estimate(sim):
+    """估出这一时刻的"遥测"：关节速度/加速度、TCP 速度/加速度、力矩/电流/电压、温度、受力。"""
+    now = time.monotonic()
+    q = [float(x) for x in sim.advance()]
+    tcp = [float(x) for x in _sim_pose(sim)]
+    track = _sim_telemetry_track(sim)
+
+    if track["t"] is None:
+        dt, dq, ddq, tcp_speed = 0.0, [0.0] * 6, [0.0] * 6, [0.0] * 6
+        tcp_acc = [0.0, 0.0, 0.0]
+    else:
+        dt = max(now - track["t"], 1e-3)
+        dq = [(q[i] - track["q"][i]) / dt for i in range(6)]
+        ddq = [(dq[i] - track["dq"][i]) / dt for i in range(6)]
+        tcp_speed = [(tcp[i] - track["tcp"][i]) / dt for i in range(6)]
+        tcp_acc = [(tcp_speed[i] - track["tcp_speed"][i]) / dt for i in range(3)]
+
+    # 力矩 = 惯性项 + 速度项 + 抵消自身重量的静差；电流/关节电压按量级换算。
+    torque = [abs(ddq[i]) * _SIM_TORQUE_PER_ACC[i]
+              + abs(dq[i]) / _SIM_RATED_SPEED[i] * 3.0 + 1.5 for i in range(6)]
+    current = [min(torque[i] * _SIM_AMPS_PER_TORQUE[i], 8.0) for i in range(6)]
+    voltage = [max(6.0, abs(dq[i]) * 22.0 + 4.0) for i in range(6)]
+
+    # 温度：向「环境 + 负载温升」一阶收敛（时间常数约 60 s —— 真机升温也是这个量级的慢过程）。
+    if dt > 0:
+        for i in range(6):
+            target = _SIM_AMBIENT_C + 22.0 * min(current[i] / 6.0, 1.0)
+            track["temp"][i] += (target - track["temp"][i]) * min(dt / 60.0, 1.0)
+
+    # TCP 受力：名义负载的惯性力 + 重力反力；力矩部分按 0 报（估算不出来，就不编）。
+    force = [_SIM_TOOL_MASS_KG * tcp_acc[i] for i in range(3)]
+    force[2] -= _SIM_TOOL_MASS_KG * 9.81
+
+    track.update({"t": now, "q": q, "dq": dq, "tcp": tcp, "tcp_speed": tcp_speed})
+    return {
+        "dq": dq,
+        "tcp_speed": tcp_speed,
+        "currents": current,
+        "voltages": voltage,
+        "temps": list(track["temp"]),
+        "force": force + [0.0, 0.0, 0.0],
+        "accel3": [tcp_acc[0], tcp_acc[1], tcp_acc[2] + 9.81],
+        "robot_current": round(sum(current) * 0.6 + 0.4, 3),
+        "momentum": round(sum(abs(x) for x in dq) * 0.35, 3),
+    }
+
+
+def _sim_get_runtime_telemetry(sim, p):
+    est = _sim_estimate(sim)
+    data = _sim_data(sim, {
+        "joint_currents": est["currents"],
+        "joint_voltages": est["voltages"],
+        "joint_speeds": est["dq"],
+        "tcp_speed": est["tcp_speed"],
+        "tcp_force": est["force"],
+        "tool_accelerometer": est["accel3"],
+        "speed_scaling": float(sim.status()["speed_scaling"]),
+        "momentum": est["momentum"],
+        "robot_voltage": _SIM_NOMINAL_VOLTAGE,
+        "robot_current": est["robot_current"],
+        "joint_temperatures": est["temps"],
+        "estimated": True,
+        "note": _SIM_TELEMETRY_NOTE,
+    })
+    return ok({"message": "实时遥测（**仿真估算**，非测量）", "data": data})
+
+
+def _sim_get_robot_current(sim, p):
+    est = _sim_estimate(sim)
+    return ok({"message": "%s（安培，仿真估算）" % est["robot_current"],
+               "data": _sim_data(sim, {"robot_current": est["robot_current"],
+                                       "estimated": True, "note": _SIM_TELEMETRY_NOTE})})
+
+
+def _sim_get_robot_voltage(sim, p):
+    _sim_estimate(sim)  # 推进采样历史，让相邻两次读数的估计保持一致
+    return ok({"message": "%s（伏特，仿真估算）" % _SIM_NOMINAL_VOLTAGE,
+               "data": _sim_data(sim, {"robot_voltage": _SIM_NOMINAL_VOLTAGE,
+                                       "estimated": True, "note": _SIM_TELEMETRY_NOTE})})
+
+
+def _sim_get_joint_temperatures(sim, p):
+    est = _sim_estimate(sim)
+    return ok({"message": "%s（摄氏度，仿真估算）" % [round(x, 2) for x in est["temps"]],
+               "data": _sim_data(sim, {"joint_temperatures": est["temps"],
+                                       "estimated": True, "note": _SIM_TELEMETRY_NOTE})})
+
+
+def _sim_get_tcp_force(sim, p):
+    est = _sim_estimate(sim)
+    return ok({"message": "TCP 受力（仿真估算）：%s" % [round(x, 3) for x in est["force"]],
+               "data": _sim_data(sim, {"tcp_force": est["force"], "estimated": True,
+                                       "note": _SIM_TELEMETRY_NOTE})})
+
+
 # op -> 处理函数（`sim_dispatch` 的唯一查找表）
 SIM_OPS = {
     "get_joint_pose": _sim_get_joint_pose,
@@ -4237,6 +4382,12 @@ SIM_OPS = {
     "get_int_register": _sim_get_int_register,
     "get_double_register": _sim_get_double_register,
     "get_bit_register": _sim_get_bit_register,
+    # B1：遥测的**运动学估算**（有限差分 + 量级模型；每条返回值都标注 estimated 与 note）
+    "get_runtime_telemetry": _sim_get_runtime_telemetry,
+    "get_robot_current": _sim_get_robot_current,
+    "get_robot_voltage": _sim_get_robot_voltage,
+    "get_joint_temperatures": _sim_get_joint_temperatures,
+    "get_tcp_force": _sim_get_tcp_force,
 }
 
 

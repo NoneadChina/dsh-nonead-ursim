@@ -76,9 +76,12 @@ out["auto_model"] = st.get("model_id")
 out["auto_tcp_z"] = round(st.get("tcp_pose", [0, 0, 0])[2], 4)
 
 # ③ 仿真无语义的指令：SIM_UNSUPPORTED，不落到真机实现
+#   ⚠️ 反例要挑**真的**没有仿真语义的 op：get_runtime_telemetry 自 B1 起有估算实现，
+#   再拿它当反例会拿到真数据（这正是契约变更的信号）。
+#   ⚠️⚠️ 本段是嵌在 JS 模板字符串里的 Python：注释里**绝不能出现反引号**（会截断模板串）。
 r = ur_worker.route_op("force_mode", {})
 out["force_mode_code"] = r.get("code") if isinstance(r, dict) else "?"
-r = ur_worker.route_op("get_runtime_telemetry", {})
+r = ur_worker.route_op("set_tool_voltage", {})
 out["telemetry_code"] = r.get("code") if isinstance(r, dict) else "?"
 
 # ④ connect = 确保仿真在跑；disconnect = 停仿真（幂等）
