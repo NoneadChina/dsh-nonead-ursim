@@ -825,6 +825,42 @@ test('非 GET 一律 405', () => {
   assert.equal(res.statusCode, 405);
 });
 
+test('★ H-3：同一 handler 的并发订阅有上限，超额订阅明确回 503（而不是让所有订阅一起饿死）', () => {
+  const handler = createTwinStreamHandler({
+    worker,
+    connectedIps: () => new Set(['1.2.3.4']),
+    intervalMs: 1000,
+    detailMs: 0,
+    maxClients: 2, // 便于测试；真实默认值是 4
+  });
+
+  const a = makeSseCapture();
+  const b = makeSseCapture();
+  const c = makeSseCapture();
+  const reqA = requestOf();
+  const reqB = requestOf();
+  const reqC = requestOf();
+  handler(reqA, a.res);
+  handler(reqB, b.res);
+  handler(reqC, c.res);
+
+  assert.equal(a.res.statusCode, 200);
+  assert.equal(b.res.statusCode, 200);
+  assert.equal(c.res.statusCode, 503, '第 3 路必须被明确拒绝');
+  assert.match(String(c.res.headers['content-type']), /application\/json/);
+  assert.equal(c.res.ended, true);
+
+  // 前面的订阅关闭后必须能再接受新的：计数是幂等的，不会漏减、也不会被减两次。
+  reqA.close();
+  reqB.close();
+  const d = makeSseCapture();
+  const reqD = requestOf();
+  handler(reqD, d.res);
+  assert.equal(d.res.statusCode, 200, '订阅关闭后计数必须回落');
+  reqC.close(); // 压根没被接受的那条：cleanup 不得把计数减第二次
+  reqD.close();
+});
+
 test('★ worker 被占住（机器人运动中）时**绝不静默**：改发 stale 事件', async () => {
   let blocked = true;
   const slowWorker = {
