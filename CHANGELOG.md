@@ -8,6 +8,37 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.1.6] - 2026-10-14
+
+### Added
+
+- **Simulated telemetry (roadmap B1).** Five ops that used to answer `SIM_UNSUPPORTED` now return
+  **estimated** values: `get_runtime_telemetry` (joint currents/voltages/speeds, TCP speed and force,
+  tool accelerometer, momentum, robot voltage/current, joint temperatures) plus the single-value
+  readers `get_robot_current`, `get_robot_voltage`, `get_joint_temperatures` and `get_tcp_force`.
+  - The estimate is **finite differences plus an order-of-magnitude model**: joint speeds and
+    accelerations come from two consecutive samples, torques/currents/voltages from those, the
+    temperatures settle towards `ambient + load` with a ~60 s time constant, and the TCP wrench is the
+    nominal payload's inertial + gravity reaction.
+  - **Every reply carries `estimated: true` and a `note`.** There is no controller and no dynamics
+    here, so a telemetry reading can only be an estimate — presenting it as a measurement would be the
+    one genuinely dangerous thing this feature could do.
+  - The same six fields (`robot_voltage`, `robot_current`, `joint_temperatures`, `joint_currents`,
+    `tcp_force`, `tcp_speed`) are now part of `ursim_get_status`, with `telemetry_estimated: true`.
+    That matters because **the twin panel's detail channel reads `status`, not
+    `get_runtime_telemetry`** (see `body.detail` in `lib/twin-routes.js`) — without this the row would
+    still be empty in simulation.
+- New test `test/sim-telemetry.test.mjs`: while a motion runs in a background thread, the main thread
+  samples the telemetry and asserts that speeds, currents and TCP speed are non-zero — the
+  user-visible "the panel's telemetry row has values" claim — plus the honesty labels and the `status`
+  fields.
+
+### Changed
+
+- `ursim_sim_status`'s capability list moved telemetry out of `not_simulated` into a new `telemetry`
+  key, and its note states that the values are estimated.
+- The READMEs no longer list RTDE telemetry among the things the simulation cannot do.
+
 ## [0.1.5] - 2026-10-14
 
 ### Added

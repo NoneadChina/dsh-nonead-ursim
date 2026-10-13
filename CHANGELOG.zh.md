@@ -6,6 +6,31 @@
 那份代码库的版本编号。此前那段历史已原样归档到 `CHANGELOG-archive.zh.md`；该文件在准备 0.1.1 时
 **已从本仓库移除**（可从导入源码的那个提交 `4c91704` 取回），并且从未进入过发布包。
 
+## [0.1.6] - 2026-10-14
+
+### 新增
+
+- **仿真的遥测（路线图 B1）。** 五个此前一律回报 `SIM_UNSUPPORTED` 的 op 现在返回**估算值**：
+  `get_runtime_telemetry`（关节电流/电压/速度、TCP 速度与受力、工具加速度计、动量、整机电压/电流、
+  关节温度），以及单值读口 `get_robot_current`、`get_robot_voltage`、`get_joint_temperatures`、
+  `get_tcp_force`。
+  - 估算方法＝**有限差分 + 量级模型**：关节速度/加速度来自相邻两次采样，力矩/电流/电压由它们推出，
+    温度以约 60 s 的时间常数向「环境 + 负载温升」收敛，TCP 受力取名义负载的惯性力加重力反力。
+  - **每一条返回值都带 `estimated: true` 与 `note`。** 这里没有控制器也没有动力学，遥测读数只可能是
+    估算 —— 把它当测量值呈现，才是这个功能唯一真正危险的做法。
+  - 同一组六个字段（`robot_voltage`、`robot_current`、`joint_temperatures`、`joint_currents`、
+    `tcp_force`、`tcp_speed`）现在也进了 `ursim_get_status`，并带 `telemetry_estimated: true`。这一条
+    是必要的：**孪生面板的 detail 通道读的是 `status`，不是 `get_runtime_telemetry`**（见
+    `lib/twin-routes.js` 的 `body.detail`）—— 不加这一步，那一行在仿真里仍然是空的。
+- 新增测试 `test/sim-telemetry.test.mjs`：运动在后台线程里跑，主线程采样遥测并断言速度、电流、TCP
+  速度都非零（这就是"面板遥测行有值"这条用户可见结论），同时断言诚实性标记与 `status` 里的字段。
+
+### 变更
+
+- `ursim_sim_status` 的能力清单把遥测从 `not_simulated` 移到新的 `telemetry` 键，并在 note 里写明这些
+  值是估算。
+- 两份 README 不再把 RTDE 遥测列为"仿真做不到"的事。
+
 ## [0.1.5] - 2026-10-14
 
 ### 新增
