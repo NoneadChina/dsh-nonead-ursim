@@ -85,6 +85,15 @@ registerHooks({
 /** 驱动真实的 apply()，捕获注册的 tool 定义与日志。 */
 async function collectTools() {
   const mod = await import('../lib/index.js')
+  /**
+   * `op ↔ toolName` 映射来自**声明面**（`lib/tool-defs.js` 的 `buildTools`）。
+   *
+   * 为什么需要它：`makeTool()` 注册出去的对象只有 `name`（= toolName），不带 op；而跨语言门禁
+   * `scripts/check-tool-params.py` 必须按 **op** 才能把 schema 与 Python 的 `HANDLERS` 对上。
+   * 让快照直接带上 op，那条门禁就不必再从 JS 源码里做文本解析 —— 这是 D2「schema 侧真解析」的前提。
+   */
+  const { buildTools } = await import('../lib/tool-defs.js')
+  const opByName = new Map(buildTools({}).map((t) => [t.toolName, t.op]))
   const registered = []
   const warnings = []
   const infos = []
@@ -96,7 +105,7 @@ async function collectTools() {
     tools: { register: (tool) => registered.push(tool) },
   }
   mod.apply(ctx, {})
-  return { mod, registered, warnings, infos }
+  return { mod, registered, warnings, infos, opByName }
 }
 
 /** 用给定的 tools 服务驱动 apply()，只关心它报告了什么。 */
@@ -367,10 +376,12 @@ function canonicalSchema(value) {
 
 const GOLDEN_PATH = fileURLToPath(new URL('../docs/tool-schemas.golden.json', import.meta.url))
 
-const snapshotOf = (registered) =>
+const snapshotOf = (registered, opByName) =>
   registered
     .map((t) => ({
       name: t.name,
+      // op 让快照成为**跨语言门禁的唯一真相源**（check-tool-params.py 按它对齐 Python 的 HANDLERS）。
+      op: opByName?.get(t.name) ?? null,
       description: String(t.description ?? ''),
       timeoutMs: Number.isFinite(t.timeoutMs) ? t.timeoutMs : null,
       parameters: canonicalSchema(t.parameters),
@@ -390,8 +401,8 @@ const snapshotOf = (registered) =>
  * 并把差异写进 CHANGELOG —— 让"改了什么"永远有人看过。
  */
 test('★ 工具注册面黄金快照：重构不得改变任何工具的名称、描述或参数 schema', async () => {
-  const { registered } = await collectTools()
-  const snapshot = snapshotOf(registered)
+  const { registered, opByName } = await collectTools()
+  const snapshot = snapshotOf(registered, opByName)
 
   if (process.env.URSIM_WRITE_GOLDEN === '1') {
     writeFileSync(GOLDEN_PATH, `${JSON.stringify(snapshot, null, 2)}\n`, 'utf8')
@@ -405,7 +416,7 @@ test('★ 工具注册面黄金快照：重构不得改变任何工具的名称�
     // 只报第一个差异的字段级 diff：86 个工具全量打印会把真正的线索淹掉。
     const first = drift[0]
     const before = byName.get(first.name)
-    const fields = ['description', 'timeoutMs', 'parameters']
+    const fields = ['op', 'description', 'timeoutMs', 'parameters']
     const detail = fields
       .filter((f) => JSON.stringify(before?.[f]) !== JSON.stringify(first[f]))
       .map((f) => `${f}: ${JSON.stringify(before?.[f])} → ${JSON.stringify(first[f])}`)

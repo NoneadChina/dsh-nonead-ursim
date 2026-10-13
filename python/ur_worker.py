@@ -2770,7 +2770,13 @@ def op_set_tool_output_mode(p):
     手册 Poly5 18.52 / PolyScope X 18.52：mode 1 表示数字输出针被用作**附加电源**。
     """
     ip = str(p["ip"])
-    mode = _bounded_int(p.get("mode", 1), "mode", 0, 1, "工具输出模式（0 普通 / 1 power）")
+    # ⚠️ 这里**不能有默认值**：mode 会改变工具法兰针脚的电平语义（1 = 双针被用作附加电源），
+    # 静默默认成 power 可能损坏接在上面的工具。schema 标了 required，实现就必须同样拒绝缺省 ——
+    # 这条一致性正是 `check-tool-params.py` 补上的（它过去只比参数名，不看必填与类型）。
+    if p.get("mode") is None:
+        raise WorkerError("BADARG", "必须显式指定 mode（0 = 普通数字输出 / 1 = power 双针供电）"
+                                    "—— 它改变工具法兰针脚的电平语义，不能有默认值")
+    mode = _bounded_int(p["mode"], "mode", 0, 1, "工具输出模式（0 普通 / 1 power）")
     robot, _ = ensure_connected(ip)
     cmd = "set_tool_output_mode(%d)" % mode
     if not _realtime_send(robot, cmd + "\n"):

@@ -1,6 +1,7 @@
 [
   {
     "name": "ursim_brake_release",
+    "op": "brake_release",
     "description": "释放指定机器人的刹车。⚠️ 释放后机械臂**可能在重力作用下掉落**：请先托住机械臂，并确认下方无人、无障碍物。",
     "timeoutMs": null,
     "parameters": {
@@ -12,6 +13,7 @@
   },
   {
     "name": "ursim_connect",
+    "op": "connect",
     "description": "确保**离线仿真**机器人就绪：仿真没开就按默认型号 UR12e（全零位、速度倍率 100%）自动开一台，并返回它的当前状态。本插件不存在真机，任何控制动作前都**不需要**先连真机；`ip` 可省略（唯一合法值是保留回环地址 127.0.0.1）。",
     "timeoutMs": null,
     "parameters": {
@@ -23,6 +25,7 @@
   },
   {
     "name": "ursim_disconnect",
+    "op": "disconnect",
     "description": "停止并释放**离线仿真**机器人（幂等）。本插件没有真机，\"断开\"的对应动作就是把这台虚拟机器人收掉；`ip` 可省略。",
     "timeoutMs": null,
     "parameters": {
@@ -34,6 +37,7 @@
   },
   {
     "name": "ursim_draw_circle",
+    "op": "draw_circle",
     "description": "让指定机器人以给定圆心与半径画一个圆。coordinate 为 \"z\"（竖直平面，与基座垂直）或其它（水平平面）。⚠️ 会驱动机械臂运动。",
     "timeoutMs": null,
     "parameters": {
@@ -60,12 +64,13 @@
       },
       "register": {
         "description": "用哪个 int 输出寄存器做「脚本是否被执行」的哨兵（0-23，默认 23）。该寄存器旧值会被覆盖；控制器未执行该脚本时会立刻报 NOT_EXECUTED，而不是干等到超时",
-        "type": "number"
+        "type": "integer"
       }
     }
   },
   {
     "name": "ursim_draw_rectangle",
+    "op": "draw_rectangle",
     "description": "让指定机器人以给定起点、宽和高画一个长方形。⚠️ 会驱动机械臂运动。",
     "timeoutMs": null,
     "parameters": {
@@ -99,6 +104,7 @@
   },
   {
     "name": "ursim_draw_square",
+    "op": "draw_square",
     "description": "让指定机器人以给定起点与边长画一个正方形。⚠️ 会驱动机械臂运动。",
     "timeoutMs": null,
     "parameters": {
@@ -127,6 +133,7 @@
   },
   {
     "name": "ursim_draw_star",
+    "op": "draw_star",
     "description": "让指定机器人以给定中心与边长画一个五角星（pentagram）。center 为其中心位姿；side 为每条边长度（米）。⚠️ 会驱动机械臂运动。",
     "timeoutMs": null,
     "parameters": {
@@ -155,6 +162,7 @@
   },
   {
     "name": "ursim_end_force_mode",
+    "op": "end_force_mode",
     "description": "退出指定机器人的**力控模式**（URScript `end_force_mode()`），恢复正常位置控制。程序停止时控制器也会自动退出力控，所以这个工具用于\"程序还在跑但想主动退力控\"的场合。",
     "timeoutMs": null,
     "parameters": {
@@ -166,6 +174,7 @@
   },
   {
     "name": "ursim_force_mode",
+    "op": "force_mode",
     "description": "让指定机器人进入**力控（Force Mode）**：机器人沿/绕你选的轴\"柔性\"贴合环境，并持续施加指定的力/力矩。参数严格按手册：task_frame（6 维位姿，力坐标系）、selection_vector（6 个 0/1，1=该轴柔性）、wrench（6 维期望力/力矩，对刚性轴表示\"抵消多大的外力\"）、type（1/2/3，力坐标系的变换方式）、limits（6 维：柔性轴=最大 TCP 速度，刚性轴=最大位置偏差）、可选 damping（0-1）与 gain_scaling（0-2）。⚠️ 力控会持续压向环境：务必确认工件/夹具能承受该力，并保持急停在手边。⚠️ 力控是**持续状态**：退出请调用 ursim_end_force_mode，或在示教器上停止程序。手册建议进入前先 sleep 0.02s 并避免沿柔性轴的快速运动（本工具已在脚本里插入了该 sleep）。",
     "timeoutMs": null,
     "parameters": {
@@ -217,6 +226,7 @@
   },
   {
     "name": "ursim_force_mode_settings",
+    "op": "force_mode_settings",
     "description": "设置力控的 damping（0-1）与 gain_scaling（0-2）。⚠️ 这两个值**控制器侧无法回读**：本工具只回报本次设置的值，不会假装读到了\"当前值\"；手册也要求它们在**进入力控之前**设置才生效。",
     "timeoutMs": null,
     "parameters": {
@@ -236,6 +246,7 @@
   },
   {
     "name": "ursim_get_analog_in",
+    "op": "get_analog_in",
     "description": "读取指定机器人的标准模拟输入值。",
     "timeoutMs": null,
     "parameters": {
@@ -252,6 +263,7 @@
   },
   {
     "name": "ursim_get_bit_register",
+    "op": "get_bit_register",
     "description": "读取指定机器人 Bool 寄存器（下标 0-63）的位。",
     "timeoutMs": null,
     "parameters": {
@@ -268,6 +280,7 @@
   },
   {
     "name": "ursim_get_conveyor",
+    "op": "get_conveyor",
     "description": "读取指定机器人的传送带 tick 计数。工具数字输入不经 RTDE，这里的 tick 也只能靠控制器执行一段 URScript 取回，所以本工具会**自证那段脚本真的被执行过**：先在 int 哨兵寄存器上写一个记号，再让脚本把 tick 写进 double 寄存器，并在首尾各写一个哨兵。三种结局分开报 —— 完整执行（给 tick 值）、执行到一半（不给值）、压根没执行（不给值并说明原因）。之所以必须如此：脚本被控制器**在加载期拒收**时一行都不会执行，也不会置\"程序执行错误\"标志，旧实现于是照样回读寄存器，把从没被写过的值当成 tick 报出去（历史上它长期静默返回 0）。⚠️ 该 int 与 double 寄存器的旧值会被覆盖。",
     "timeoutMs": null,
     "parameters": {
@@ -287,6 +300,7 @@
   },
   {
     "name": "ursim_get_digital_in",
+    "op": "get_digital_in",
     "description": "读取指定机器人某路数字输入。which 为 std(默认)/config/tool。注意：tool 端数字输入不经 RTDE，通过 URScript 读取（会发送一段短程序到机器人，可能打断正在运行的程序）。",
     "timeoutMs": null,
     "parameters": {
@@ -307,6 +321,7 @@
   },
   {
     "name": "ursim_get_digital_in_bits",
+    "op": "get_digital_input_bits",
     "description": "批量读取指定机器人的数字输入位（std 0-7 + config 8-15）。",
     "timeoutMs": null,
     "parameters": {
@@ -318,6 +333,7 @@
   },
   {
     "name": "ursim_get_digital_out_bits",
+    "op": "get_digital_output_bits",
     "description": "批量读取指定机器人的数字输出位（std 0-7 + config 8-15）。",
     "timeoutMs": null,
     "parameters": {
@@ -329,6 +345,7 @@
   },
   {
     "name": "ursim_get_double_register",
+    "op": "get_double_register",
     "description": "读取指定机器人 Double 寄存器（下标 0-23）的值。",
     "timeoutMs": null,
     "parameters": {
@@ -345,6 +362,7 @@
   },
   {
     "name": "ursim_get_freedrive_status",
+    "op": "get_freedrive_status",
     "description": "读取当前姿态在 **freedrive（手动拖动）** 下离**奇异点**有多远（PolyScope X 15.20）。返回 0 = 正常、1 = 接近奇异点、2 = 太接近（拖动阻力明显变大）。⚠️ 注意它**不是**\"freedrive 开没开\"的状态位，而是受限 freedrive 的可用性提示：手册建议据此让操作员换一条路径，或改用不受限的 freedrive。实现上需要控制器执行 URScript 表达式并把它写进一个输出寄存器（默认 21 号 int 寄存器，旧值会被覆盖）；较老的 PolyScope（早于引入该函数的版本）上读不到，会如实报失败并说明原因。",
     "timeoutMs": null,
     "parameters": {
@@ -360,6 +378,7 @@
   },
   {
     "name": "ursim_get_int_register",
+    "op": "get_int_register",
     "description": "读取指定机器人 Int 寄存器（下标 0-23）的值。",
     "timeoutMs": null,
     "parameters": {
@@ -376,6 +395,7 @@
   },
   {
     "name": "ursim_get_joint_pose",
+    "op": "get_joint_pose",
     "description": "读取指定机器人的当前六个关节角度（弧度）。",
     "timeoutMs": null,
     "parameters": {
@@ -387,6 +407,7 @@
   },
   {
     "name": "ursim_get_joint_temperatures",
+    "op": "get_joint_temperatures",
     "description": "读取指定机器人六个关节的温度（摄氏度）。",
     "timeoutMs": null,
     "parameters": {
@@ -398,6 +419,7 @@
   },
   {
     "name": "ursim_get_program_state",
+    "op": "get_program_state",
     "description": "读取指定机器人当前加载的程序及其执行状态。",
     "timeoutMs": null,
     "parameters": {
@@ -409,6 +431,7 @@
   },
   {
     "name": "ursim_get_robot_current",
+    "op": "get_robot_current",
     "description": "读取指定机器人的主电流（安培）。",
     "timeoutMs": null,
     "parameters": {
@@ -420,6 +443,7 @@
   },
   {
     "name": "ursim_get_robot_mode",
+    "op": "get_robot_mode",
     "description": "读取指定机器人的运行状态（robotmode）。",
     "timeoutMs": null,
     "parameters": {
@@ -431,6 +455,7 @@
   },
   {
     "name": "ursim_get_robot_model",
+    "op": "get_robot_model",
     "description": "读取指定机器人的型号，并附带是否处于远程控制模式（remote_control 字段）。",
     "timeoutMs": null,
     "parameters": {
@@ -442,6 +467,7 @@
   },
   {
     "name": "ursim_get_robot_voltage",
+    "op": "get_robot_voltage",
     "description": "读取指定机器人的主电压（伏特）。",
     "timeoutMs": null,
     "parameters": {
@@ -453,6 +479,7 @@
   },
   {
     "name": "ursim_get_runtime_telemetry",
+    "op": "get_runtime_telemetry",
     "description": "一次读取指定机器人的**实时遥测**：关节电流/电压/角速度、TCP 线速度与受力/力矩、工具加速度计、速度倍率、整机电压电流、关节温度。这些量本来就在 500 Hz 的 RTDE 数据流里、读取零代价且不需要改配置；适合判断\"是不是撞了/卡了\"（电流与力矩同时飙升）或\"是不是被速度倍率限住了\"。",
     "timeoutMs": null,
     "parameters": {
@@ -464,6 +491,7 @@
   },
   {
     "name": "ursim_get_safety_mode",
+    "op": "get_safety_mode",
     "description": "读取指定机器人的安全模式。",
     "timeoutMs": null,
     "parameters": {
@@ -475,6 +503,7 @@
   },
   {
     "name": "ursim_get_safety_status",
+    "op": "get_safety_status",
     "description": "读取安全/机器人**状态位**与安全模式：能指出是哪一类安全功能被触发（protective stop / safeguard / violation / fault / stopped_due_to_safety ...），是运动撞到安全限值后定位原因的首选工具。⚠️ 限值**数值**（力/力矩/功率/动量/速度等上限）不经 RTDE/dashboard 暴露，插件读不到——需在 PolyScope 的「设置 → 安全 → 安全限值」页对照（本工具会一并说明这一点）。",
     "timeoutMs": null,
     "parameters": {
@@ -486,6 +515,7 @@
   },
   {
     "name": "ursim_get_serial_number",
+    "op": "get_serial_number",
     "description": "读取指定机器人的序列号。",
     "timeoutMs": null,
     "parameters": {
@@ -497,6 +527,7 @@
   },
   {
     "name": "ursim_get_software_version",
+    "op": "get_software_version",
     "description": "读取指定机器人的 Polyscope 软件版本。",
     "timeoutMs": null,
     "parameters": {
@@ -508,6 +539,7 @@
   },
   {
     "name": "ursim_get_speed_scaling",
+    "op": "get_speed_scaling",
     "description": "读取指定机器人当前的速度倍率（0-1）。程序\"看起来在跑但很慢\"时，先看它是否被面板上的速度滑块压住了。",
     "timeoutMs": null,
     "parameters": {
@@ -519,6 +551,7 @@
   },
   {
     "name": "ursim_get_status",
+    "op": "status",
     "description": "一次性读取指定机器人当前的关键状态：TCP 位置、关节角度、型号、序列号、软件版本、安全模式、运行状态、程序状态、电压、电流、关节温度与开机时长。",
     "timeoutMs": null,
     "parameters": {
@@ -530,6 +563,7 @@
   },
   {
     "name": "ursim_get_target_values",
+    "op": "get_target_values",
     "description": "读取指定机器人\"**控制器打算去哪**\"：目标关节角/角速度/角加速度与目标 TCP 位姿/速度，并同时给出实际关节角与实际 TCP 位姿。与\"实际值\"的差值是判断\"指令已下发但尚未执行 / 正在交融 / 被安全限速拉住\"的直接依据。数据来自 RTDE 的 target_* 字段（已在接收配方里），读取零代价。",
     "timeoutMs": null,
     "parameters": {
@@ -541,6 +575,7 @@
   },
   {
     "name": "ursim_get_tcp_force",
+    "op": "get_tcp_force",
     "description": "读取指定机器人 TCP 处的受力与力矩 [Fx,Fy,Fz,Tx,Ty,Tz]（来自 RTDE），可用于碰撞/卡阻的辅助判断。",
     "timeoutMs": null,
     "parameters": {
@@ -552,6 +587,7 @@
   },
   {
     "name": "ursim_get_tcp_pose",
+    "op": "get_tcp_pose",
     "description": "读取指定机器人的当前 TCP（末端）位置，6 维向量 [x,y,z,rx,ry,rz]。",
     "timeoutMs": null,
     "parameters": {
@@ -563,6 +599,7 @@
   },
   {
     "name": "ursim_get_tool_analog_in",
+    "op": "get_tool_analog_in",
     "description": "读取指定机器人工具端的模拟输入（0/1）。工具模拟输入不经 RTDE，需发一段短 URScript 并把结果写进输出寄存器回读，**会打断正在运行的程序**；读不到的场合会如实报失败并说明可能原因（含可换 read_register 再试）。",
     "timeoutMs": null,
     "parameters": {
@@ -583,6 +620,7 @@
   },
   {
     "name": "ursim_get_tool_telemetry",
+    "op": "get_tool_telemetry",
     "description": "读取指定机器人工具端的**电气遥测**：工具输出电流（A）、工具输出电压（V）、I/O 电流（A）。来自 RTDE 数据流，读取零代价；可用于判断工具是否真的在上电/耗电（例如夹爪没动时电流为 0）。（手册里还有 get_tool_temp()，但当前 RTDE 配方不含对应字段，故本工具不提供该值。）",
     "timeoutMs": null,
     "parameters": {
@@ -594,6 +632,7 @@
   },
   {
     "name": "ursim_get_uptime",
+    "op": "get_time",
     "description": "读取指定机器人的开机时长（秒）。",
     "timeoutMs": null,
     "parameters": {
@@ -605,6 +644,7 @@
   },
   {
     "name": "ursim_list_programs",
+    "op": "list_programs",
     "description": "通过 SSH 读取机器人的 .urp 程序列表。优先扫描 /programs（真机默认）；若不存在则自动探测 ~/URSim_Linux-*/programs.*/*.urp（URSim）；也可用 programs_dir 覆盖。**必须显式提供 password**：本插件不再内置默认口令，且未知主机密钥会被直接拒绝。",
     "timeoutMs": null,
     "parameters": {
@@ -628,6 +668,7 @@
   },
   {
     "name": "ursim_load_program",
+    "op": "load_program",
     "description": "加载指定机器人的一个 UR 程序（.urp）。加载后需再用 run 启动。program_name 可传文件名或完整/URSim 路径，可用 programs_dir 拼接。",
     "timeoutMs": null,
     "parameters": {
@@ -648,6 +689,7 @@
   },
   {
     "name": "ursim_motion_version",
+    "op": "motion_version",
     "description": "设置 **Motion Version**（手册第 14 章）与/或 **jerk 增益**。Motion Version：版本 1 与旧版 PolyScope 的运动剖面相同；版本 2 在规划时把速度/加速度**钳到硬件上限**，交融半径重叠时**动态收缩**而不是跳过整段运动（版本 1 会跳过并给 \"Overlapping Blends\" 警告）。⚠️ 手册明确：**新机型与 PolyScope X 只支持版本 2**，CB3 没有这个设置。jerk_gain_scaling（0.01-1.0，默认 1.0）：只影响 **jerk 受限**的剖面，即版本 2 的 movej/movel 与 optimovej/optimovel（= 本插件的 ursim_move_optimized）；需要更平滑的运动就调小。⚠️ 这两个设置**都没有回读通道**，返回值只报告本次设置的值，不假装读到当前值。",
     "timeoutMs": null,
     "parameters": {
@@ -667,6 +709,7 @@
   },
   {
     "name": "ursim_move_optimized",
+    "op": "move_optimized",
     "description": "**OptiMove 平滑运动**（手册 Poly5 15.32/15.33、PolyScope X 15.31/15.32）：与 ursim_movej/ursim_movel 目标相同，但用 jerk 受限的速度剖面，运动更平顺、振动更小。⚠️ a/v 不是 rad/s 或 m/s，而是\"机器人能力的一个比例\"，范围 (0, 1]：1 = 该构型下能达到的最快。手册提示：a/v 的绝对速度取决于当时构型，因此同一组数值在不同工作区间的实际速度不同。goal_type=\"joints\" 时 goal 是六关节角（等价 optimovej）；\"pose\" 时 goal 是六维基座位姿（等价 optimovel）。手册支持的 struct{pose,frame} 与世界模型对象名**本工具不支持**（需要 PolyScope 侧对象，脚本写错只会得到运行期报错），传 frame 会被明确拒绝。⚠️ 会驱动机械臂运动，且请确认机器人当前静止。",
     "timeoutMs": null,
     "parameters": {
@@ -707,6 +750,7 @@
   },
   {
     "name": "ursim_move_tool_x",
+    "op": "move_tool_x",
     "description": "让指定机器人的 TCP 沿**工具坐标系** X 轴移动指定距离（直线）。与 ursim_move_x 的区别：那个是基座方向，这个是当前工具朝向的方向——工具斜着的时候两者完全不同。⚠️ 会驱动机械臂运动。",
     "timeoutMs": null,
     "parameters": {
@@ -723,6 +767,7 @@
   },
   {
     "name": "ursim_move_tool_y",
+    "op": "move_tool_y",
     "description": "让指定机器人的 TCP 沿**工具坐标系** Y 轴移动指定距离（直线）。与 ursim_move_y 的区别：那个是基座方向，这个是当前工具朝向的方向。⚠️ 会驱动机械臂运动。",
     "timeoutMs": null,
     "parameters": {
@@ -739,6 +784,7 @@
   },
   {
     "name": "ursim_move_tool_z",
+    "op": "move_tool_z",
     "description": "让指定机器人的 TCP 沿**工具坐标系** Z 轴移动指定距离（直线，工具 Z 正向通常是从法兰指向工具末端）。与 ursim_move_z 的区别：那个是基座方向，这个是当前工具朝向的方向。⚠️ 会驱动机械臂运动。",
     "timeoutMs": null,
     "parameters": {
@@ -755,6 +801,7 @@
   },
   {
     "name": "ursim_move_x",
+    "op": "move_x",
     "description": "让指定机器人的 TCP 沿基座 X 轴移动指定距离（直线）。⚠️ 会驱动机械臂运动。",
     "timeoutMs": null,
     "parameters": {
@@ -771,6 +818,7 @@
   },
   {
     "name": "ursim_move_y",
+    "op": "move_y",
     "description": "让指定机器人的 TCP 沿基座 Y 轴移动指定距离（直线）。⚠️ 会驱动机械臂运动。",
     "timeoutMs": null,
     "parameters": {
@@ -787,6 +835,7 @@
   },
   {
     "name": "ursim_move_z",
+    "op": "move_z",
     "description": "让指定机器人的 TCP 沿基座 Z 轴移动指定距离（直线）。⚠️ 会驱动机械臂运动。",
     "timeoutMs": null,
     "parameters": {
@@ -803,6 +852,7 @@
   },
   {
     "name": "ursim_movec",
+    "op": "movec",
     "description": "让指定机器人做圆弧运动（经 via 点到达 to 点）。⚠️ 会驱动机械臂运动。mode=0（默认）沿途插补姿态，mode=1 姿态相对圆弧切线保持不变（固定姿态圆弧）。",
     "timeoutMs": null,
     "parameters": {
@@ -846,6 +896,7 @@
   },
   {
     "name": "ursim_movej",
+    "op": "movej",
     "description": "让指定机器人的每个关节都转到指定弧度（关节空间运动）。q 为 6 个弧度。⚠️ 会驱动机械臂运动，请确保机器人可见且无人员/障碍物。",
     "timeoutMs": null,
     "parameters": {
@@ -881,6 +932,7 @@
   },
   {
     "name": "ursim_movel",
+    "op": "movel",
     "description": "让指定机器人的 TCP 直线移动到目标位置（笛卡尔空间直线运动）。pose 为 6 维 [x,y,z,rx,ry,rz]。⚠️ 会驱动机械臂运动，请确保机器人可见且无人员/障碍物。",
     "timeoutMs": null,
     "parameters": {
@@ -916,6 +968,7 @@
   },
   {
     "name": "ursim_movep",
+    "op": "movep",
     "description": "让指定机器人沿路径移动到目标位姿（带交融）。⚠️ 会驱动机械臂运动。",
     "timeoutMs": null,
     "parameters": {
@@ -947,6 +1000,7 @@
   },
   {
     "name": "ursim_pause_program",
+    "op": "pause_program",
     "description": "暂停指定机器人当前运行的程序。",
     "timeoutMs": null,
     "parameters": {
@@ -958,12 +1012,14 @@
   },
   {
     "name": "ursim_ping",
+    "op": "ping",
     "description": "健康检查：确认 UR 控制 worker 进程存活、Python 依赖与 vendored URBasic 就绪（无需连接机器人）。",
     "timeoutMs": null,
     "parameters": {}
   },
   {
     "name": "ursim_power_off",
+    "op": "power_off",
     "description": "给指定机器人下电。⚠️ 下电后机械臂**失去刚性支撑**，可能因重力下落——务必先托住或确认姿态安全。",
     "timeoutMs": null,
     "parameters": {
@@ -975,6 +1031,7 @@
   },
   {
     "name": "ursim_power_on",
+    "op": "power_on",
     "description": "给指定机器人上电（使能电机/抱闸）。⚠️ 上电后机械臂立即具备刚性，请确认当前姿态与周围环境安全。",
     "timeoutMs": null,
     "parameters": {
@@ -986,6 +1043,7 @@
   },
   {
     "name": "ursim_reset_error",
+    "op": "reset_error",
     "description": "复位指定机器人的错误并释放刹车（若需要则先上电）。⚠️ 复位后机械臂可能保持当前姿态，操作前确认安全。",
     "timeoutMs": null,
     "parameters": {
@@ -997,6 +1055,7 @@
   },
   {
     "name": "ursim_run_program",
+    "op": "run_program",
     "description": "运行指定机器人当前加载的程序；若提供 program_name 则先加载再运行。program_name 可传文件名或完整/URSim 路径，可用 programs_dir 拼接。⚠️ 会驱动机械臂运动。",
     "timeoutMs": null,
     "parameters": {
@@ -1016,6 +1075,7 @@
   },
   {
     "name": "ursim_send_script",
+    "op": "send_script",
     "description": "向指定机器人发送一段 URScript 脚本并执行（用于自定义动作、I/O、逻辑等）。⚠️ 本工具会**校验执行结果**：在「真正会被执行的那段代码」前后各注入一行哨兵写寄存器并回读——脚本含 `def … end` 时注入到**函数体内部**（第一句/最后一句，绝不拼到顶层，否则会把脚本变成「函数体不跑、顶层照跑」并报出假阳性）；纯语句脚本才用顶层注入。结论分三种：「已执行完毕」/「已开始执行但未在预算内结束」/「连起始哨兵都没观察到（控制器很可能根本没执行，最常见原因是未处于远程控制模式：本地/示教器模式下 URScript 会被静默丢弃）」。**不要仅凭「已发送」就认为动作生效**。⚠️ 会驱动机械臂运动。",
     "timeoutMs": null,
     "parameters": {
@@ -1025,7 +1085,7 @@
       },
       "register": {
         "description": "用哪个 int 输出寄存器做哨兵（0-23，默认 23）。注意该寄存器的旧值会被覆盖，脚本运行期间也不要把它当自己的数据寄存器用",
-        "type": "number"
+        "type": "integer"
       },
       "script": {
         "description": "URScript 脚本内容",
@@ -1041,6 +1101,7 @@
   },
   {
     "name": "ursim_servoj",
+    "op": "servoj",
     "description": "向指定机器人下发一个 servoj 连续流关节目标（在线控制单步，需在循环里持续下发以平滑跟踪）。⚠️ 会驱动机械臂运动。",
     "timeoutMs": null,
     "parameters": {
@@ -1072,6 +1133,7 @@
   },
   {
     "name": "ursim_set_analog_out",
+    "op": "set_analog_out",
     "description": "设置指定机器人的标准模拟输出值，**按工程单位**（默认伏特）收值：URScript 的 `set_analog_out(n, f)` 收的是相对电平 [0,1]，本工具按 `full_scale` 换算后下发，并把换算前后的值与回读值都返回，便于核对。⚠️ 端口是**电压域**时 `full_scale=10`（默认），是**电流域**时必须显式给 `full_scale=20`，否则 10 以上的工程值会被拒绝。",
     "timeoutMs": null,
     "parameters": {
@@ -1097,6 +1159,7 @@
   },
   {
     "name": "ursim_set_conveyor_tick",
+    "op": "set_conveyor_tick",
     "description": "设置指定机器人的传送带 tick 计数（及可选编码器分辨率）。",
     "timeoutMs": null,
     "parameters": {
@@ -1117,6 +1180,7 @@
   },
   {
     "name": "ursim_set_conveyor_tracking",
+    "op": "conveyor_tracking",
     "description": "**传送带跟踪**（按官方手册重写；旧版的每个实参都在错误的位置）。action：\"setup_pulse\"（把控制器脉冲解码器挂到编码器：需 decoder_type 1-4 + encoder_a/encoder_b 引脚）、\"setup_absolute\"（外部喂计数值：range_id 0-4，可选 tick_count）、\"linear\"（线性跟踪：需 direction 方向位姿 + ticks_per_meter）、\"circular\"（圆盘跟踪：需 center 圆心位姿 + ticks_per_revolution + 可选 rotate_tool）、\"stop\"（停止）。典型顺序：先 setup_pulse 或 setup_absolute 一次，再 linear/circular，结束时 stop。⚠️ 会改变运动学行为——开启后机械臂会跟随传送带运动，请先确认周围安全。⚠️ **未经真机验证**：签名与量纲已逐条对照手册，但跟踪行为需要真带编码器的传送带才能确认；返回值的 `hardware_verified` 恒为 false，请先在 URSim 上试。⚠️ 编码器引脚范围随固件不同：CB3(3.x) 是数字输入 0-3，e-Series / PolyScope X 是 8-11。",
     "timeoutMs": null,
     "parameters": {
@@ -1183,6 +1247,7 @@
   },
   {
     "name": "ursim_set_digital_out",
+    "op": "set_digital_out",
     "description": "设置指定机器人某路数字输出为高/低。⚠️ 会触发机器人 I/O。",
     "timeoutMs": null,
     "parameters": {
@@ -1208,6 +1273,7 @@
   },
   {
     "name": "ursim_set_freedrive",
+    "op": "set_freedrive",
     "description": "开启/关闭**自由驱动（freedrive）**：开启后可**用手直接拖动机械臂**（重力被补偿，拖起来有\"漂浮\"感）。⚠️ 会接管控制模式：开启期间运动指令不会执行；请确认机械臂周围无人、无夹伤风险，退出方式是在示教器/面板上停止程序（或调用本工具 enable=false）。",
     "timeoutMs": null,
     "parameters": {
@@ -1224,6 +1290,7 @@
   },
   {
     "name": "ursim_set_gravity",
+    "op": "set_gravity",
     "description": "设置指定机器人的**重力方向**（3 维向量，会先归一化）。只在机器人**非水平安装**（侧装/倒装）时才需要；⚠️ 设错会让重力补偿方向反掉（松手后下坠或上飘）。水平安装通常不需要改。",
     "timeoutMs": null,
     "parameters": {
@@ -1243,6 +1310,7 @@
   },
   {
     "name": "ursim_set_payload",
+    "op": "set_payload",
     "description": "设置指定机器人的负载质量（kg）与重心（cog，3 维）。",
     "timeoutMs": null,
     "parameters": {
@@ -1266,6 +1334,7 @@
   },
   {
     "name": "ursim_set_payload_inertia",
+    "op": "set_payload_inertia",
     "description": "一次性设置负载的**质量 + 重心 + 惯性矩阵**（PolyScope 5.10 起的 `set_target_payload`）。⚠️ 相比如今已被手册标为 deprecated 的 ursim_set_payload（它会把惯性矩阵**重置**），这个工具不会让质量/重心/惯量三者互相不一致；手册要求 Ixx/Iyy/Izz 非负、每个元素 |I|≤133 kg·m²。⚠️ 设置负载会**自动把力/力矩测量归零**（等效 zero_ftsensor），因此请在真正需要用力的场合之前设置。transition_time>0 可让负载切换时机器人不\"跳\"一下（抓/放重物有用）。CB3（URSoftware 3.x）没有 `set_target_payload`：**没给 inertia 时**会依次发 `set_payload_mass` + `set_payload_cog`（而不是 `set_payload(m, cog)`——后者会重置惯性矩阵），这两条在所有版本上都存在。",
     "timeoutMs": null,
     "parameters": {
@@ -1301,6 +1370,7 @@
   },
   {
     "name": "ursim_set_tcp",
+    "op": "set_tcp",
     "description": "设置指定机器人的 TCP（工具中心点），6 维位姿 [x,y,z,rx,ry,rz]。",
     "timeoutMs": null,
     "parameters": {
@@ -1320,6 +1390,7 @@
   },
   {
     "name": "ursim_set_teach_mode",
+    "op": "set_teach_mode",
     "description": "开启/关闭**示教模式（teach）**：与 freedrive 类似，用于手动示教路径点。⚠️ 同样会接管控制模式；enable=false 结束。",
     "timeoutMs": null,
     "parameters": {
@@ -1336,6 +1407,7 @@
   },
   {
     "name": "ursim_set_tool_communication",
+    "op": "tool_communication",
     "description": "开关指定机器人工具法兰的**串口通信接口（TCI, RS-485）**，用于夹爪/拧紧枪等工具免外接走线。参数对照手册 set_tool_communication(enabled, baud_rate, parity, stop_bits, rx_idle_chars, tx_idle_chars)。⚠️ 手册明确警告：**启用 TCI 会禁用工具端的模拟输入**（那两路被复用成串口）。",
     "timeoutMs": null,
     "parameters": {
@@ -1372,6 +1444,7 @@
   },
   {
     "name": "ursim_set_tool_output_mode",
+    "op": "set_tool_output_mode",
     "description": "设置指定机器人工具输出的模式：1 = power（双针供电模式，两路数字输出被用作附加电源）/ 0 = 普通数字输出。⚠️ 改这个会改变工具法兰上针脚的电平语义，接错可能损坏工具。",
     "timeoutMs": null,
     "parameters": {
@@ -1388,6 +1461,7 @@
   },
   {
     "name": "ursim_set_tool_voltage",
+    "op": "set_tool_voltage",
     "description": "设置指定机器人的工具电压（0V / 12V / 24V）。",
     "timeoutMs": null,
     "parameters": {
@@ -1404,6 +1478,7 @@
   },
   {
     "name": "ursim_shutdown",
+    "op": "shutdown",
     "description": "关闭指定机器人的控制器（相当于在面板上关机）。⚠️ 关闭后需人工到现场重新上电，请勿在程序运行中调用。",
     "timeoutMs": null,
     "parameters": {
@@ -1415,6 +1490,7 @@
   },
   {
     "name": "ursim_sim_start",
+    "op": "sim_start",
     "description": "开启**离线仿真**（运动学级）：在保留地址 127.0.0.1 上创建一台虚拟 UR 机器人，让数字仿真里的模型在没有真机的情况下被驱动。必须指定 model（内置型号之一，如 ur5e/ur10e/ur20）。开启后，所有 ursim_* 调用都要带 ip=\"127.0.0.1\"。仿真只实现**运动学**：运动类工具（movej/movel/movep/movec/servoj/move_x|y|z/move_tool_*/draw_*/move_optimized/wait_steady/stopj/stopl）与位姿读回；力控、RTDE 遥测、安全状态位、程序加载与执行、原始脚本、I/O、寄存器、传送带、电源与刹车等都没有仿真语义，会明确回报而不是假装执行。真机连接不受影响。",
     "timeoutMs": null,
     "parameters": {
@@ -1439,6 +1515,7 @@
   },
   {
     "name": "ursim_sim_status",
+    "op": "sim_status",
     "description": "读取**离线仿真**的当前状态：是否开启、型号、当前关节角、速度倍率，以及仿真支持/不支持的能力清单。无副作用，可随时调用。",
     "timeoutMs": null,
     "parameters": {
@@ -1450,6 +1527,7 @@
   },
   {
     "name": "ursim_sim_stop",
+    "op": "sim_stop",
     "description": "关闭**离线仿真**并释放虚拟机器人（幂等：本来没开也返回成功）。关闭后仿真会回到真机（若已连接）或显示未连接状态。",
     "timeoutMs": null,
     "parameters": {
@@ -1461,6 +1539,7 @@
   },
   {
     "name": "ursim_speedj",
+    "op": "speedj",
     "description": "**关节速度控制**：让指定机器人线性加速到给定的关节角速度并保持（URScript `speedj(qd, a, t)`）。⚠️ 这是速度指令、不是位置指令：机器人会一直以该速度转动，直到 ursim_stopj / 新的运动指令 / 安全停止。t>0 时函数在 t 秒后返回，t=0（默认）时在达到目标速度后返回——**两种情况机器人都还在动**。请用 ursim_wait_steady 或 ursim_stopj 收尾，并务必确认终点方向的行程足够。",
     "timeoutMs": null,
     "parameters": {
@@ -1488,6 +1567,7 @@
   },
   {
     "name": "ursim_speedl",
+    "op": "speedl",
     "description": "**TCP 速度控制**：让指定机器人线性加速到给定的 TCP 速度并保持（URScript `speedl(xd, a, t, aRot)`）。⚠️ 这是本插件\"放得最开\"的运动指令：它绕过位置轨迹规划，直接给笛卡尔速度；机器人会一直以该速度运动，直到 ursim_stopl / 新指令 / 安全停止。t=0（默认）表示达速后返回但**仍在运动**。aRot 省略时旋转加速度按 a 处理（=手册默认 `aRot='a'`）。",
     "timeoutMs": null,
     "parameters": {
@@ -1519,6 +1599,7 @@
   },
   {
     "name": "ursim_stop_program",
+    "op": "stop_program",
     "description": "停止指定机器人当前运行的程序。",
     "timeoutMs": null,
     "parameters": {
@@ -1530,6 +1611,7 @@
   },
   {
     "name": "ursim_stopj",
+    "op": "stopj",
     "description": "让指定机器人**关节空间减速到零**（URScript `stopj(a)`）。speedj 之后的标准收尾动作。",
     "timeoutMs": null,
     "parameters": {
@@ -1545,6 +1627,7 @@
   },
   {
     "name": "ursim_stopl",
+    "op": "stopl",
     "description": "让指定机器人**TCP 速度减速到零**（URScript `stopl(a, aRot)`）。speedl 之后的标准收尾动作。",
     "timeoutMs": null,
     "parameters": {
@@ -1564,6 +1647,7 @@
   },
   {
     "name": "ursim_unlock_protective_stop",
+    "op": "unlock_protective_stop",
     "description": "只解除指定机器人的**保护性停止**（并关闭安全弹窗），**不做上电、不释放刹车**。与 ursim_reset_error 的区别：那个会顺带上电 + 释放刹车（可能让机械臂动起来），这个只清安全状态。解除后会重新读取安全状态位并一并返回，便于确认结果。",
     "timeoutMs": null,
     "parameters": {
@@ -1575,6 +1659,7 @@
   },
   {
     "name": "ursim_wait_steady",
+    "op": "wait_steady",
     "description": "等待指定机器人**完全静止**后再返回（对应用户手册里的\"等待机器人静止\"语义）。实现方式是轮询 RTDE 里已有的 TCP 速度与关节角速度（零额外往返），**不是**发 URScript 的 is_steady()——那个表达式在力控/示教模式下恒为 false，反而会误导。适合在 speedj/speedl/力控之后确认\"确实停下来了\"。超时不会报错，而是如实回报 steady=false 与当时的实测速度。",
     "timeoutMs": null,
     "parameters": {
@@ -1598,6 +1683,7 @@
   },
   {
     "name": "ursim_zero_ftsensor",
+    "op": "zero_ftsensor",
     "description": "把指定机器人的力/力矩传感器读数归零。⚠️ 归零瞬间机械臂应处于\"不受外力\"的状态（否则零点会带偏），归零后受力读数的基准随之改变。",
     "timeoutMs": null,
     "parameters": {
