@@ -13,7 +13,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { TWIN_READ_TIMEOUT_MS, createTwinReadWorker } from '../lib/twin-worker.js';
+import { TWIN_READ_TIMEOUT_MS, TWIN_READ_MAX_IN_FLIGHT, createTwinReadWorker } from '../lib/twin-worker.js';
 import { WORKER_ERROR_CODES } from '../lib/worker.js';
 
 test('孪生读预算必须**远短于**默认命令预算（它每秒发约 20 次）', () => {
@@ -46,7 +46,18 @@ test('包装后的 call() 必须透传 op/params，并强制 killOnTimeout:false
   assert.deepEqual(params, { ip: '1.2.3.4' });
   assert.equal(timeoutMs, TWIN_READ_TIMEOUT_MS, '★ 必须用孪生自己的短预算');
   assert.equal(signal, undefined, '孪生读不受工具调用的取消信号牵连');
-  assert.deepEqual(options, { killOnTimeout: false }, '★ 超时绝不能杀掉持有机器人会话的子进程');
+  // H-3：孪生读必须同时声明自己的**读类闸门**。否则 N 路 SSE 订阅各有一次在飞读，8 路就能把
+  // worker 的在飞槽位占满，而准入是"总数 ≥ 上限即 BUSY" —— 命令类（含 stopj/stopl 这类停止
+  // 指令）会在宿主侧被拒，连队列都进不去。
+  assert.deepEqual(
+    options,
+    { killOnTimeout: false, class: 'twin-read', classMaxInFlight: TWIN_READ_MAX_IN_FLIGHT },
+    '★ 超时不得杀子进程；且读类必须自带上限，给命令类留槽位',
+  );
+  assert.ok(
+    TWIN_READ_MAX_IN_FLIGHT < 8,
+    '读类上限必须小于 worker 的在飞上限，否则等于没有保留槽位',
+  );
 });
 
 test('没有可用 worker 时返回 null（路由据此回 worker_unavailable，而不是抛错）', () => {

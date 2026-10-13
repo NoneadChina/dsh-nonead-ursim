@@ -152,6 +152,37 @@ test('★ 失败的 spawn 不占代次：respawnCount 只统计真正起来的�
   }
 })
 
+test('★ 分闸准入（H-3）：读类占满自己那道闸门后，命令类仍能被接纳', async () => {
+  const fixture = fakeWorkerFixture()
+  try {
+    const worker = fixture.worker()
+    const readOpts = { class: 'twin-read', classMaxInFlight: 3 }
+
+    // 三路读先进队列（`hang` 不回包，所以它们会一直占着槽位）。
+    const reads = [0, 1, 2].map(() => worker.call('hang', {}, 30000, undefined, readOpts))
+    await new Promise((r) => setTimeout(r, 250))
+    assert.equal(worker.stats().pending, 3, '三路读应当都在飞')
+
+    // 第 4 路读被**自己那道闸门**拒掉：注意总闸门（默认 8）此时并没满，所以这不是总闸门报的错。
+    await assert.rejects(
+      () => worker.call('hang', {}, 30000, undefined, readOpts),
+      /twin-read 类请求已达上限/,
+      '读类必须受自己的上限约束',
+    )
+
+    // 命令类（不传 class）照常入队 —— 旧写法在 8 路读把总闸占满时，这里会被 BUSY 直接拒掉，
+    // 于是一台真机正在运动、用户想让它停的那一刻，停止指令根本到不了 worker。
+    const stop = worker.call('stopj', { a: 2 })
+    stop.catch(() => {}) // 子进程被 dispose 时会 reject；这里只关心"是否被接纳"
+    await new Promise((r) => setTimeout(r, 250))
+    assert.equal(worker.stats().pending, 4, '命令类必须被接纳（3 路读 + 1 条命令）')
+
+    for (const p of reads) p.catch(() => {})
+  } finally {
+    fixture.cleanup()
+  }
+})
+
 test('★ 超时 kill 时，同孩子的其它在飞请求必须拿到带 stderr 的 KILLED 原因', async () => {
   const fixture = fakeWorkerFixture()
   try {
