@@ -5,7 +5,7 @@
 > **是否受人工审批门禁**、**仿真会怎么处理它** —— 这两件事以前是"沉默的默认值"，
 > H-1（七个带物理副作用的 op 免审批）就是这样溜过去的。
 
-共 **86** 个 op：受门禁 **47**、仿真实现 **31**、仿真透传 **6**、仿真明确不支持 **49**。
+共 **86** 个 op：受门禁 **47**、仿真实现 **40**、仿真透传 **6**、仿真明确不支持 **40**。
 
 | op | 工具 | 审批门禁 | 仿真 | 声明理由 |
 | --- | --- | --- | --- | --- |
@@ -20,15 +20,15 @@
 | `end_force_mode` | `ursim_end_force_mode` | **是** | unsupported |  |
 | `force_mode` | `ursim_force_mode` | **是** | unsupported |  |
 | `force_mode_settings` | `ursim_force_mode_settings` | **是** | unsupported |  |
-| `get_analog_in` | `ursim_get_analog_in` | 否 | unsupported |  |
-| `get_bit_register` | `ursim_get_bit_register` | 否 | unsupported |  |
+| `get_analog_in` | `ursim_get_analog_in` | 否 | simulated |  |
+| `get_bit_register` | `ursim_get_bit_register` | 否 | simulated |  |
 | `get_conveyor` | `ursim_get_conveyor` | 否 | unsupported |  |
-| `get_digital_in` | `ursim_get_digital_in` | 否 | unsupported |  |
-| `get_digital_input_bits` | `ursim_get_digital_in_bits` | 否 | unsupported |  |
-| `get_digital_output_bits` | `ursim_get_digital_out_bits` | 否 | unsupported |  |
-| `get_double_register` | `ursim_get_double_register` | 否 | unsupported |  |
+| `get_digital_in` | `ursim_get_digital_in` | 否 | simulated |  |
+| `get_digital_input_bits` | `ursim_get_digital_in_bits` | 否 | simulated |  |
+| `get_digital_output_bits` | `ursim_get_digital_out_bits` | 否 | simulated |  |
+| `get_double_register` | `ursim_get_double_register` | 否 | simulated |  |
 | `get_freedrive_status` | `ursim_get_freedrive_status` | 否 | unsupported |  |
-| `get_int_register` | `ursim_get_int_register` | 否 | unsupported |  |
+| `get_int_register` | `ursim_get_int_register` | 否 | simulated |  |
 | `get_joint_pose` | `ursim_get_joint_pose` | 否 | simulated |  |
 | `get_joint_temperatures` | `ursim_get_joint_temperatures` | 否 | unsupported |  |
 | `get_program_state` | `ursim_get_program_state` | 否 | simulated |  |
@@ -70,9 +70,9 @@
 | `run_program` | `ursim_run_program` | **是** | unsupported |  |
 | `send_script` | `ursim_send_script` | **是** | unsupported |  |
 | `servoj` | `ursim_servoj` | **是** | simulated |  |
-| `set_analog_out` | `ursim_set_analog_out` | **是** | unsupported |  |
+| `set_analog_out` | `ursim_set_analog_out` | **是** | simulated |  |
 | `set_conveyor_tick` | `ursim_set_conveyor_tick` | **是** | unsupported |  |
-| `set_digital_out` | `ursim_set_digital_out` | **是** | unsupported |  |
+| `set_digital_out` | `ursim_set_digital_out` | **是** | simulated |  |
 | `set_freedrive` | `ursim_set_freedrive` | **是** | unsupported |  |
 | `set_gravity` | `ursim_set_gravity` | **是** | unsupported |  |
 | `set_payload` | `ursim_set_payload` | **是** | unsupported |  |

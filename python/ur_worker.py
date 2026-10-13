@@ -311,12 +311,17 @@ def sim_capabilities():
                    "ursim_move_tool_x", "ursim_move_tool_y", "ursim_move_tool_z",
                    "ursim_draw_circle", "ursim_draw_square", "ursim_draw_rectangle", "ursim_draw_star",
                    "ursim_wait_steady", "ursim_stopj", "ursim_stopl"],
+        "io": ["ursim_set_digital_out", "ursim_get_digital_out_bits", "ursim_get_digital_in",
+               "ursim_get_digital_in_bits", "ursim_set_analog_out", "ursim_get_analog_in",
+               "ursim_get_int_register", "ursim_get_double_register", "ursim_get_bit_register"],
         "not_simulated": ["力控（ursim_force_mode 系列）", "RTDE 遥测（温度/电流/电压/受力/加速度）",
                           "安全状态位（ursim_get_safety_status）", "程序加载与执行（ursim_load_program / ursim_run_program）",
-                          "原始脚本（ursim_send_script）", "工具端与标准 I/O", "寄存器", "传送带",
+                          "原始脚本（ursim_send_script）", "传送带",
                           "电源/刹车/自由驱动/示教等机械状态变更"],
         "note": ("运动学级：只有正解/逆解与轨迹插值，没有动力学、没有安全功能、没有控制器。"
-                 "速度与加速度只用来决定每段运动的时长（近似），不做 jerk 限幅。"),
+                 "速度与加速度只用来决定每段运动的时长（近似），不做 jerk 限幅。"
+                 "I/O 与寄存器是**内存态**：输出可写可读回，输入没有信号源（恒 0），"
+                 "寄存器没有写入口（恒初值）。"),
     }
 
 
@@ -4042,6 +4047,153 @@ def _arc_poses(start, via, to, max_steps=240):
                    "（绕单轴时精确，一般情形是近似）。")
 
 
+# ---------------------------------------------------------------------------
+# 仿真的 I/O 与寄存器**内存态**（B3）
+#
+# 真机上 `set_digital_out` 与 `get_digital_out_bits` 是一对闭环，而仿真里两者过去都是
+# `SIM_UNSUPPORTED` —— 于是"置位 → 读回 → 断言"这类教学/演示脚本根本写不出来。这里给每台
+# 虚拟机器人一份内存态：
+#   · **输出**：可写可读回（std 0-7 / config 8-15 / tool 0-1，位串按 UR 的全局编号 0-15）；
+#   · **输入**：**没有生产者** —— 没有任何工具能设置输入，所以一律读 0/False，并在返回值里
+#     如实写明原因（不假装有信号）；
+#   · **寄存器**：int 24 / double 24 / bool 64，初值 0 / 0.0 / False。本插件没有"写寄存器"的
+#     工具（只有读），所以它们在整个会话里恒为初值 —— 同样在返回值里写明。
+#
+# 状态挂在虚拟机器人**实例**上（`_dsh_io`），因此 `sim_stop` + `sim_start`（或宿主自愈重建
+# 子进程后重建仿真）都会自动回到初始态，与"控制器重启"的语义一致，且不需要任何清理代码。
+_SIM_IO_INIT = {
+    "std_out": 0,
+    "config_out": 0,
+    "tool_out": 0,
+    "analog_out": [0.0, 0.0],
+    "int_reg": [0] * 24,
+    "double_reg": [0.0] * 24,
+    "bit_reg": [False] * 64,
+}
+
+_SIM_NO_INPUT_NOTE = "仿真没有输入信号源：没有任何工具能设置输入，因此恒为 0。"
+
+
+def _sim_require(p, key, kind="值"):
+    """仿真实现里取**必填**参数：缺了就明确报 BADARG，而不是抛 KeyError。
+
+    真机句柄直接写 `p["n"]`，参数缺失时抛的是 KeyError —— 它会冒到 main() 的兜底分支、变成
+    一句看不出原因的 HUGE 错误。仿真实现没必要重复这个毛病。
+    """
+    if key not in p or p[key] is None:
+        raise WorkerError("BADARG", "仿真实现缺少必填参数 %s（%s）" % (key, kind))
+    return p[key]
+
+
+def _sim_io(sim):
+    """取（惰性建）某台虚拟机器人的 I/O 内存态。"""
+    state = getattr(sim, "_dsh_io", None)
+    if state is None:
+        state = {k: (list(v) if isinstance(v, list) else v) for k, v in _SIM_IO_INIT.items()}
+        sim._dsh_io = state
+    return state
+
+
+def _sim_output_bits(state):
+    """三组输出位拼成真机读回的那种位串：std 0-7 在前、config 8-15 在后。"""
+    bits = [bool((state["std_out"] >> i) & 1) for i in range(8)]
+    bits += [bool((state["config_out"] >> i) & 1) for i in range(8)]
+    return bits
+
+
+def _sim_set_digital_out(sim, p):
+    which = str(p.get("which", "std")).lower()
+    value = bool(_sim_require(p, "value", "布尔值"))
+    state = _sim_io(sim)
+    if which == "config":
+        n = _bounded_int(_sim_require(p, "n", "端口号"), "n", 8, 15, "config 端口号")
+        key, offset = "config_out", n - 8
+    elif which == "tool":
+        n = _bounded_int(_sim_require(p, "n", "端口号"), "n", 0, 1, "tool 端口号")
+        key, offset = "tool_out", n
+    else:
+        which = "std"
+        n = _bounded_int(_sim_require(p, "n", "端口号"), "n", 0, 7, "std 端口号")
+        key, offset = "std_out", n
+    state[key] = (state[key] | (1 << offset)) if value else (state[key] & ~(1 << offset))
+    return ok({"message": "已设置数字输出 %s.%d = %s（仿真的内存态）" % (which, n, value),
+               "data": {"which": which, "port": n, "value": value, "ip": sim.ip,
+                        "simulated": True, "memory_state": True}})
+
+
+def _sim_get_digital_output_bits(sim, p):
+    bits = _sim_output_bits(_sim_io(sim))
+    return ok({"message": "数字输出位（std 0-7 + config 8-15，仿真的内存态）：%s" % bits,
+               "data": {"bits": bits, "ip": sim.ip, "simulated": True, "memory_state": True}})
+
+
+def _sim_get_digital_input_bits(sim, p):
+    bits = [False] * 16
+    return ok({"message": "数字输入位（std 0-7 + config 8-15）：%s" % bits,
+               "data": {"bits": bits, "ip": sim.ip, "simulated": True,
+                        "note": _SIM_NO_INPUT_NOTE}})
+
+
+def _sim_get_digital_in(sim, p):
+    which = str(p.get("which", "std")).lower()
+    if which == "tool":
+        n = _bounded_int(_sim_require(p, "n", "端口号"), "n", 0, 1, "tool 端口号")
+    elif which == "config":
+        n = _bounded_int(_sim_require(p, "n", "端口号"), "n", 8, 15, "config 端口号")
+    else:
+        which, n = "std", _bounded_int(_sim_require(p, "n", "端口号"), "n", 0, 7, "std 端口号")
+    return ok({"message": "False",
+               "data": {"which": which, "port": n, "value": False, "ip": sim.ip,
+                        "simulated": True, "note": _SIM_NO_INPUT_NOTE}})
+
+
+def _sim_set_analog_out(sim, p):
+    n = _bounded_int(_sim_require(p, "n", "端口号"), "n", 0, 1, "模拟输出端口号")
+    full_scale = _bounded_float(p.get("full_scale", 10.0), "full_scale", 0.001, 1000.0,
+                               "模拟输出满量程（电压域 10，电流域 20）")
+    value = float(_sim_require(p, "value", "数值"))
+    if not math.isfinite(value) or value < 0 or value > full_scale:
+        raise WorkerError("BADARG", "模拟输出值必须在 [0, %s] 内且为有穷数值，收到 %s"
+                          % (full_scale, value))
+    _sim_io(sim)["analog_out"][n] = value
+    return ok({"message": "已设置模拟输出 %d = %s（%s 域，仿真的内存态）"
+               % (n, value, "电压" if full_scale == 10 else "电流"),
+               "data": {"port": n, "value": value, "fraction": value / full_scale,
+                        "full_scale": full_scale, "ip": sim.ip, "simulated": True,
+                        "memory_state": True}})
+
+
+def _sim_get_analog_in(sim, p):
+    n = _bounded_int(_sim_require(p, "n", "端口号"), "n", 0, 1, "模拟输入端口号")
+    return ok({"message": "0.0",
+               "data": {"port": n, "value": 0.0, "ip": sim.ip, "simulated": True,
+                        "note": _SIM_NO_INPUT_NOTE}})
+
+
+def _sim_get_int_register(sim, p):
+    idx = _bounded_int(_sim_require(p, "index", "寄存器下标"), "index", 0, 23, "int 寄存器下标")
+    val = _sim_io(sim)["int_reg"][idx]
+    return ok({"message": "%d" % val,
+               "data": {"index": idx, "value": val, "ip": sim.ip, "simulated": True,
+                        "note": "本插件没有写寄存器的工具：仿真里它恒为初值 0。"}})
+
+
+def _sim_get_double_register(sim, p):
+    idx = _bounded_int(_sim_require(p, "index", "寄存器下标"), "index", 0, 23, "double 寄存器下标")
+    val = _sim_io(sim)["double_reg"][idx]
+    return ok({"message": "%s" % val,
+               "data": {"index": idx, "value": val, "ip": sim.ip, "simulated": True,
+                        "note": "本插件没有写寄存器的工具：仿真里它恒为初值 0.0。"}})
+
+
+def _sim_get_bit_register(sim, p):
+    idx = _bounded_int(_sim_require(p, "index", "寄存器下标"), "index", 0, 63, "bool 寄存器下标")
+    val = _sim_io(sim)["bit_reg"][idx]
+    return ok({"message": "%s" % val,
+               "data": {"index": idx, "value": val, "ip": sim.ip, "simulated": True,
+                        "note": "本插件没有写寄存器的工具：仿真里它恒为初值 False。"}})
+
+
 # op -> 处理函数（`sim_dispatch` 的唯一查找表）
 SIM_OPS = {
     "get_joint_pose": _sim_get_joint_pose,
@@ -4075,6 +4227,16 @@ SIM_OPS = {
     "wait_steady": _sim_wait_steady,
     "stopj": lambda sim, p: _sim_stop(sim, p, "ur_stopj"),
     "stopl": lambda sim, p: _sim_stop(sim, p, "ur_stopl"),
+    # B3：I/O 与寄存器的内存态 —— 输出可写可读回，输入没有生产者（一律 0），寄存器只有读口。
+    "set_digital_out": _sim_set_digital_out,
+    "get_digital_output_bits": _sim_get_digital_output_bits,
+    "get_digital_input_bits": _sim_get_digital_input_bits,
+    "get_digital_in": _sim_get_digital_in,
+    "set_analog_out": _sim_set_analog_out,
+    "get_analog_in": _sim_get_analog_in,
+    "get_int_register": _sim_get_int_register,
+    "get_double_register": _sim_get_double_register,
+    "get_bit_register": _sim_get_bit_register,
 }
 
 
@@ -4617,3 +4779,5 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--selfcheck":
         sys.exit(selfcheck())
     main()
+
+

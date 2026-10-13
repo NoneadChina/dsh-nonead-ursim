@@ -47,11 +47,11 @@
     },
     "get_analog_in": {
       "gated": false,
-      "sim": "unsupported"
+      "sim": "simulated"
     },
     "get_bit_register": {
       "gated": false,
-      "sim": "unsupported"
+      "sim": "simulated"
     },
     "get_conveyor": {
       "gated": false,
@@ -59,19 +59,19 @@
     },
     "get_digital_in": {
       "gated": false,
-      "sim": "unsupported"
+      "sim": "simulated"
     },
     "get_digital_input_bits": {
       "gated": false,
-      "sim": "unsupported"
+      "sim": "simulated"
     },
     "get_digital_output_bits": {
       "gated": false,
-      "sim": "unsupported"
+      "sim": "simulated"
     },
     "get_double_register": {
       "gated": false,
-      "sim": "unsupported"
+      "sim": "simulated"
     },
     "get_freedrive_status": {
       "gated": false,
@@ -79,7 +79,7 @@
     },
     "get_int_register": {
       "gated": false,
-      "sim": "unsupported"
+      "sim": "simulated"
     },
     "get_joint_pose": {
       "gated": false,
@@ -247,7 +247,7 @@
     },
     "set_analog_out": {
       "gated": true,
-      "sim": "unsupported"
+      "sim": "simulated"
     },
     "set_conveyor_tick": {
       "gated": true,
@@ -255,7 +255,7 @@
     },
     "set_digital_out": {
       "gated": true,
-      "sim": "unsupported"
+      "sim": "simulated"
     },
     "set_freedrive": {
       "gated": true,

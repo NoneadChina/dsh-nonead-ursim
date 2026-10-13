@@ -70,8 +70,10 @@ out["read_q"] = read["data"]["joint_positions"]
 out["read_simulated"] = read["data"]["simulated"]
 out["model_op"] = ur_worker.sim_dispatch("get_robot_model", {"ip": IP})["data"]
 unsupported = {}
+# ⚠️ 这张清单必须只放**真的没有仿真语义**的 op：B3 之后 I/O 与寄存器已经有内存态实现
+# （见 test/sim-io.test.mjs），把它们列在这里会拿到 BADARG 而不是 SIM_UNSUPPORTED。
 for op in ("force_mode", "get_runtime_telemetry", "load_program", "send_script",
-           "get_safety_status", "set_digital_out", "speedj", "get_int_register"):
+           "get_safety_status", "set_payload", "speedj", "get_conveyor"):
     reply = ur_worker.sim_dispatch(op, {"ip": IP})
     unsupported[op] = reply.get("code")
 out["unsupported"] = unsupported
