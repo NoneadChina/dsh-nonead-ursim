@@ -8,6 +8,49 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.1.7] - 2026-10-14
+
+### Changed
+
+- **The term is now "simulation panel"（仿真面板）** in both languages: `twin panel` / `digital twin` →
+  `simulation panel` / `simulation`, and 「孪生」→「仿真」, across documentation, tool descriptions and
+  UI strings. Internal identifiers were deliberately left alone — `lib/twin-*.js`, the `/twin/*` routes
+  and the `ursim-twin` DOM namespace are a wire/DOM contract, so renaming them would buy nothing and
+  risk the client bundle. The archived four-expert audit keeps its original wording; editing a record of
+  what the experts wrote would falsify it.
+- **The sidebar card icon is a robot arm** instead of the "house with a knob" it used to draw: base
+  plate → column → upper arm → wrist with a two-finger gripper, two joints circled, same 26 px slot and
+  accent colour.
+
+### Added
+
+- **`check-tool-params.py` is now a real parser on both sides (roadmap D2).** The schema side used to be
+  read out of `lib/tool-defs.js` **as text** (a regex that required two fields on adjacent lines, hand
+  counting of braces to find the parameter block, and a "did we see 86 tools?" guard standing in for the
+  fact that the parse could silently find nothing). It now reads `docs/tool-schemas.golden.json`, the
+  registration snapshot — which since this release carries each tool's **`op`**, and that is what lines
+  schemas up with `HANDLERS`. The Python side stays `ast`-parsed, and the scanner understands the shapes
+  the code actually uses: helper delegation (`_axis_move(p, …)`), `_sim_require(p, "k", …)`, `_vec` vs
+  `_float_list`, `str(p.get("k", "")).lower()` dispatch chains, and the difference between
+  "absent ⇒ refuse" and "present ⇒ refuse" guards.
+- The gate now asserts three families instead of two: **declared ↔ read** (as before),
+  **required ↔ enforced** (a `required: true` the handler quietly defaults, and a hard read the schema
+  calls optional), and **type ↔ coercion** (`boolean`↔`bool`, `integer`↔`int`/`_bounded_int`,
+  `number`↔`float`/`_bounded_float`, `array`↔vector helper). Bounds stay unchecked on purpose: the
+  snapshot keeps ranges in prose ("端口号：std 0-7、config 8-15"), so there is nothing machine-comparable.
+  Anything the static analysis cannot prove (the second direction of required-ness, conditional
+  requirements) is reported as a **note**, not silently absorbed.
+
+### Fixed
+
+- **Two tools declared an int register as `number`** (`ursim_send_script`, `ursim_draw_circle`) while the
+  handler validates it with `_bounded_int` — the schema promised a fractional register index the worker
+  would refuse. Found by the new type assertion.
+- **`ursim_set_tool_output_mode.mode` no longer defaults to `1` (power).** The schema marked `mode`
+  required, but the handler silently defaulted to the mode that reuses the tool's digital-output pins as
+  an extra power supply — the one setting in this plugin that can damage whatever is wired to the flange.
+  A missing `mode` is now refused with an explicit `BADARG`.
+
 ## [0.1.6] - 2026-10-14
 
 ### Added

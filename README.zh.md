@@ -84,7 +84,7 @@ host 侧路由（均限定 loopback 调用方）：
    // C:\Users\<you>\.dsh\profiles\web\package.json
    {
      "dependencies": {
-       "dsh-nonead-ursim": "^0.1.6"
+       "dsh-nonead-ursim": "^0.1.7"
      },
      "dsh": {
        "profile": {
@@ -145,7 +145,7 @@ pip install -r requirements.txt
 
 ```sh
 npm run test:python   # python ur_worker.py --selfcheck：校验 Python/numpy/paramiko/URBasic/RTDE 配置
-npm test              # 跑全部 40 个测试文件 **以及全部门禁脚本**，最后汇总
+npm test              # 跑全部 45 个测试文件 **以及全部门禁脚本**，最后汇总
 npm run test:node     # 只跑 Node 侧：跳过需要 Python 的测试文件**与门禁**
 npm run check         # 只跑静态 + 跨语言门禁，不跑测试文件
 npm run verify:host   # 用宿主真实的 schema DSL 校验全部工具注册与 peer 版本
@@ -154,11 +154,12 @@ npm run verify:models # 校验 14 个 GLB 的结构契约
 
 `npm test` 跑两类东西，两类都必须过：
 
-- **40 个测试文件**（端到端协议自检、审批门禁、仿真路由、客户端状态机、FK、vendored 库回归）。
-  名单来自 `test/test-manifest.json`（Python 13 / Node 27），并由 `check:manifest` 保证"会调用 Python 的用例"不会被漏登记。
-- **9 个门禁脚本**：`check-test-manifest` / `check-package-metadata` / `check-client-bundle` /
-  `check-doc-tools`（Node），以及 `check-worker-ops` / `check-tool-params` / `check-rtde-recipe` /
-  `check-approval-gate` / `check-new-ops`（Python）。解释器没有 `numpy` 时，依赖 Python 的项会以
+- **45 个测试文件**（端到端协议自检、审批门禁、仿真路由、客户端状态机、FK、vendored 库回归）。
+  名单来自 `test/test-manifest.json`（依赖 Python 17 / 仅 Node 28），并由 `check:manifest` 保证"会调用 Python 的用例"不会被漏登记。
+- **11 个门禁脚本**：`check-test-manifest` / `check-package-metadata` / `check-client-bundle` /
+  `check-doc-tools` / `tool-matrix` / `check-doc-links`（Node），以及 `check-worker-ops` /
+  `check-tool-params` / `check-rtde-recipe` / `check-approval-gate` / `check-new-ops`（Python）。
+  解释器没有 `numpy` 时，依赖 Python 的项会以
   **SKIP + 原因**出现，绝不会显示成通过。
 
 > 0.6.0 新增 `scripts/pdf-extract2.py`：**只用标准库**从 `ScriptManual/*.pdf` 抽文本到

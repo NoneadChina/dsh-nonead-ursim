@@ -93,7 +93,7 @@ Failure responses carry a **machine-readable `code`** (`no_robot` / `robot_not_c
    // C:\Users\<you>\.dsh\profiles\web\package.json
    {
      "dependencies": {
-       "dsh-nonead-ursim": "^0.1.6"
+       "dsh-nonead-ursim": "^0.1.7"
      },
      "dsh": {
        "profile": {
@@ -156,7 +156,7 @@ Verify the plugin and Python runtime without touching a real robot:
 
 ```sh
 npm run test:python   # python ur_worker.py --selfcheck: verify Python/numpy/paramiko/URBasic/RTDE config
-npm test              # run all 36 test files AND every check gate (see below), then summarise
+npm test              # run all 45 test files AND every check gate (see below), then summarise
 npm run test:node     # Node-side only: skips the test files *and* the gates that need Python
 npm run check         # all static + cross-language gates without running the test files
 npm run verify:host   # validate every tool schema through the host's real value-schema DSL, plus peer ranges
@@ -165,13 +165,17 @@ npm run verify:models # validate the structural contract of the 14 GLBs
 
 `npm test` runs two kinds of thing, and both must pass:
 
-- **40 test files** under `test/` (e2e protocol self-check, approval gate, simulation routes, client
-  state machine, FK, vendored-library regressions) — enumerated from `test/test-manifest.json`,
-  which `check:manifest` keeps honest so a Python-using file can never be silently unlisted.
-- **9 check gates**: `check-test-manifest` / `check-package-metadata` / `check-client-bundle` /
-  `check-doc-tools` (Node) and `check-worker-ops` / `check-tool-params` / `check-rtde-recipe` /
-  `check-approval-gate` / `check-new-ops` (Python). When the interpreter has no `numpy`, the
-  Python-dependent items are reported as **SKIP with the reason**, never as a pass.
+- **45 test files** under `test/` (e2e protocol self-check, approval gate, simulation routes, client
+  state machine, FK, vendored-library regressions) — enumerated from `test/test-manifest.json`
+  (Python-dependent 17 / Node-only 28), which `check:manifest` keeps honest so a Python-using file can
+  never be silently unlisted.
+- **11 check gates**: `check-test-manifest` / `check-package-metadata` / `check-client-bundle` /
+  `check-doc-tools` / `tool-matrix` / `check-doc-links` (Node) and `check-worker-ops` /
+  `check-tool-params` / `check-rtde-recipe` / `check-approval-gate` / `check-new-ops` (Python). When
+  the interpreter has no `numpy`, the Python-dependent items are reported as **SKIP with the reason**,
+  never as a pass. `check-tool-params` compares the tool schema against the Python handler on both
+  sides by *parsing* them (the snapshot that carries `op` for every tool, and `ast` for the handler),
+  so parameter names, required-ness and types are all cross-checked.
 
 > New in 0.6.0: `scripts/pdf-extract2.py` extracts text from `ScriptManual/*.pdf` into
 > `ScriptManual/txt/*.txt` using **only the standard library** (the PolyScope manuals encode

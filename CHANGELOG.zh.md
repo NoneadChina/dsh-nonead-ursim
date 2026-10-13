@@ -6,6 +6,40 @@
 那份代码库的版本编号。此前那段历史已原样归档到 `CHANGELOG-archive.zh.md`；该文件在准备 0.1.1 时
 **已从本仓库移除**（可从导入源码的那个提交 `4c91704` 取回），并且从未进入过发布包。
 
+## [0.1.7] - 2026-10-14
+
+### 变更
+
+- **术语统一为「仿真面板」**（中英一致）：`twin panel` / `digital twin` → `simulation panel` /
+  `simulation`，中文「孪生」→「仿真」，覆盖文档、工具描述与界面文案。**内部标识符有意不动** ——
+  `lib/twin-*.js`、`/twin/*` 路由、`ursim-twin` DOM 命名空间是线路与 DOM 契约，改名收益为零、却要动
+  客户端产物；`docs/audit-2026-10-13-four-experts.md` 也保持原文，改专家写下的记录等于篡改证据。
+- **侧边栏卡片图标换成机械臂**：旧的画的是"一栋带旋钮的房子"，现在画底座横板 → 立柱 → 斜向上大臂
+  → 腕部下垂的两指夹爪，两个关节点用圆圈标出；沿用原来的 26 px 槽位与强调色。
+
+### 新增
+
+- **`check-tool-params.py` 两侧都改成真解析（路线图 D2）。** schema 侧过去是从 `lib/tool-defs.js` 里
+  **当文本**抠的（要求两个字段相邻两行的正则、手工数括号找参数块、以及一条"解析到 86 个工具了吗"
+  的守卫来兜住"解析可能什么都没找到"这件事）。现在读 `docs/tool-schemas.golden.json`（注册面快照）
+  —— 本版起它带上每个工具的 **`op`**，这正是让 schema 与 `HANDLERS` 对上的桥。Python 侧仍是 `ast`
+  解析，且认得代码里实际存在的形态：转发给 helper（`_axis_move(p, …)`）、`_sim_require(p, "k", …)`、
+  `_vec` 与 `_float_list` 的键位置差异、`str(p.get("k", "")).lower()` 的枚举分派链，以及
+  "缺省即拒绝"与"存在才拒绝"两种守卫的区别。
+- 断言从两类变成三类：**声明 ↔ 读取**（原有）、**必填 ↔ 是否真的强制**（标了 required 却静默取默认值、
+  以及硬读却没标 required）、**类型 ↔ 取值方式**（`boolean`↔`bool`、`integer`↔`int`/`_bounded_int`、
+  `number`↔`float`/`_bounded_float`、`array`↔向量 helper）。**范围有意不比对**：快照里的区间是散文
+  （"端口号：std 0-7、config 8-15"），没有可比的结构。静态分析证不了的（必填的第二个方向、条件必填）
+  一律作为 **note** 列出，而不是悄悄吸收。
+
+### 修复
+
+- **两个工具把 int 寄存器声明成了 `number`**（`ursim_send_script`、`ursim_draw_circle`），而句柄用
+  `_bounded_int` 校验 —— schema 承诺了一个带小数的寄存器号，worker 会拒绝。由新的类型断言发现。
+- **`ursim_set_tool_output_mode.mode` 不再默认成 `1`（power）。** schema 把 `mode` 标为必填，句柄却
+  静默默认到"把工具数字输出针复用为附加电源"的那一档 —— 这是本插件里唯一可能损坏法兰上所接器件的
+  设置。缺 `mode` 现在明确报 `BADARG`。
+
 ## [0.1.6] - 2026-10-14
 
 ### 新增
