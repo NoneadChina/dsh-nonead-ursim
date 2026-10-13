@@ -69,6 +69,7 @@ async function harness({ config = {}, approvalOutcome = 'allowed-once', approval
   const registered = new Map()
   const calls = []
   const approvalRequests = []
+  const effects = []
 
   /*
    * 子进程代次可注入：仿真的自愈靠它判断"子进程是不是被换过"（见 lib/index.js 的
@@ -107,14 +108,19 @@ async function harness({ config = {}, approvalOutcome = 'allowed-once', approval
 
   const ctx = {
     logger: { info() {}, warn() {}, error() {} },
-    effect: () => () => {},
+    // 捕获 disposer：`ctx.effect(() => () => …)` 的清理函数必须能被测试拿到 —— 宿主在卸载时
+    // 只 await **返回 thenable 的那些**，所以"清理有没有被 return"本身就是要断言的行为。
+    effect: (fn) => {
+      effects.push(fn)
+      return () => {}
+    },
     get: (name) => (name === 'approval' ? approval : undefined),
     inject: () => () => {},
     tools: { register: (tool) => registered.set(tool.name, tool) },
   }
   mod.apply(ctx, config)
 
-  return { registered, calls, approvalRequests }
+  return { registered, calls, approvalRequests, effects }
 }
 
 const AGENT = { id: 'agent-1' }
@@ -333,6 +339,37 @@ test('★ 离线仿真目标不弹人工确认；真机 IP 与"没开仿真"的�
   )
   // 计数说明：① 与 ④、⑤ 共三次（① 未开仿真、④ 真机、⑤ 关掉仿真后）；②③③b 都不该问。
   assert.equal(approvalRequests.length, 3)
+})
+
+test('★ 卸载：worker 的 disposer 必须**返回**清理 promise（否则 Python 子进程活过宿主）', async () => {
+  const { effects } = await harness()
+  assert.ok(effects.length >= 1, 'apply() 必须注册至少一个 effect（worker 生命周期）')
+
+  const { UrWorker } = await import('../lib/worker.js')
+  const originalDispose = UrWorker.prototype.dispose
+  const originalShutdown = UrWorker.prototype.shutdown
+  let disposed = 0
+  UrWorker.prototype.shutdown = async () => true
+  UrWorker.prototype.dispose = function dispose() {
+    disposed += 1
+    return originalDispose?.call?.(this)
+  }
+  try {
+    const dispose = effects[0]() // ctx.effect(fn) → fn() 返回 disposer
+    assert.equal(typeof dispose, 'function', 'effect 必须返回 disposer')
+    const result = dispose() // 触发清理链（真实行为：先优雅关闭，再 dispose）
+    assert.equal(
+      typeof result?.then,
+      'function',
+      '★ disposer 必须返回 thenable —— cordis 的 runDisposable 只 await 有 then 的返回值，' +
+        '返回 undefined 就等于"宿主不等清理"，子进程会握着排他的 RTDE 会话活过宿主',
+    )
+    await result
+    assert.equal(disposed, 1, '清理链必须真的走到 dispose')
+  } finally {
+    UrWorker.prototype.dispose = originalDispose
+    UrWorker.prototype.shutdown = originalShutdown
+  }
 })
 
 test('★ A：真机模式 = IP 白名单 + 无审批豁免（H-2 结构性关闭）', async () => {
