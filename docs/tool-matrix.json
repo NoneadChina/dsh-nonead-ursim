@@ -1,0 +1,349 @@
+{
+  "_readme": "op 分类的唯一声明表。gated=是否受人工审批门禁；sim=simulated|passthrough|unsupported。why 只在\"看不出来为什么\"时写。改代码后跑 node scripts/tool-matrix.mjs --write 重新生成，再跑不带参数校验。",
+  "ops": {
+    "brake_release": {
+      "gated": true,
+      "sim": "unsupported"
+    },
+    "connect": {
+      "gated": false,
+      "sim": "passthrough"
+    },
+    "conveyor_tracking": {
+      "gated": true,
+      "sim": "unsupported"
+    },
+    "disconnect": {
+      "gated": false,
+      "sim": "passthrough"
+    },
+    "draw_circle": {
+      "gated": true,
+      "sim": "simulated"
+    },
+    "draw_rectangle": {
+      "gated": true,
+      "sim": "simulated"
+    },
+    "draw_square": {
+      "gated": true,
+      "sim": "simulated"
+    },
+    "draw_star": {
+      "gated": true,
+      "sim": "simulated"
+    },
+    "end_force_mode": {
+      "gated": true,
+      "sim": "unsupported"
+    },
+    "force_mode": {
+      "gated": true,
+      "sim": "unsupported"
+    },
+    "force_mode_settings": {
+      "gated": true,
+      "sim": "unsupported"
+    },
+    "get_analog_in": {
+      "gated": false,
+      "sim": "unsupported"
+    },
+    "get_bit_register": {
+      "gated": false,
+      "sim": "unsupported"
+    },
+    "get_conveyor": {
+      "gated": false,
+      "sim": "unsupported"
+    },
+    "get_digital_in": {
+      "gated": false,
+      "sim": "unsupported"
+    },
+    "get_digital_input_bits": {
+      "gated": false,
+      "sim": "unsupported"
+    },
+    "get_digital_output_bits": {
+      "gated": false,
+      "sim": "unsupported"
+    },
+    "get_double_register": {
+      "gated": false,
+      "sim": "unsupported"
+    },
+    "get_freedrive_status": {
+      "gated": false,
+      "sim": "unsupported"
+    },
+    "get_int_register": {
+      "gated": false,
+      "sim": "unsupported"
+    },
+    "get_joint_pose": {
+      "gated": false,
+      "sim": "simulated"
+    },
+    "get_joint_temperatures": {
+      "gated": false,
+      "sim": "unsupported"
+    },
+    "get_program_state": {
+      "gated": false,
+      "sim": "simulated"
+    },
+    "get_robot_current": {
+      "gated": false,
+      "sim": "unsupported"
+    },
+    "get_robot_mode": {
+      "gated": false,
+      "sim": "simulated"
+    },
+    "get_robot_model": {
+      "gated": false,
+      "sim": "simulated"
+    },
+    "get_robot_voltage": {
+      "gated": false,
+      "sim": "unsupported"
+    },
+    "get_runtime_telemetry": {
+      "gated": false,
+      "sim": "unsupported"
+    },
+    "get_safety_mode": {
+      "gated": false,
+      "sim": "simulated"
+    },
+    "get_safety_status": {
+      "gated": false,
+      "sim": "unsupported"
+    },
+    "get_serial_number": {
+      "gated": false,
+      "sim": "simulated"
+    },
+    "get_software_version": {
+      "gated": false,
+      "sim": "simulated"
+    },
+    "get_speed_scaling": {
+      "gated": false,
+      "sim": "simulated"
+    },
+    "get_target_values": {
+      "gated": false,
+      "sim": "simulated"
+    },
+    "get_tcp_force": {
+      "gated": false,
+      "sim": "unsupported"
+    },
+    "get_tcp_pose": {
+      "gated": false,
+      "sim": "simulated"
+    },
+    "get_time": {
+      "gated": false,
+      "sim": "simulated"
+    },
+    "get_tool_analog_in": {
+      "gated": false,
+      "sim": "unsupported"
+    },
+    "get_tool_telemetry": {
+      "gated": false,
+      "sim": "unsupported"
+    },
+    "list_programs": {
+      "gated": false,
+      "sim": "unsupported"
+    },
+    "load_program": {
+      "gated": true,
+      "sim": "unsupported"
+    },
+    "motion_version": {
+      "gated": true,
+      "sim": "unsupported"
+    },
+    "move_optimized": {
+      "gated": true,
+      "sim": "simulated"
+    },
+    "move_tool_x": {
+      "gated": true,
+      "sim": "simulated"
+    },
+    "move_tool_y": {
+      "gated": true,
+      "sim": "simulated"
+    },
+    "move_tool_z": {
+      "gated": true,
+      "sim": "simulated"
+    },
+    "move_x": {
+      "gated": true,
+      "sim": "simulated"
+    },
+    "move_y": {
+      "gated": true,
+      "sim": "simulated"
+    },
+    "move_z": {
+      "gated": true,
+      "sim": "simulated"
+    },
+    "movec": {
+      "gated": true,
+      "sim": "simulated"
+    },
+    "movej": {
+      "gated": true,
+      "sim": "simulated"
+    },
+    "movel": {
+      "gated": true,
+      "sim": "simulated"
+    },
+    "movep": {
+      "gated": true,
+      "sim": "simulated"
+    },
+    "pause_program": {
+      "gated": false,
+      "sim": "unsupported"
+    },
+    "ping": {
+      "gated": false,
+      "sim": "passthrough"
+    },
+    "power_off": {
+      "gated": true,
+      "sim": "unsupported"
+    },
+    "power_on": {
+      "gated": true,
+      "sim": "unsupported"
+    },
+    "reset_error": {
+      "gated": true,
+      "sim": "unsupported"
+    },
+    "run_program": {
+      "gated": true,
+      "sim": "unsupported"
+    },
+    "send_script": {
+      "gated": true,
+      "sim": "unsupported"
+    },
+    "servoj": {
+      "gated": true,
+      "sim": "simulated"
+    },
+    "set_analog_out": {
+      "gated": true,
+      "sim": "unsupported"
+    },
+    "set_conveyor_tick": {
+      "gated": true,
+      "sim": "unsupported"
+    },
+    "set_digital_out": {
+      "gated": true,
+      "sim": "unsupported"
+    },
+    "set_freedrive": {
+      "gated": true,
+      "sim": "unsupported"
+    },
+    "set_gravity": {
+      "gated": true,
+      "sim": "unsupported"
+    },
+    "set_payload": {
+      "gated": true,
+      "sim": "unsupported"
+    },
+    "set_payload_inertia": {
+      "gated": true,
+      "sim": "unsupported"
+    },
+    "set_tcp": {
+      "gated": true,
+      "sim": "unsupported"
+    },
+    "set_teach_mode": {
+      "gated": true,
+      "sim": "unsupported"
+    },
+    "set_tool_output_mode": {
+      "gated": true,
+      "sim": "unsupported"
+    },
+    "set_tool_voltage": {
+      "gated": true,
+      "sim": "unsupported"
+    },
+    "shutdown": {
+      "gated": true,
+      "sim": "unsupported"
+    },
+    "sim_start": {
+      "gated": false,
+      "sim": "passthrough"
+    },
+    "sim_status": {
+      "gated": false,
+      "sim": "passthrough"
+    },
+    "sim_stop": {
+      "gated": false,
+      "sim": "passthrough"
+    },
+    "speedj": {
+      "gated": true,
+      "sim": "unsupported"
+    },
+    "speedl": {
+      "gated": true,
+      "sim": "unsupported"
+    },
+    "status": {
+      "gated": false,
+      "sim": "simulated"
+    },
+    "stop_program": {
+      "gated": false,
+      "sim": "unsupported"
+    },
+    "stopj": {
+      "gated": true,
+      "sim": "simulated"
+    },
+    "stopl": {
+      "gated": true,
+      "sim": "simulated"
+    },
+    "tool_communication": {
+      "gated": true,
+      "sim": "unsupported"
+    },
+    "unlock_protective_stop": {
+      "gated": true,
+      "sim": "unsupported"
+    },
+    "wait_steady": {
+      "gated": false,
+      "sim": "simulated"
+    },
+    "zero_ftsensor": {
+      "gated": true,
+      "sim": "unsupported"
+    }
+  }
+}
