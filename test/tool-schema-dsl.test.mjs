@@ -23,7 +23,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { registerHooks } from 'node:module'
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
@@ -342,4 +342,78 @@ test('每个 op 最多被一个工具使用，且工具名不得重复（重名�
 
   const names = pairs.map((p) => p.toolName)
   assert.equal(new Set(names).size, names.length, '工具名必须唯一')
+})
+
+/* ------------------------------------------------------------------ *
+ * schema 黄金快照 —— 「工具表搬家」（R 系列第二步）的等价性证据
+ * ------------------------------------------------------------------ */
+
+/**
+ * 把参数 DSL 规范化为**确定性**的可比较结构。
+ *
+ * 对象键排序（同一份 schema 的书写顺序变了不算变化）；函数与 schemastery 的链式桩（Proxy）
+ * 一律记成 `<opaque>` —— 它们不是数据，序列化出来的值没有意义，但**出现位置**仍然是契约的一部分。
+ */
+function canonicalSchema(value) {
+  if (value === null) return null
+  const type = typeof value
+  if (type === 'string' || type === 'number' || type === 'boolean') return value
+  if (type !== 'object') return '<opaque>'
+  if (Array.isArray(value)) return value.map(canonicalSchema)
+  const out = {}
+  for (const key of Object.keys(value).sort()) out[key] = canonicalSchema(value[key])
+  return out
+}
+
+const GOLDEN_PATH = fileURLToPath(new URL('../docs/tool-schemas.golden.json', import.meta.url))
+
+const snapshotOf = (registered) =>
+  registered
+    .map((t) => ({
+      name: t.name,
+      description: String(t.description ?? ''),
+      timeoutMs: Number.isFinite(t.timeoutMs) ? t.timeoutMs : null,
+      parameters: canonicalSchema(t.parameters),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+
+/**
+ * ★ 这是 R 系列「把 963 行工具声明表搬成数据模块」的**安全网**。
+ *
+ * 为什么必须有：门禁覆盖的是"参数名与 Python 实读一致"（`check-tool-params.py`）与
+ * "工具在 README 表格里"（`check-doc-tools.mjs`）—— 都**不管类型、默认值、required、
+ * description 文案**。搬 1300 行声明时，把 `type: 'number'` 打成 `'string'` 不会有任何
+ * 门禁报错，只有人肉比对才能发现。有了这份快照，搬家前后必须**逐字节一致**。
+ *
+ * 有意的契约变更（比如真的要改某段描述）：删掉 docs/tool-schemas.golden.json 后用
+ * `URSIM_WRITE_GOLDEN=1 node --test test/tool-schema-dsl.test.mjs` 重新生成，
+ * 并把差异写进 CHANGELOG —— 让"改了什么"永远有人看过。
+ */
+test('★ 工具注册面黄金快照：重构不得改变任何工具的名称、描述或参数 schema', async () => {
+  const { registered } = await collectTools()
+  const snapshot = snapshotOf(registered)
+
+  if (process.env.URSIM_WRITE_GOLDEN === '1') {
+    writeFileSync(GOLDEN_PATH, `${JSON.stringify(snapshot, null, 2)}\n`, 'utf8')
+    return
+  }
+
+  const golden = JSON.parse(readFileSync(GOLDEN_PATH, 'utf8'))
+  const byName = new Map(golden.map((t) => [t.name, t]))
+  const drift = snapshot.filter((t) => JSON.stringify(byName.get(t.name)) !== JSON.stringify(t))
+  if (drift.length > 0) {
+    // 只报第一个差异的字段级 diff：86 个工具全量打印会把真正的线索淹掉。
+    const first = drift[0]
+    const before = byName.get(first.name)
+    const fields = ['description', 'timeoutMs', 'parameters']
+    const detail = fields
+      .filter((f) => JSON.stringify(before?.[f]) !== JSON.stringify(first[f]))
+      .map((f) => `${f}: ${JSON.stringify(before?.[f])} → ${JSON.stringify(first[f])}`)
+      .join('  |  ')
+    assert.fail(
+      `${drift.length} 个工具的注册面与黄金快照不一致（${drift.map((t) => t.name).join(', ')}）。` +
+        `第一个 ${first.name}：${detail || '（工具本身是新增的）'}`,
+    )
+  }
+  assert.equal(snapshot.length, golden.length, '工具数量不得变化')
 })
