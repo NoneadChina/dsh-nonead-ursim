@@ -39,7 +39,9 @@ This plugin shares the same ancestry as the company's `Nonead-Universal-Robots-M
 | Script / emergency | `ursim_send_script` / `ursim_reset_error` | Send URScript (**execution-verified**: sentinels are injected *inside the function body* / between top-level statements and read back, so "sent" never masquerades as "ran"; with several functions and no visible call site it refuses to verify and returns `verified: null`) / reset errors |
 | Offline simulation | `ursim_sim_start` / `ursim_sim_stop` / `ursim_sim_status` | **Kinematics-level offline simulation** (0.7.0): create/destroy a virtual UR at the reserved address `127.0.0.1` so the digital twin can be driven without any real robot. After `sim_start(model=…, preset=…, speed_scaling=…)`, the motion tools and the pose readback act on it; **the default start pose is `upright` (folded upright)** — omitting `preset` gives it, switching the model in the panel resets to it, and a simulation created on demand starts there too; `sim_stop` tears it down (idempotent); `sim_status` reads the state plus the capability list with no side effects. **Every other command reports "no simulation semantics" (`SIM_UNSUPPORTED`) instead of pretending to run** |
 
-Every tool except `connect` takes an `ip` argument and requires that IP to be **connected first**.
+Every tool except `ursim_ping` takes an `ip` argument. **A `connect` first is not required** for the
+simulation target: it comes up on demand (`ursim_sim_start`, or automatically on the first motion
+addressed to the reserved loopback address) — and this release ships **no real-robot channel at all**.
 
 > 📚 **0.6.0 manual alignment**: this release checked signatures, defaults, ranges and deprecated
 > functions against the three official manuals bundled in `ScriptManual/` (URSoftware 3.15.4 /
@@ -91,7 +93,7 @@ Failure responses carry a **machine-readable `code`** (`no_robot` / `robot_not_c
    // C:\Users\<you>\.dsh\profiles\web\package.json
    {
      "dependencies": {
-       "dsh-nonead-ursim": "^0.1.2"
+       "dsh-nonead-ursim": "^0.1.3"
      },
      "dsh": {
        "profile": {

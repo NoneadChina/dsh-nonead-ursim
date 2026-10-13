@@ -39,7 +39,8 @@
 | 脚本 / 紧急 | `ursim_send_script` / `ursim_reset_error` | 发送 URScript（**校验执行**：哨兵注入到函数体内部/顶层语句之间并回读，「已发送」不再冒充「已执行」；含多个函数且看不出调用哪个时拒绝校验并给 `verified: null`）/ 复位错误 |
 | 离线仿真 | `ursim_sim_start` / `ursim_sim_stop` / `ursim_sim_status` | **运动学级离线仿真**（0.7.0）：在保留地址 `127.0.0.1` 上创建/销毁一台虚拟 UR，让数字孪生在没有真机的情况下被驱动。`sim_start(model=..., preset=..., speed_scaling=...)` 开启后，运动类工具与位姿读回都作用于它；**默认起始姿态是 `upright`（竖直收拢）** —— 不传 `preset` 就是它，面板里换型号也会重置到它，按需自动创建的那台同样从这里开始；`sim_stop` 关闭（幂等）；`sim_status` 无副作用地读状态与能力清单。**其余指令在仿真目标上明确回报「无仿真语义」（`SIM_UNSUPPORTED`），绝不假装执行** |
 
-除「连接」外，所有工具都接受 `ip` 参数，且都要求**先连接**该 IP。
+除 `ursim_ping` 外，所有工具都接受 `ip` 参数。仿真目标**不需要「先连接」**：它按需就绪
+（`ursim_sim_start`，或在保留回环地址上的第一条运动指令时自动创建）—— 而本版**根本不提供真机通道**。
 
 > 📚 **0.6.0 的手册对齐**：本版本逐条对照三本官方手册（URSoftware 3.15.4 / PolyScope 5 / PolyScope X）核对了签名、默认值、参数范围与已废弃函数（手册是第三方版权材料，**不随本仓库分发**；可用 `scripts/pdf-extract2.py` 从你自己合法取得的手册重新抽取，见 `THIRD_PARTY_NOTICES.md`）。其中三处与旧实现不同的**实质修正**：① `movel`/`movej` 默认速度改回手册值；② `ursim_force_mode` 的 `damping`/`gain_scaling` 明确标注"无法回读"而不是假装能读；③ `set_target_payload` 只有在给出 `inertia` 时才使用（旧固件上自动退回 `set_payload_mass`+`set_payload_cog`）。
 
@@ -83,7 +84,7 @@ host 侧路由（均限定 loopback 调用方）：
    // C:\Users\<you>\.dsh\profiles\web\package.json
    {
      "dependencies": {
-       "dsh-nonead-ursim": "^0.1.2"
+       "dsh-nonead-ursim": "^0.1.3"
      },
      "dsh": {
        "profile": {

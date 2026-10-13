@@ -4,8 +4,92 @@ This package follows [Keep a Changelog](https://keepachangelog.com/) and [Semant
 
 The version line of this package **starts at 0.1.0**: `dsh-nonead-ursim` is an independent DSH plugin,
 so it does not continue the version numbering of the code base it was separated from. That earlier
-history is archived verbatim in [`CHANGELOG-archive.md`](./CHANGELOG-archive.md); it is **not** part of
-this package and is excluded from the published tarball by the `files` whitelist in `package.json`.
+history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed from this repository**
+while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
+never part of the published tarball.
+
+## [0.1.3] - 2026-10-13
+
+Everything below comes out of the four-expert audit of the 0.1.2 code base (raw reports kept in
+[`docs/audit-2026-10-13-four-experts.md`](./docs/audit-2026-10-13-four-experts.md)) and the follow-up
+work that audit recommended. **The simulation-only contract is unchanged**: `ip` still only ever means
+the reserved loopback address, and there is still no real-robot channel.
+
+### Fixed
+
+- **The twin's read requests could starve a stop command (H-3).** Twin reads and commands share one
+  single-threaded worker with an in-flight ceiling of 8, and admission is "total ≥ ceiling ⇒ BUSY".
+  Every SSE subscription has its own frame pump, so **8 subscriptions filled all 8 slots** — and
+  `stopj` / `stopl` / `end_force_mode` were then rejected **on the host side**, never reaching the
+  worker: exactly when a moving robot most needs to be stopped. Reads now pass their own gate
+  (`class: 'twin-read'`, ceiling 3), which reserves **at least 5 slots** for commands; `/twin/stream`
+  additionally refuses more than 4 concurrent subscriptions with an explicit `503` instead of letting
+  every subscription starve.
+- **`send_script` asked a human to approve a script they could not read (M-1).** The approval prompt
+  truncated the payload at 240 characters, so everything after character 241 was approved sight
+  unseen. It now reports line count / byte count / the first three lines, and the approval reason
+  carries a **payload fingerprint** (sha256, first 16 hex digits) that is re-computed after approval:
+  if the payload changed while the human was deciding, the command is cancelled and never dispatched.
+  The binding is deliberately over the *whole* payload rather than the script text — `sanitizeArgs()`
+  is a shallow copy, so nested arrays (`force_mode`'s `task_frame`, `selection_vector`, `wrench`) are
+  shared with the caller and really can be mutated during the approval window.
+- **`list_programs` shipped a hard-coded SSH credential.** The `root/easybot` default is gone
+  (a password must now be supplied explicitly, and its absence is a clear error), and
+  `paramiko.AutoAddPolicy()` became `RejectPolicy()` — the old policy accepted *any* host key, which
+  made a channel that runs commands on the controller transparent to interception.
+- **The model loader could fetch the same mesh twice.** Two calls in the same await window each ran
+  `GLTFLoader.loadAsync` and each assembled a group; only the second entered the cache, so the first
+  was dropped without ever being released. There is now an in-flight table (the second caller waits
+  for the same promise), the reference count is uniformly owned by the caller, and the cache has a
+  bound (`MAX_CACHED_MODELS`) that evicts only entries with no live references.
+- **`disposeObject3D` disposed *every* property of a material.** Any field with a `dispose` method was
+  released, including `envMap` — which, when set, points at the scene-shared PMREM environment: disposing
+  it turns **every PBR material in the scene black**, and switching models walks that path. Disposal is
+  now a whitelist of model-owned texture slots, with `envMap` deliberately excluded.
+- **`/twin/asset` re-read and re-hashed the whole GLB on every request** — including the `304` path,
+  which the browser revalidates whenever the panel opens. It now checks `size + mtimeMs` (meshes are
+  regenerated in place, so the name alone is not enough) and serves subsequent requests from memory.
+- **Static frames recomputed the pose 60 times a second.** Only a new sample (10 Hz) and the short
+  interpolation window that follows it carry information; every other frame's result was bit-identical
+  to the previous one (`interpolateAt` clamps to the current sample outside the window). Such frames
+  now reuse the previous FK result instead of re-running interpolation, forward kinematics, matrix
+  writes and a trajectory redraw. The first frame *after* the window still computes, so the displayed
+  pose **converges exactly** to the last sample the controller reported.
+- **A gate could die on a leftover temp file.** `check-new-ops.py` removed its scratch log with a bare
+  `os.remove`, so a stale file held open by a previous run (Windows `WinError 32`) aborted the whole
+  check. Cleanup failure is now tolerated — a scratch file must not be able to fail a gate.
+
+### Changed
+
+- **The tool declarations now live in `lib/tool-defs.js`** (`lib/index.js` went from 1977 to 957 lines).
+  The 963-line declaration table and its six parameter-DSL helpers moved out; `index.js` only registers
+  and applies runtime policy. The declaration surface became a factory (`buildTools(config)`) because
+  the per-tool `timeoutMs` comes from configuration, which the array used to read through the
+  enclosing closure. Ten readers of the old location (four gates, two scripts, four tests) were
+  updated, and the move is proven behavior-preserving by the two golden files below, which are
+  byte-identical across it.
+- **Every op must now declare its classification.** `docs/tool-matrix.json` states, per op, whether it
+  is behind the human-approval gate and what the simulation does with it
+  (`simulated` / `passthrough` / `unsupported`); `docs/tool-matrix.md` is the readable matrix.
+  `scripts/tool-matrix.mjs` (wired into `check:docs`) fails when an op is undeclared, when a
+  declaration disagrees with `APPROVAL_OPS` or with the worker's `SIM_OPS` / `SIM_PASSTHROUGH_OPS`, or
+  when a stale entry remains. Until now those two decisions were **silent defaults** — which is exactly
+  how H-1 (seven ops with physical side effects sitting outside the approval gate) went unnoticed.
+- Documentation: the READMEs no longer claim that every tool but `connect` takes an `ip` and needs a
+  prior connection (only `ursim_ping` takes no `ip`, and the simulation target needs no prior
+  `connect`); the CHANGELOG preamble no longer links to the removed archive file.
+
+### Added
+
+- **`docs/tool-schemas.golden.json` + a golden-snapshot test.** The existing gates only compare
+  parameter *names* against what Python reads, and check that tools appear in the README tables —
+  **none of them covers types, defaults, `required`, or description text**, so moving 1300 lines of
+  declarations could silently change a `type: 'number'` into `'string'`. The snapshot records every
+  tool's name, description, timeout and parameter schema (canonicalised) and fails with a field-level
+  diff. Proven by mutation: the type change leaves `check-tool-params.py` green while the snapshot
+  names all six affected tools.
+- `URSIM_WRITE_GOLDEN=1 node --test test/tool-schema-dsl.test.mjs` regenerates the snapshot for an
+  intentional contract change.
 
 ## [0.1.2] - 2026-10-13
 
