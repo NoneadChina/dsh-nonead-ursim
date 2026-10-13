@@ -8,6 +8,33 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.1.5] - 2026-10-14
+
+### Added
+
+- **Simulated I/O and registers (roadmap B3).** Nine ops that used to answer `SIM_UNSUPPORTED` now
+  have a simulation meaning, so a teaching/demo script can finally write "set → read back → assert":
+  `set_digital_out` / `get_digital_out_bits` (std 0-7, config 8-15 on UR's global numbering, tool 0-1),
+  `get_digital_in` / `get_digital_input_bits`, `set_analog_out` / `get_analog_in`, and
+  `get_int_register` / `get_double_register` / `get_bit_register`.
+  - The state is **in memory** and hangs off the virtual robot **instance**, so `sim_stop` +
+    `sim_start` (or the host's self-healing rebuild after a child process is replaced) returns to the
+    initial state — the same semantics as a controller reboot, with no extra bookkeeping.
+  - **Inputs have no producer** (no tool can set an input) and the **registers have no writer** (the
+    plugin ships read-only register tools), so both stay at their initial values — and every such
+    reply says so in a `note` field instead of quietly returning 0.
+  - Parameter validation is not relaxed: an out-of-range port is refused, and a *missing* required
+    parameter is now a clear `BADARG` (the real-robot handlers raise `KeyError` there, which surfaces
+    as an opaque failure).
+
+### Changed
+
+- `ursim_sim_status`'s capability list moved I/O and registers out of `not_simulated` into a new `io`
+  key, and its note now states the memory-state semantics.
+- **The READMEs' capability claims follow the code again**: the top banner and the "what it cannot do"
+  list no longer say that I/O and registers are unsupported, and the URSim paragraph now states what
+  it takes to drive it (enable the real-robot channel) instead of claiming this release cannot.
+
 ## [0.1.4] - 2026-10-14
 
 ### Added
