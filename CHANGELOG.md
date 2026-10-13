@@ -7,6 +7,24 @@ so it does not continue the version numbering of the code base it was separated 
 history is archived verbatim in [`CHANGELOG-archive.md`](./CHANGELOG-archive.md); it is **not** part of
 this package and is excluded from the published tarball by the `files` whitelist in `package.json`.
 
+## [0.1.1] - 2026-10-13
+
+### Fixed
+
+- **The twin no longer draws an unposed arm when the pose feed has a gap.** A model that has been
+  assembled but has not had a pose written to it yet leaves all seven link meshes in their own link
+  frames at the base origin — two long tubes lying side by side, the tool flange next to the base —
+  and that is exactly what the panel used to show as soon as the pose channel went quiet for a
+  moment (a simulation being rebuilt, the worker being reloaded: the state route then answers
+  `q: []`, so `if (kin && joints)` skips the whole pose write, and a freshly loaded model kept that
+  assembly state forever). `loadModel()` now poses a newly loaded model with the **last known joint
+  values** immediately, and a model that has never been given a pose is **kept hidden** until the
+  first pose arrives, so the assembly state can no longer reach the screen. The pose write, the TCP
+  axis gizmo and the force arrow now share one entry point (`applyPoseToScene`), which is what makes
+  "this model has a pose" a state the panel can rely on. Two regression tests in
+  `test/twin-panel.test.mjs` cover both halves (a model change on a frame without `q`; a first load
+  before any `q` has ever arrived).
+
 ## [0.1.0] - 2026-10-12
 
 First release of **`dsh-nonead-ursim`** as an independent plugin.
