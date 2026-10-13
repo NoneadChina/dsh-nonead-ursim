@@ -1,0 +1,61 @@
+# dsh-nonead-ursim — CI
+#
+# 目标：把本仓库**自己就能证明的东西**放进 CI —— 测试、门禁、客户端产物同步。
+#
+# 为什么两套 OS：这个插件的实际运行目标是 Windows（`lib/index.js` 里有 asar 感知的路径替换、
+# 门禁脚本里有 Windows 专属的坑，例如临时文件被占用），而 Linux 是最常见的 CI 环境。
+# 两边都跑，才能保证"在我机器上是绿的"不是唯一证据。
+#
+# 为什么不把 `verify:host` 做成阻塞项：它拿**已安装宿主**的版本去比对 peer 范围，而宿主包
+# （`@deepseek-ai/dsh-tools` / `schemastery`）由 DSH 提供；npm 上的公开版本（0.0.1-rc.1）与本机
+# 宿主的版本线并不一致，所以它在 CI 里的失败**不代表本仓库有问题**。这里让它报告而不阻断，
+# 真机/宿主兼容性仍在有宿主的那台机器上跑。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Node dependencies
+        run: npm install --no-audit --no-fund
+
+      # `npm test` = 全部 node 测试 + 门禁（含 python 侧五个门禁）。
+      # 其中 check-client-bundle.mjs 会逐字节比对 lib/client.js 与 src/client/**，所以
+      # "改了客户端源码却忘了重建产物"在 CI 里必红。
+      - name: Full suite (tests + gates)
+        run: npm test
+
+      # 客户端产物必须与源码一致：即使 npm test 已经校验过，这里再显式重建一次并检查 git 差异，
+      # 让失败信息直接指向"产物过期"而不是藏在 51 项里。
+      - name: Rebuilt client bundle must leave the tree clean
+        run: |
+          npm run build:client
+          git diff --exit-code -- lib/client.js lib/client.js.map
+
+      - name: Host compatibility (report only — needs the DSH host packages)
+        continue-on-error: true
+        run: npm run verify:host

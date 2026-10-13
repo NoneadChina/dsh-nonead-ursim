@@ -33,7 +33,7 @@
     "check": "npm run check:static && npm run check:ops && npm run check:docs && npm run check:manifest",
     "check:static": "node --check lib/index.js && node --check lib/worker.js && node scripts/check-package-metadata.mjs && node scripts/check-client-bundle.mjs",
     "check:ops": "python scripts/check-worker-ops.py && python scripts/check-new-ops.py && python scripts/check-approval-gate.py && python scripts/check-tool-params.py && python scripts/check-rtde-recipe.py",
-    "check:docs": "node scripts/check-doc-tools.mjs && node scripts/tool-matrix.mjs",
+    "check:docs": "node scripts/check-doc-tools.mjs && node scripts/tool-matrix.mjs && node scripts/check-doc-links.mjs",
     "check:manifest": "node scripts/check-test-manifest.mjs",
     "test": "node scripts/run-tests.mjs",
     "test:node": "node scripts/run-tests.mjs --skip-python",
