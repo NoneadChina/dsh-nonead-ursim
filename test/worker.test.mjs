@@ -48,6 +48,11 @@ for line in sys.stdin:
         sys.exit(3)
     elif op == "hang":
         time.sleep(30)
+    elif op == "hang-noise":
+        # 先往 stderr 写一行可辨认的原因，再挂住 —— 用于验证"超时 kill 时错误信息仍带 stderr"。
+        sys.stderr.write("noise-from-worker: killed while busy\\n")
+        sys.stderr.flush()
+        time.sleep(30)
     elif op == "push":
         # 先推一行**没有 id** 的主动推送（模拟孪生遥测），再回一条正常响应。
         sys.stdout.write(json.dumps({"push": "telemetry", "ip": "1.2.3.4", "ts": 111,
@@ -99,6 +104,72 @@ test('子进程退出：在飞请求立即失败，且错误里带退出码与 s
   try {
     const worker = fixture.worker()
     await assert.rejects(() => worker.call('die'), /UR worker exited \(code=3/)
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('★ 连续调用不给 stdin 累积 error 监听器（旧写法第 11 次调用即 MaxListenersExceededWarning）', async () => {
+  const fixture = fakeWorkerFixture()
+  try {
+    const worker = fixture.worker()
+    for (let i = 0; i < 20; i += 1) {
+      assert.deepEqual(await worker.call('echo', { v: i }), { echo: i })
+    }
+    const stdin = worker.proc?.stdin
+    assert.ok(stdin, '应存在子进程 stdin')
+    // 未处理的 'error' 会掀掉宿主进程，所以必须有人接；但**只能挂一个**：
+    // 逐次 `on('error')` 且从不摘除会累积监听器与闭包，并让 Node 刷警告。
+    assert.equal(
+      stdin.listenerCount('error'),
+      1,
+      `stdin 的 error 监听器必须恒为 1（每个子进程只挂一次），实测 ${stdin.listenerCount('error')}`,
+    )
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('★ 失败的 spawn 不占代次：respawnCount 只统计真正起来的子进程', async () => {
+  const fixture = fakeWorkerFixture()
+  try {
+    // 解释器路径不存在 ⇒ spawn 失败：不得触发 'spawn' 事件，也不得占用一个代次
+    // （占用会让宿主误判"子进程被换过"而重建仿真并让客户端重新下载 GLB）。
+    const broken = new UrWorker({
+      pythonBin: join(tmpdir(), 'definitely-not-a-python-interpreter-xyz'),
+      pythonDir: fixture.dir,
+    })
+    await assert.rejects(() => broken.call('echo', { v: 1 }))
+    assert.equal(broken.stats().respawnCount, 0, '失败的 spawn 不得占用代次')
+    broken.dispose()
+
+    // 正对照：成功起来的子进程占且仅占一个代次。
+    const ok = fixture.worker()
+    assert.deepEqual(await ok.call('echo', { v: 'ok' }), { echo: 'ok' })
+    assert.equal(ok.stats().respawnCount, 1, '成功的 spawn 必须占一个代次')
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('★ 超时 kill 时，同孩子的其它在飞请求必须拿到带 stderr 的 KILLED 原因', async () => {
+  const fixture = fakeWorkerFixture()
+  try {
+    const worker = fixture.worker()
+    // ① 先发一条会挂住并超时的调用：它自己拿到 TIMEOUT；超时后 `_killFor` 杀掉子进程。
+    const hang = worker.call('hang-noise', {}, 800)
+    // ② 让第二条请求真的写进同一个孩子的 stdin，于是它属于"被 kill 殃及的在飞请求"。
+    await new Promise((r) => setTimeout(r, 150))
+    const collateral = worker.call('hang', {}, 5000)
+
+    await assert.rejects(hang, /timed out after 800ms/)
+    await assert.rejects(collateral, (err) => {
+      // 旧写法用共享的 `this.stderrTail`，而 per-child 尾部在 `_failAll()` 里已被清掉，
+      // 于是这里只会得到一句**没有原因**的"进程已被终止"。
+      assert.match(err.message, /进程已被终止/, `应是 KILLED 原因：${err.message}`)
+      assert.match(err.message, /noise-from-worker/, `KILLED 原因里必须带子进程 stderr：${err.message}`)
+      return true
+    })
   } finally {
     fixture.cleanup()
   }
