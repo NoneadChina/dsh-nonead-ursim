@@ -1437,6 +1437,10 @@ export function mountTwinPanel({
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ enabled: false }),
+        // `keepalive`：这一条恰恰在**页面卸载过程中**发出（面板收起/切换视图），浏览器会把
+        // 正在飞的普通 fetch 直接 abort ⇒ 虚拟机器人在宿主里继续跑，而用户以为它停了，下一个
+        // 打开面板的人还会"沿用"它。载荷只有几十字节，远在 keepalive 的 64 KB 限制内。
+        keepalive: true,
       })
       if (result && typeof result.catch === 'function') result.catch(() => {})
     } catch {
@@ -1743,7 +1747,7 @@ export function mountTwinPanel({
    * `joints` 必须是**测量值**（host 报出的那一笔），不是插值值 —— 插值只服务于网格的观感，
    * 工程读数不能是"算出来的中间态"。
    */
-  function writeHud(nowMs, snap, joints, fkResult) {
+  function writeHud(nowMs, snap, joints, fkResult, kin) {
     if (!(nowMs - lastHudMs >= HUD_INTERVAL_MS)) return
     lastHudMs = nowMs
     // 身份行：机型 + 机器人 IP。IP 以前只落在属性上，界面上看不到。
@@ -1773,8 +1777,11 @@ export function mountTwinPanel({
     const pendingSummary = typeof snap?.pendingMotion?.summary === 'string' ? snap.pendingMotion.summary : ''
     hudPending.textContent = pendingSummary === '' ? '' : `${S.pendingPrefix}  ${pendingSummary}`
     hudPending.setAttribute('title', hudPending.textContent)
-    // 关节角：同时标出**超出限位**的关节（限位表来自 kinematics.json，此前从未被用过）。
-    const over = overLimitJoints(joints, fkResult?.jointLimits)
+    // 关节角：同时标出**超出限位**的关节。限位表来自 `resolveKinematics()`（= kinematics.json），
+    // **不是** `fkChain()` 的返回值 —— 后者恒为 `{links, tool0}`，从来没有 `jointLimits` 字段，
+    // 于是旧写法恒传 `undefined`、`overLimitJoints` 第一行就 `return []`：这个提示 100% 不生效，
+    // 而测试是绿的（假 handle 记录的同样是真 `fkChain` 的输出）。
+    const over = overLimitJoints(joints, kin?.jointLimits)
     hudJoints.textContent = over.length === 0
       ? formatJoints(joints)
       : `${formatJoints(joints)}  ${S.overLimit(`J${over.join('/J')}`)}`
@@ -1932,7 +1939,7 @@ export function mountTwinPanel({
       drawTrajectory()
       // HUD 用**测量值**而不是插值值：插值是为了让网格看起来连续，而工程读数必须是
       // 控制器真实报出的那一笔（两者可能相差一个采样周期 + 渲染滞后）。
-      writeHud(nowMs, snap, joints, fkResult)
+      writeHud(nowMs, snap, joints, fkResult, kin)
     }
 
     // 画布尺寸：面板刚展开时 flex 高度可能还没算出来（量到 0×0），必须每帧重试，

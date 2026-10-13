@@ -401,7 +401,7 @@ function makeFakeRequest({ active = false, model = 'ur5e', models = ['ur3', 'ur5
   const calls = []
   const impl = async (url, init = {}) => {
     const method = init.method ?? 'GET'
-    calls.push({ url, method, body: init.body ?? null, headers: init.headers ?? null })
+    calls.push({ url, method, body: init.body ?? null, headers: init.headers ?? null, keepalive: init.keepalive ?? null })
     if (rejectWith !== null) throw rejectWith instanceof Error ? rejectWith : new Error(String(rejectWith))
     const payload = method === 'POST'
       ? { ...postResult, active: postResult.ok === true && active !== true ? true : active }
@@ -1182,6 +1182,29 @@ test('未超限时关节行与 formatJoints 逐字一致（不引入任何后缀
   ctx.panel.dispose()
 })
 
+test('★ 关节超出该型号限位时必须标出来（回归：限位表曾取自 fkChain 不存在的字段 ⇒ 提示恒不生效）', async () => {
+  // 限位表来自 kinematics.json（`resolveKinematics()` 的返回值）。旧写法把它写成
+  // `fkResult?.jointLimits`，而 `fkChain()` 的返回结构恒为 `{links, tool0}` —— 于是传入
+  // `undefined`，`overLimitJoints` 第一行就返回空数组：这个提示 100% 不生效，测试却是绿的。
+  const kin = resolveKinematics('ur3')
+  const beyond = [...Q0]
+  beyond[1] = kin.jointLimits[1][1] + 0.5 // J2 越过上限
+
+  const ctx = boot({ initial: { connected: true, model: 'UR3', q: beyond, tcp: TCP0, ts: 1000 } })
+  ctx.clock.flush()
+  await tick()
+  ctx.clock.flush(16)
+
+  const joints = jointsEl(ctx)
+  assert.equal(
+    joints.getAttribute('data-ursim-twin-overlimit'),
+    'true',
+    'J2 超限必须标记（旧写法传 fkChain 不存在的 jointLimits ⇒ 恒为 false）',
+  )
+  assert.notEqual(joints.textContent, formatJoints(beyond), '超限时关节行必须带上提示后缀')
+  ctx.panel.dispose()
+})
+
 test('身份行把机型与 IP 显示成可见文本（IP 以前只落在属性上）', async () => {
   const ctx = boot({
     initial: { connected: true, model: 'UR5E', q: Q0, tcp: TCP0, ts: 1000, ip: '192.168.2.201' },
@@ -1736,6 +1759,11 @@ test('★ 收起面板即停仿真，并把数据源切回"按宿主解析"', as
   const last = ctx.request.posts().at(-1)
   assert.equal(last.method, 'POST')
   assert.deepEqual(JSON.parse(last.body), { enabled: false }, '★ 收起面板必须关掉仿真')
+  assert.equal(
+    last.keepalive,
+    true,
+    '★ 卸载路径的写请求必须带 keepalive：普通 fetch 会在页面卸载时被 abort，仿真于是在宿主里继续跑',
+  )
   assert.deepEqual(ctx.state.ipCalls, ['127.0.0.1', ''], '数据源必须切回自动解析')
 })
 
