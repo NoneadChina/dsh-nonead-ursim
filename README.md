@@ -346,6 +346,15 @@ realRobotIps: '192.168.1.10'     # comma-separated allow-list; empty ⇒ every t
 - Read [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md) and the safety note at the top of this
   file before pointing this at hardware.
 
+## Developer
+
+**Suzhou Nonead Robot Technology Co., Ltd.** — R&D Department, **Tony Ke**.
+
+- **Company**: Suzhou Nonead Robot Technology Co., Ltd. (<https://www.nonead.com>)
+- **Developer**: Tony Ke, R&D Department (研发部)
+- **Questions and bug reports**: please open an issue in this repository. For commercial licensing,
+  write to <service@nonead.com>.
+
 ## License
 
 This project adopts a **User-Segmented Dual Licensing** model:

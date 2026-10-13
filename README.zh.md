@@ -319,6 +319,14 @@ realRobotIps: '192.168.1.10'     # 逗号分隔的白名单；留空则任何目
   来自人写下的配置值。
 - 指向真机之前，请先读 [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md) 与本文档顶部的安全提示。
 
+## 开发者
+
+**Suzhou Nonead Robot Technology Co., Ltd.（拓德科技）** —— 研发部 **Tony Ke**。
+
+- **公司**：Suzhou Nonead Robot Technology Co., Ltd.（<https://www.nonead.com>）
+- **开发者**：研发部 Tony Ke
+- **问题与反馈**：请在本仓库开 issue；商业授权请联系 <service@nonead.com>。
+
 ## License
 
 本项目采用**区分用户的双重许可 (User-Segmented Dual Licensing)** 模式：
