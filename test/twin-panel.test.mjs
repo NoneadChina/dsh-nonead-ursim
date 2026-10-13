@@ -588,6 +588,61 @@ test('型号 UR3 → UR5E 时重新加载模型，旧模型被摘出场景并 di
 })
 
 /* ------------------------------------------------------------------ *
+ * 用例 4b：换型号时那一帧没有合法 q —— 新模型必须立刻摆到最近一次已知姿态
+ *
+ * 回归：实机报障"仿真跑起来后机械臂非正常折叠"。根因是面板把**装配完成但还没写 FK** 的
+ * 模型原样展示：7 个网格各自留在自己的连杆坐标系里叠在基座原点（两根长管并排、法兰盘落在
+ * 基座旁、TCP gizmo 停在原点）。换型号恰好常发生在数据面抖动的时刻（仿真重启 / worker
+ * 重挂载 ⇒ 状态路由返回 `q: []`），若新模型不立刻摆姿态，画面就会永久停在那个堆叠态。
+ * ------------------------------------------------------------------ */
+
+test('换型号时该帧没有合法 q：新模型立刻摆到最近一次已知姿态，不得留在装配态', async () => {
+  const ctx = boot({ initial: { connected: true, model: 'UR3', q: Q0, tcp: TCP0, ts: 1000 } })
+
+  ctx.clock.flush()
+  await tick()
+  ctx.clock.flush(16) // 模型就绪后的**第一帧**才会写姿态
+  const h1 = ctx.modelLoader.handles[0]
+  assert.ok(h1.applyFKCount >= 1, '第一台模型必须先被摆上姿态')
+
+  // 型号变了，但这一帧的 q 不完整（仿真被换掉 / worker 重挂载后的真实形态）。
+  ctx.state.set({ model: 'UR5E', q: [], ts: 1100 })
+  ctx.clock.flush()
+  await tick()
+
+  const h2 = ctx.modelLoader.handles[1]
+  assert.ok(h2, '型号变化必须重新加载模型')
+  assert.ok(h2.applyFKCount >= 1, '新模型必须在装载后立刻摆到最近一次已知姿态，而不是留在装配态')
+  const expected = fkChain(resolveKinematics('ur5e'), Q0).tool0
+  for (let i = 0; i < 16; i++) {
+    assert.ok(
+      Math.abs(h2.lastResult.tool0[i] - expected[i]) < 1e-12,
+      `换型号后必须用新运动学链摆到上次姿态：tool0[${i}] ${h2.lastResult.tool0[i]} ≠ ${expected[i]}`,
+    )
+  }
+  assert.equal(h2.root.visible, true, '已摆上姿态的新模型必须可见')
+
+  ctx.panel.dispose()
+})
+
+test('首次加载时还没有合法 q：模型先藏起来，收到第一帧姿态后才显示', async () => {
+  const ctx = boot({ initial: { connected: true, model: 'UR3', q: [], tcp: [], ts: 1000 } })
+
+  ctx.clock.flush()
+  await tick()
+  const h = ctx.modelLoader.handles[0]
+  assert.equal(h.applyFKCount, 0, '没有 q 时不得凭空摆姿态')
+  assert.equal(h.root.visible, false, '未摆姿态的装配态（连杆叠在基座）绝不能被展示出来')
+
+  ctx.state.set({ q: Q0, ts: 1200 })
+  ctx.clock.flush(16)
+  assert.ok(h.applyFKCount >= 1, '收到第一帧 q 后必须摆姿态')
+  assert.equal(h.root.visible, true, '摆上姿态后必须显示')
+
+  ctx.panel.dispose()
+})
+
+/* ------------------------------------------------------------------ *
  * 用例 5：轨迹 —— 逐帧增长、不超容量、不重建 geometry
  * ------------------------------------------------------------------ */
 

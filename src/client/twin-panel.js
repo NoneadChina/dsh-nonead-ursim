@@ -895,6 +895,15 @@ export function mountTwinPanel({
   let ghostWanted = false
   /** 判定"明显不同"的阈值（弧度）：约 1.15°，低于它按数值噪声处理，不让画面闪。 */
   const GHOST_MIN_DELTA_RAD = 0.02
+  /**
+   * 最近一次**成功写进场景**的六个关节角（`null` = 还一次都没收到过姿态）。
+   *
+   * 用途：换型号时新模型**立刻**摆到这个姿态（见 `applyPoseToScene` 与 `loadModel`）。
+   * 装配完成但还没写 FK 的模型，7 个网格会各自留在自己的连杆坐标系里叠在基座原点 ——
+   * 那看上去就是"机械臂非正常折叠"（实机报障的确切症状）；而换型号恰好常发生在数据面
+   * 正在抖动的时刻（仿真重启 / worker 重挂载 ⇒ 状态路由返回 `q: []`）。
+   */
+  let lastAppliedQ = null
 
   // 工程辅助图层（清单第 9 条）：可达范围包络、基座坐标系、TCP 受力箭头、负载重心标记，
   // 以及**目标姿态**（幽灵臂）。除幽灵臂外**默认全关** —— 一次全画出来画面会花到看不清真臂；
@@ -1526,6 +1535,42 @@ export function mountTwinPanel({
     updateTcpAxesSize(tcpAxes, tcpAxesSizeFor(sceneHandle?.currentFitRadius?.()))
   }
 
+  /**
+   * 把一套关节角写进 3D —— 真臂装配组 + TCP gizmo + 受力箭头。**这是"模型已被摆上姿态"的唯一入口**，
+   * 因此它顺带做两件与姿态绑定的事：
+   *
+   * ① **把根节点置为可见**。装配完成但还没写 FK 的模型，7 个网格各自留在自己的连杆坐标系里
+   *    叠在基座原点（两根长管并排、法兰盘落在基座旁）—— 实机报障的"机械臂非正常折叠"就是它，
+   *    所以绝不能在未摆姿态时展示根节点；
+   * ② **记住这一次的关节角**，供换型号时给新模型摆姿态（见 `loadModel`）。
+   *
+   * @param {ArrayLike<number>} q 六个关节角（弧度）
+   * @param {{links: Array<object>}} kinEntry 该型号的运动学链（`resolveKinematics` 的结果）
+   * @returns {object} `fkChain` 的结果，供 HUD 复用
+   */
+  function applyPoseToScene(q, kinEntry) {
+    const result = fkChain(kinEntry, q)
+    handle?.applyFK?.(result)
+    // TCP 坐标系 gizmo：贴到 tool0（第六关节之后的累积变换）。
+    if (Array.isArray(result.tool0)) {
+      tcpAxes.matrix.fromArray(result.tool0)
+      tcpAxes.matrixWorldNeedsUpdate = true
+      // TCP 受力箭头（清单第 9 条）：贴在 TCP 位置，方向按**世界系**受力方向 ——
+      // 刻意不继承 TCP 的旋转，因为力是环境施加的，不是工具坐标系里的量。
+      forceArrow.position.set(result.tool0[12], result.tool0[13], result.tool0[14])
+      if (layers.force) updateForceArrow(forceArrow, lastSnapshot?.detail?.tcp_force)
+      else forceArrow.visible = false
+    }
+    // 只有**真的写进了场景**才记账：模型还在异步装载（`handle` 为 null）时这一帧什么都没摆，
+    // 不能算作"已知姿态"，否则装载完成时会再摆一次（同一帧两次 applyFK），也让"藏起来直到
+    // 第一帧姿态"这条保证失效。
+    if (handle?.root) {
+      handle.root.visible = true
+      lastAppliedQ = q === null || q === undefined ? null : Array.from(q).slice(0, 6)
+    }
+    return result
+  }
+
   /* ---------------- 模型加载（型号变化 → 重建） ---------------- */
   async function loadModel(rawModel) {
     const token = ++loadToken
@@ -1591,6 +1636,14 @@ export function mountTwinPanel({
     if (previousModelId !== '' && previousModelId !== loadedModelId) {
       resetMotionMemory()
     }
+    // 新模型**立刻**摆到最近一次已知姿态（见 applyPoseToScene）：换型号时数据面常常正好在
+    // "q 不完整"的窗口里（实测：仿真被换掉 / worker 重挂载后，孪生状态路由返回 `q: []`）。
+    // 若不摆，就要等下一帧带 q 的采样 —— 而那一帧可能永远不来，画面于是永久停在装配态
+    // （所有连杆叠在基座上），即用户看到的"机械臂非正常折叠"。
+    // 连一次姿态都还没收到过（首次加载且尚无 q）时先把根节点藏起来：展示堆叠态比不展示更误导。
+    const kinNow = resolveKinematics(loadedModelId)
+    if (kinNow && Array.isArray(lastAppliedQ)) applyPoseToScene(lastAppliedQ, kinNow)
+    else next.root.visible = false
     // 换装即重新取景（默认按本型号自适应；打开「可达范围」图层时用固定参考半径，见 frameView）。
     frameView()
     // 可达范围包络：半径只取决于型号（与姿态无关），所以换装时更新一次即可。
@@ -1828,10 +1881,9 @@ export function mountTwinPanel({
       const smooth = prevSample
         ? interpolateAt(prevSample, curSample, nowMs - renderDelayMs(prevSample, curSample))
         : curSample.q.slice()
-      fkResult = fkChain(kin, smooth)
-
-      // 姿态：只在模型就绪时写（applyFK 不产生 GPU 资源，无需暂存）。
-      handle?.applyFK?.(fkResult)
+      // 姿态：只在模型就绪时写（applyFK 不产生 GPU 资源，无需暂存）。这一步同时把模型置为
+      // 可见、并把本次关节角记下来（换型号时新模型据此立刻摆姿态）—— 见 applyPoseToScene。
+      fkResult = applyPoseToScene(smooth, kin)
 
       // 幽灵臂：把"控制器打算去哪"画出来，与上面的**实际**姿态叠加 —— 跟随误差、滞后与
       // 交融过程一眼可见。
@@ -1875,20 +1927,7 @@ export function mountTwinPanel({
         syncGhost()
       }
 
-      // TCP 坐标系 gizmo：贴到 tool0（第六关节之后的累积变换）。
-      if (Array.isArray(fkResult.tool0)) {
-        tcpAxes.matrix.fromArray(fkResult.tool0)
-        tcpAxes.matrixWorldNeedsUpdate = true
-        // TCP 受力箭头（清单第 9 条）：贴在 TCP 位置，方向按**世界系**受力方向 ——
-        // 刻意不继承 TCP 的旋转，因为力是环境施加的，不是工具坐标系里的量。
-        forceArrow.position.set(
-          tcpAxes.matrix.elements[12],
-          tcpAxes.matrix.elements[13],
-          tcpAxes.matrix.elements[14],
-        )
-        if (layers.force) updateForceArrow(forceArrow, snap?.detail?.tcp_force)
-        else forceArrow.visible = false
-      }
+      // TCP gizmo 与受力箭头已随 applyPoseToScene 一起写好（与姿态同一个入口，不会各写一次）。
 
       drawTrajectory()
       // HUD 用**测量值**而不是插值值：插值是为了让网格看起来连续，而工程读数必须是
