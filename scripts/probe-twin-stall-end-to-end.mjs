@@ -6,7 +6,7 @@
  * `createTwinState({ stream: true })`。
  *
  * 场景就是用户报的那一个：机器人**开始运动**。Python worker 是单线程 stdin 队列，运动指令
- * 占住它，孪生的读要排队并超时。修前：宿主一个事件都不发（画面冻住），而且孪生读用 60 s
+ * 占住它，仿真的读要排队并超时。修前：宿主一个事件都不发（画面冻住），而且仿真读用 60 s
  * 默认预算、超时会**杀掉整条机器人会话**。修后必须满足三条：
  *   ① 读排队期间，客户端**仍然收到事件**（`stale`）；
  *   ② 客户端**保留读数**（connected 不能变成 false —— 那会把 3D 视图整个藏起来）；
@@ -143,5 +143,5 @@ for (const [label, ok] of checks) {
   if (!ok) failed += 1;
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}`);
 }
-console.log(`孪生读预算：${TWIN_READ_TIMEOUT_MS}ms（真机上由 lib/twin-worker.js 强制）`);
+console.log(`仿真读预算：${TWIN_READ_TIMEOUT_MS}ms（真机上由 lib/twin-worker.js 强制）`);
 process.exit(failed === 0 ? 0 : 1);

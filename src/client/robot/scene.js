@@ -416,7 +416,7 @@ export function createScene(canvas, { maxPixelRatio = 2, rendererFactory, theme 
    *
    * ⚠️ `renderer.dispose()` **不会**释放 WebGL 上下文（r180 里它只丢掉内部缓存并摘掉自己
    * 装的 context-lost 监听）；必须再调 `forceContextLoss()`。否则每次展开/收起面板都会
-   * 留下一个活着的上下文，浏览器上限（约 16 个）一到就开始回收最老的 —— 表现是孪生面板
+   * 留下一个活着的上下文，浏览器上限（约 16 个）一到就开始回收最老的 —— 表现是仿真面板
    * 或其它 WebGL 视图（例如任务看板）变黑。
    *
    * `GridHelper` 自带可释放的 BufferGeometry/LineBasicMaterial，之前从未被释放。

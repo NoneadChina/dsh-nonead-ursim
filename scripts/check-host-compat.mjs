@@ -9,7 +9,7 @@
  * 校验项：
  *   1. peer 范围：用宿主自带的 semver 比对 package.json 的 peerDependencies 与宿主实装版本；
  *   2. 工具 schema：用宿主**真实**的 @deepseek-ai/dsh-tools 编译全部工具参数 schema，并数出注册数；
- *   3. 孪生只读路由：驱动 `ctx.inject(['webServer'], …)`，确认两条路由的注册形状；
+ *   3. 仿真只读路由：驱动 `ctx.inject(['webServer'], …)`，确认两条路由的注册形状；
  *   4. dsh.client 声明与客户端 bundle：类型契约、`exports["./client"]` 可解析、bundle 以包名注册。
  *
  * 用法：
@@ -34,7 +34,7 @@ const PEER_PACKAGES = [
 /** 工具表当前规模（当前的 86 个）；注册数少于它即为「静默丢工具」。 */
 const EXPECTED_TOOLS = 86
 /**
- * 孪生侧注册的 `kind:'exact'` 路由条数。
+ * 仿真侧注册的 `kind:'exact'` 路由条数。
  *
  * 0.6.3 起是 4 条：state / asset / models / **stream**（第 20 条的 SSE 实时流）。
  * 0.7.0 增加第 5 条：**sim**（离线仿真开关 —— 唯一的写路由，GET 读状态 / POST 启停）。
@@ -213,9 +213,9 @@ if (registered.length === EXPECTED_TOOLS && registrationFailures.length === 0) {
 }
 
 if (mountedRoutes.length === TWIN_ROUTE_COUNT && mountedRoutes.every((route) => route.kind === 'exact' && typeof route.handler === 'function')) {
-  pass('孪生只读路由', mountedRoutes.map((route) => route.path).join('、'))
+  pass('仿真只读路由', mountedRoutes.map((route) => route.path).join('、'))
 } else {
-  fail('孪生只读路由', `期望 ${TWIN_ROUTE_COUNT} 条 kind:'exact' 路由，实际 ${mountedRoutes.length} 条`)
+  fail('仿真只读路由', `期望 ${TWIN_ROUTE_COUNT} 条 kind:'exact' 路由，实际 ${mountedRoutes.length} 条`)
 }
 
 if (infos.some((line) => line.includes(`已注册 ${EXPECTED_TOOLS}/${EXPECTED_TOOLS}`))) {

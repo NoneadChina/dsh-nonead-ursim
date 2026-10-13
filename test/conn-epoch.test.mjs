@@ -1,5 +1,5 @@
 /**
- * test/conn-epoch.test.mjs — 孪生"换了一台机器人就换模型"的 **Python 半**。
+ * test/conn-epoch.test.mjs — 仿真"换了一台机器人就换模型"的 **Python 半**。
  *
  * ## 这条链要修的是什么
  * 型号在一台机器人的连接存续期间不变，所以宿主按 IP 缓存它是对的；但**同一个 IP 换一台
@@ -7,7 +7,7 @@
  *
  *   1. `_twin_push_snapshot` 必须**在 RTDE 会话死掉时停止推送**。`_rtde_field` 读的是
  *      `model.dataDir` 里**最后一笔**值，它在掉线后依然在 —— 继续推等于用当下的时间戳发
- *      掉线前的读数：孪生看起来一切正常却冻住，而且因为推送"一直新鲜"，宿主永远不会回退到
+ *      掉线前的读数：仿真看起来一切正常却冻住，而且因为推送"一直新鲜"，宿主永远不会回退到
  *      显式读（**只有显式读会重连、从而发现换了一台机器人**）。
  *   2. `ensure_connected` 每新建一条连接就把 `ROBOT_CONN_SEQ[ip]` **+1** 并**只增不减**
  *      （清零会让新旧代次撞车，那恰好会在我要修的场景里失效）。
@@ -122,11 +122,11 @@ assert.ok(line, `未拿到 JSON：${JSON.stringify(child.stdout)}`)
 const out = JSON.parse(line)
 
 test('★ RTDE 会话不在跑时一帧都不推（绝不用旧缓存冒充实时读数）', () => {
-  assert.equal(out.dead, null, '掉线的会话必须闭嘴，否则孪生会"看起来正常却冻住"');
+  assert.equal(out.dead, null, '掉线的会话必须闭嘴，否则仿真会"看起来正常却冻住"');
   assert.deepEqual(
     out.live,
     { q: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6], tcp: [0, 0, 0.5, 0, 0, 0] },
-    '会话健康时必须照常推（这是孪生在运动期间仍出数的唯一通道）',
+    '会话健康时必须照常推（这是仿真在运动期间仍出数的唯一通道）',
   );
   assert.equal(out.missing, null, '没有这台机器人时返回 None 而不是抛错');
 });

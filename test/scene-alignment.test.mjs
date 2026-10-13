@@ -81,7 +81,7 @@ test('契约：相机 up 为 +Z，且网格只经 createBaseGrid 创建', () => 
 test('契约：dispose 必须释放 WebGL 上下文与网格资源（否则每次展开都泄漏一个上下文）', () => {
   // three 的 `renderer.dispose()` **不释放上下文**（只丢缓存并摘掉自己的 context-lost 监听）；
   // 不调 `forceContextLoss()` 时，反复展开/收起面板会攒满浏览器的上下文上限（约 16 个），
-  // 之后最老的上下文被回收 —— 表现是孪生面板或其它 WebGL 视图变黑。
+  // 之后最老的上下文被回收 —— 表现是仿真面板或其它 WebGL 视图变黑。
   assert.match(sceneSource, /renderer\.forceContextLoss\?\.\(\)/,
     'dispose 必须调用 forceContextLoss()')
   assert.match(sceneSource, /grid\?\.geometry\?\.dispose\?\.\(\)/, '网格 geometry 必须释放')

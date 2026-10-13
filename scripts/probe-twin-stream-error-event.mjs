@@ -1,5 +1,5 @@
 /**
- * 探针（不是测试）：把孪生**真实的数据通道**端到端跑起来 ——
+ * 探针（不是测试）：把仿真**真实的数据通道**端到端跑起来 ——
  *   真实 node:http SSE 服务端（复用 lib/twin-routes.js 的 createTwinStreamHandler）
  *   → 真实浏览器语义的 EventSource（undici 的实现，逐条按 HTML 规范）
  *   → 插件真实的客户端订阅器 src/client/robot/twin-stream.js

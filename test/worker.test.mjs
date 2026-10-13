@@ -54,7 +54,7 @@ for line in sys.stdin:
         sys.stderr.flush()
         time.sleep(30)
     elif op == "push":
-        # 先推一行**没有 id** 的主动推送（模拟孪生遥测），再回一条正常响应。
+        # 先推一行**没有 id** 的主动推送（模拟仿真遥测），再回一条正常响应。
         sys.stdout.write(json.dumps({"push": "telemetry", "ip": "1.2.3.4", "ts": 111,
                                      "data": {"q": [1, 2, 3, 4, 5, 6], "tcp": [0, 0, 1, 0, 0, 0]}}) + "\\n")
         sys.stdout.flush()
@@ -255,10 +255,10 @@ test('超时换新进程：下一次 call() 仍然可用（自动恢复，无需
   }
 })
 
-// ── 0.6.6：孪生的只读遥测**不得**因为超时就杀掉机器人会话 ────────────────────
+// ── 0.6.6：仿真的只读遥测**不得**因为超时就杀掉机器人会话 ────────────────────
 //
-// 机器人执行运动指令时孪生的读会排队（同一条单线程 stdin 队列），用默认预算会在超时时杀掉
-// 子进程 —— 连带整条 RTDE/Dashboard 会话，孪生此后永远拿不到位姿。只读读传
+// 机器人执行运动指令时仿真的读会排队（同一条单线程 stdin 队列），用默认预算会在超时时杀掉
+// 子进程 —— 连带整条 RTDE/Dashboard 会话，仿真此后永远拿不到位姿。只读读传
 // `killOnTimeout:false`：**这一次调用**失败，进程与会话留下。
 
 test('killOnTimeout:false —— 超时只让这一次调用失败，不杀子进程（机器人会话必须活着）', async () => {
@@ -275,13 +275,13 @@ test('killOnTimeout:false —— 超时只让这一次调用失败，不杀子�
     );
     assert.ok(error, '超时必须 reject 调用方');
     assert.match(error.message, /timed out after 300ms/);
-    assert.equal(error.code, 'WORKER_TIMEOUT', '★ 必须带机器可读的错误码（孪生据此降级成"陈旧帧"）');
+    assert.equal(error.code, 'WORKER_TIMEOUT', '★ 必须带机器可读的错误码（仿真据此降级成"陈旧帧"）');
 
     await new Promise((resolve) => setTimeout(resolve, 200));
     assert.equal(worker.proc, procBefore, '★ 不得换/杀子进程：会话（RTDE/Dashboard）在它里面');
     assert.equal(worker.stats().running, true, '子进程必须仍然活着');
 
-    // 会话没死 ⇒ 下一个读立刻可用（这就是"机器人运动完孪生自动跟上"的前提）。
+    // 会话没死 ⇒ 下一个读立刻可用（这就是"机器人运动完仿真自动跟上"的前提）。
     assert.deepEqual(await worker.call('echo', { v: 'after-timeout' }), { echo: 'after-timeout' });
   } finally {
     fixture.cleanup()
@@ -294,7 +294,7 @@ test('默认（不传选项）行为不变：超时仍然杀掉子进程以解�
     const worker = fixture.worker()
     await assert.rejects(() => worker.call('hang', {}, 300), /timed out/)
     await new Promise((resolve) => setTimeout(resolve, 300));
-    assert.equal(worker.proc, null, '★ 命令类调用的既有语义不得被孪生的需要改掉');
+    assert.equal(worker.proc, null, '★ 命令类调用的既有语义不得被仿真的需要改掉');
   } finally {
     fixture.cleanup()
   }
@@ -375,7 +375,7 @@ test('契约：默认退避为 500 ms（与「自杀后约 0.5 s 换新进程」
   assert.equal(worker.maxInFlight, 8)
 })
 
-// ── 主动推送遥测（孪生"完整跟随机器人动作"的通道）──────────────────────────
+// ── 主动推送遥测（仿真"完整跟随机器人动作"的通道）──────────────────────────
 //
 // worker 现在会主动推**没有 id** 的协议行（见 python/ur_worker.py 的 `_twin_push_loop`）。
 // 这一层必须把它当推送处理，而不是"一条匹配不上的响应"：后者会丢掉唯一能在运动期间

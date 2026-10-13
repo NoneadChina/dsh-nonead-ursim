@@ -14,7 +14,7 @@
  * （`"Safetymode: NORMAL"` / `"Robotmode: RUNNING"`，见 `URBasic/dashboard.py` 的文档字符串）。
  * 早先的夹具编造了裸值（`"PROTECTIVE_STOP"`），于是"worker 没剥前缀"这个缺陷在测试里隐形：
  * 客户端查不到中文表 → 把 `NORMAL` 当成未知模式 → 判定为需要处置的安全异常 →
- * 孪生面板底部恒挂「机器人可能已停止，请检查示教器」。`_enum_token` 与 `prefixed_*` 用例
+ * 仿真面板底部恒挂「机器人可能已停止，请检查示教器」。`_enum_token` 与 `prefixed_*` 用例
  * 就是为此立的回归门。
  *
  * ## 如实标注：这里**没有**负向验证
@@ -190,7 +190,7 @@ test('bool 寄存器：一个状态字里多个位同时置位也要逐位判对
 
 test('dashboard 应答：带标签前缀的整行必须剥成裸枚举词', () => {
   // 控制器回的是 "Safetymode: NORMAL" 这类整行；若不剥前缀，客户端会查不到中文表，
-  // 并把 NORMAL 当成"未知模式 = 需要处置的安全异常"，孪生面板底部就会恒挂处置提示。
+  // 并把 NORMAL 当成"未知模式 = 需要处置的安全异常"，仿真面板底部就会恒挂处置提示。
   assert.equal(tokens.prefixed_safety, 'NORMAL')
   assert.equal(tokens.prefixed_robot, 'RUNNING')
   assert.equal(tokens.prefixed_padded, 'REDUCED', '首尾空白与冒号后的多余空格都要吃掉')

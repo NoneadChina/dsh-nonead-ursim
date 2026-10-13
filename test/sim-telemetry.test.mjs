@@ -2,12 +2,12 @@
  * test/sim-telemetry.test.mjs — 遥测的**运动学估算**（路线图 B1）。
  *
  * 过去 `get_runtime_telemetry` / `get_robot_current` / `get_robot_voltage` /
- * `get_joint_temperatures` / `get_tcp_force` 在仿真里一律 `SIM_UNSUPPORTED`，于是孪生面板的遥测行
+ * `get_joint_temperatures` / `get_tcp_force` 在仿真里一律 `SIM_UNSUPPORTED`，于是仿真面板的遥测行
  * 永远是空的。B1 之后它们返回**估算值**（有限差分 + 量级模型），并且每一条都带 `estimated: true`
  * 与 `note` —— 估算不是测量，标注是这套实现的一部分。
  *
  * 这里最关键的一条断言是「**运动中**采样的速度/电流/温度都不是 0」：这正是"面板遥测行有值"的用户
- * 可见结果。运动在后台线程里跑，采样在主线程做 —— 与生产一致（孪生推送线程就是在运动期间采样）。
+ * 可见结果。运动在后台线程里跑，采样在主线程做 —— 与生产一致（仿真推送线程就是在运动期间采样）。
  *
  * 运行：node --test test/sim-telemetry.test.mjs
  */
@@ -73,7 +73,7 @@ caps = ur_worker.sim_capabilities()
 out["caps_telemetry"] = len(caps.get("telemetry", []))
 out["not_simulated_mentions_telemetry"] = any("遥测" in s for s in caps["not_simulated"])
 
-# ⑥ ★ 面板真实数据源：孪生 detail 读的是 status，不是 get_runtime_telemetry ——
+# ⑥ ★ 面板真实数据源：仿真 detail 读的是 status，不是 get_runtime_telemetry ——
 #    所以 status 必须也带上那六个字段，否则"面板遥测行是空的"这件事没被修好。
 st = ur_worker.route_op("status", {"ip": IP})["data"]
 out["status_telemetry_keys"] = [
@@ -159,7 +159,7 @@ test('★ B1：能力清单把遥测从「无仿真语义」移到 telemetry', (
   );
 });
 
-test('★ B1：孪生面板的真实数据源（status）也带上了这六个遥测字段', () => {
+test('★ B1：仿真面板的真实数据源（status）也带上了这六个遥测字段', () => {
   const g = probe();
   // 面板的 detail 通道读的是 status（见 lib/twin-routes.js 的 body.detail 字段清单）。
   // 只改 get_runtime_telemetry 是不够的 —— 这条断言盯的是"面板上真的会有值"。

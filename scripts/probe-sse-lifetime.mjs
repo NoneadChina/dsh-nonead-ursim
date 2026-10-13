@@ -2,7 +2,7 @@
  * 探针（不是测试）：DSH 的 webServer 是**裸 node:http**（见
  * @deepseek-ai/dsh-host-webserver 的 `createServer`），而 node 默认 `server.requestTimeout = 300000`。
  * 本探针回答一个只能靠实测回答的问题：**长时间挂住的 SSE 响应会不会被 requestTimeout 掐断？**
- *   - 若超时是「整条响应最多活 N ms」⇒ 孪生流会在 N 之后被服务器拆掉（客户端只会看到 onerror）；
+ *   - 若超时是「整条响应最多活 N ms」⇒ 仿真流会在 N 之后被服务器拆掉（客户端只会看到 onerror）；
  *   - 若超时是「socket 空闲 N ms」⇒ 我们每 100 ms 写一帧，永远不空闲，流不会被掐。
  * 用 800 ms 的 requestTimeout + 150 ms 的写间隔，几秒内就能分辨。
  */

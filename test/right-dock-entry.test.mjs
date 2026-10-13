@@ -419,7 +419,7 @@ test('④ 点击卡片 → 右栏 tab 内容体内出现覆盖层与面板宿主
   const overlay = overlayOf(dom)
   assert.ok(overlay, '激活后应出现覆盖层')
   assert.equal(overlay.parentNode, dom.tabBody, '覆盖层挂在右栏 tab 内容体里')
-  assert.equal(dom.guide.style.display, 'none', '进入孪生视图要隐藏引导列（否则两张卡并排）')
+  assert.equal(dom.guide.style.display, 'none', '进入仿真视图要隐藏引导列（否则两张卡并排）')
   const host = overlay.querySelector(`[${RIGHT_PANEL_HOST_ATTRIBUTE}]`)
   assert.ok(host, '覆盖层内应有面板宿主')
   assert.equal(mounts.length, 1)

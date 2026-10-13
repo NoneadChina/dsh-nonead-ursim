@@ -101,7 +101,7 @@ export const zh = {
   /* ---- HUD 与工具条 ---- */
   identity: (model, ip) => `机器人  ${[model, ip].filter(Boolean).join('  ·  ')}`,
   pendingPrefix: '待审批',
-  canvasLabel: '机器人数字孪生 3D 视图；可用方向键切换视角',
+  canvasLabel: '机器人数字仿真 3D 视图；可用方向键切换视角',
   hudLabel: '机器人实时读数',
   layerReach: '可达范围',
   layerBase: '基座系',
@@ -116,7 +116,7 @@ export const zh = {
 
   /* ---- 右侧 dock 入口 ---- */
   dockLabel: 'NoneadURSim',
-  dockDescription: '机器人实时孪生视图',
+  dockDescription: '机器人实时仿真视图',
   dockCollapse: '收起',
 
   /* ---- 离线仿真（0.7.0） ---- */
@@ -215,7 +215,7 @@ export const en = {
 
   identity: (model, ip) => `Robot  ${[model, ip].filter(Boolean).join('  ·  ')}`,
   pendingPrefix: 'Pending approval',
-  canvasLabel: 'Robot digital-twin 3D view; arrow keys switch the view',
+  canvasLabel: 'Robot simulation 3D view; arrow keys switch the view',
   hudLabel: 'Live robot readouts',
   layerReach: 'Reach',
   layerBase: 'Base frame',
@@ -229,7 +229,7 @@ export const en = {
   trajectoryExport: 'Export path',
 
   dockLabel: 'NoneadURSim',
-  dockDescription: 'Live robot twin view',
+  dockDescription: 'Live robot simulation view',
   dockCollapse: 'Collapse',
 
   /* ---- Offline simulation (0.7.0) ---- */

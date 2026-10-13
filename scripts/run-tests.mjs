@@ -3,7 +3,7 @@
  *
  * ## 为什么需要这个脚本（这是一次真实的覆盖率事故）
  * `package.json` 的 `test` 原本只指向 `test/selftest.mjs`（一次 worker ping）。仓库里
- * 另外 20 多个 `*.test.mjs` —— 客户端轮询状态机、FK、模型契约、孪生路由、vendored 库缺陷 ——
+ * 另外 20 多个 `*.test.mjs` —— 客户端轮询状态机、FK、模型契约、仿真路由、vendored 库缺陷 ——
  * **一个都没有被 `npm test` 跑到**。于是"npm test 绿了"完全不能说明插件是好的：
  * 那些文件只有人工逐个 `node test/x.test.mjs` 才会执行。
  *

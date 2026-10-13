@@ -89,13 +89,17 @@ export const RIGHT_PANEL_TITLE = S.dockLabel
 
 /* ------------------------------------------------------------------ *
  * 卡片图标（26px，对齐原生卡片的图标槽尺寸；用固定强调色融入三张卡片）
+ *
+ * 画的是**工业机械臂**的可辨识轮廓：底座横板 → 立柱 → 斜向上大臂 → 腕部下垂的两指夹爪，
+ * 两个关节点用圆圈标出。旧图标是一个「带旋钮的房子」，与 NoneadURSim 毫无关系。
  * ------------------------------------------------------------------ */
 
 const CARD_ICON =
   '<svg width="26" height="26" viewBox="0 0 16 16" fill="none" stroke="#539CFA" ' +
   'stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-  '<path d="M3 10.5V6.2l5-2.7 5 2.7v4.3"/><circle cx="8" cy="4.6" r="1.4"/>' +
-  '<path d="M5.6 13.2 6.9 9.4M10.4 13.2 9.1 9.4M6.9 9.4h2.2"/></svg>'
+  '<path d="M3.6 13.4h8.8"/><path d="M5.4 13.4V9.9l4.9-3.2v3"/>' +
+  '<path d="M9.5 9.7v1.5M11.1 9.7v1.5"/>' +
+  '<circle cx="5.4" cy="9.9" r=".85"/><circle cx="10.3" cy="6.7" r=".85"/></svg>'
 
 /* ------------------------------------------------------------------ *
  * 退回自建卡片用的内联样式（原生卡片可用时不会用到）
@@ -394,7 +398,7 @@ export function mountRightDockEntry({
 
   /* ---------------- 右栏 3D 面板 ---------------- */
 
-  /** 进入孪生视图时隐藏引导列（记录原内联值，收起时还原）。 */
+  /** 进入仿真视图时隐藏引导列（记录原内联值，收起时还原）。 */
   const hideGuide = () => {
     const guide = guideRoot()
     if (!guide || hiddenGuide === guide) return

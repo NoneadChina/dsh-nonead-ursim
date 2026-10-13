@@ -121,9 +121,9 @@ _PROTOCOL_OUT = sys.stdout
 
 # 协议行（响应 + 主动推送）的写入锁。
 #
-# 孪生遥测现在由后台线程**主动推送**（见 `_twin_push_loop`），它会与主线程的
+# 仿真遥测现在由后台线程**主动推送**（见 `_twin_push_loop`），它会与主线程的
 # `respond()` 并发写同一个 stdout。少了这把锁，两条 JSON 行会交错甚至互相截断，
-# Node 侧 readline 于是拿到无法解析的行 —— 表现为孪生随机丢帧、请求莫名超时。
+# Node 侧 readline 于是拿到无法解析的行 —— 表现为仿真随机丢帧、请求莫名超时。
 _PROTOCOL_LOCK = threading.Lock()
 _LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ur_worker.log")
 
@@ -233,7 +233,7 @@ ROBOT_MODELS = {}    # ip -> RobotModel instance
 # 存在的唯一理由：让宿主判断"按 IP 记住的型号还作不作数"。型号在**一条连接存续期间**
 # 确实不变（所以值得缓存），但"同一个 IP 换了一台别的型号"时它必然变 —— 而这件事在
 # worker 侧唯一可靠的信号就是**连接对象换了新的**（换机器人 ⇒ 旧 RTDE 掉线 ⇒
-# `ensure_connected` 重建）。宿主把这个代次随孪生推送一起下发，代次一变就重读型号。
+# `ensure_connected` 重建）。宿主把这个代次随仿真推送一起下发，代次一变就重读型号。
 #
 # ⚠️ **只增不减**（断开也不清零）：宿主的缓存里记的是"读它时的代次"，计数一旦回退
 # （比如断开后从 1 重新数），新连接的 `1` 就会与上一轮那个 `1` 一模一样 —— 宿主会认为
@@ -335,7 +335,7 @@ def _sim_entry(ip):
 
 
 def _sim_bump_epoch(ip):
-    """仿真启停 = 连接代次 +1：宿主据此重读型号，孪生据此**换网格**（与真机换机器人同一条链）。"""
+    """仿真启停 = 连接代次 +1：宿主据此重读型号，仿真据此**换网格**（与真机换机器人同一条链）。"""
     ROBOT_CONN_SEQ[ip] = ROBOT_CONN_SEQ.get(ip, 0) + 1
 
 
@@ -655,7 +655,7 @@ def _enum_token(respond):
     UR 控制器对这些查询回的是带标签前缀的整行文本（`safetymode` → `"Safetymode: NORMAL"`、
     `robotmode` → `"Robotmode: RUNNING"`，见 `URBasic/dashboard.py` 各方法的文档字符串）。
     客户端按裸枚举词查中文表、并按"未知模式算异常"判定安全问题 ⇒ 带前缀的值既翻不出中文，
-    又会把 `NORMAL` 误报成需要处置的安全异常（孪生面板底部会恒挂处置提示）。所以在**协议
+    又会把 `NORMAL` 误报成需要处置的安全异常（仿真面板底部会恒挂处置提示）。所以在**协议
     边界**统一剥掉 `标签:` 前缀，只把枚举词交给上层。
 
     返回值里没有冒号时（如 `programState` 回的 `"PLAYING"`）原样返回；查询失败哨兵
@@ -3650,7 +3650,7 @@ def _sim_data(sim, extra=None):
 
 
 def _sim_pose(sim):
-    """当前 TCP 位姿（由 q 正解而来 ⇒ 与孪生画出来的位置必然一致）。"""
+    """当前 TCP 位姿（由 q 正解而来 ⇒ 与仿真画出来的位置必然一致）。"""
     ur = _sim_module()
     return ur.tcp_pose(sim.model, sim.advance())
 
@@ -3658,7 +3658,7 @@ def _sim_pose(sim):
 def _sim_settle(sim, p):
     """等到"到位"：与真机那几个确认循环同义 —— 命令返回时运动已经结束。
 
-    ⚠️ 这里**阻塞的是 worker 主线程**，但孪生的推送线程照常在 20 Hz 读 `sim.snapshot()`
+    ⚠️ 这里**阻塞的是 worker 主线程**，但仿真的推送线程照常在 20 Hz 读 `sim.snapshot()`
     （那条线程不读 stdin），所以界面上能看到机械臂真的走完全程 —— 与真机运动时的情况一致。
     """
     budget = _budget_ms(p)
@@ -3768,7 +3768,7 @@ def _sim_get_speed_scaling(sim, p):
 
 def _sim_status(sim, p):
     data = sim.status()
-    # ⚠️ 孪生面板的遥测行读的是**这条 `status`**（见 lib/twin-routes.js 里 body.detail 的字段清单：
+    # ⚠️ 仿真面板的遥测行读的是**这条 `status`**（见 lib/twin-routes.js 里 body.detail 的字段清单：
     # robot_voltage / robot_current / joint_temperatures / joint_currents / tcp_force / tcp_speed），
     # 不是 `get_runtime_telemetry`。所以估算值必须出现在这里 —— 否则"面板遥测行在仿真下是空的"
     # 这件事根本没被修好（B1 的用户可见结果就在这一处）。
@@ -4215,7 +4215,7 @@ def _sim_get_bit_register(sim, p):
 # ---------------------------------------------------------------------------
 # 遥测的**运动学估算**（B1）
 #
-# 过去这一组 op 一律 `SIM_UNSUPPORTED`，于是孪生面板的遥测行在仿真下永远是空的。现在按**有限差分
+# 过去这一组 op 一律 `SIM_UNSUPPORTED`，于是仿真面板的遥测行在仿真下永远是空的。现在按**有限差分
 # + 量级模型**给出估算值：关节速度/加速度由相邻两次采样差分得到，力矩/电流/电压/温度/受力再由一个
 # 刻意粗的量级模型推出。
 #
@@ -4487,7 +4487,7 @@ def op_sim_stop(p):
         return ok({"message": "离线仿真本来就没有开启。",
                    "data": {"simulated": False, "active": False, "ip": SIM_IP}})
     _sim_bump_epoch(ip)
-    return ok({"message": "已关闭离线仿真（%s · %s）。孪生会回到真机（若已连接），"
+    return ok({"message": "已关闭离线仿真（%s · %s）。仿真会回到真机（若已连接），"
                           "或显示未连接。" % (ip, _sim_module().canonical_model_name(sim.model)),
                "data": {"simulated": False, "active": False, "ip": SIM_IP}})
 
@@ -4641,18 +4641,18 @@ def respond(payload):
 
 
 # ---------------------------------------------------------------------------
-# 孪生遥测主动推送 —— 数字孪生"完整跟随机器人动作"的关键
+# 仿真遥测主动推送 —— 数字仿真"完整跟随机器人动作"的关键
 # ---------------------------------------------------------------------------
 #
 # 为什么必须有：本 worker 是单线程 stdin 队列，运动类工具（`_movej_confirm` /
-# `_wait_robot_idle` 的确认循环）会一直占着它，孪生的读因此排在后面并超时 ——
+# `_wait_robot_idle` 的确认循环）会一直占着它，仿真的读因此排在后面并超时 ——
 # 用户看到的是「数据已停止更新 Ns」。但遥测数据本身**从来没有停过**：RTDE 由
 # URBasic 的后台线程以 500 Hz 持续写入 `model.dataDir`，读它与 stdin 队列无关。
 #
 # 所以遥测改由这里**主动推送**：推送行不带 `id`，与"请求/响应"天然区分，旧宿主
 # 只会把它记成一条无法匹配的响应（无副作用），因此协议向后兼容。
 
-# 推送节拍：孪生 SSE 每 100 ms 一帧，20 Hz 足够让每一帧都拿到新鲜读数。
+# 推送节拍：仿真 SSE 每 100 ms 一帧，20 Hz 足够让每一帧都拿到新鲜读数。
 TWIN_PUSH_INTERVAL_S = 0.05
 
 # 推送线程开关（诊断可用 DSH_URSIM_TWIN_PUSH=0 关掉，便于对比"有没有推送"的行为差异）。
@@ -4669,17 +4669,17 @@ def _twin_push_snapshot(ip):
 
     `_rtde_field` 读的是 `model.dataDir` 里**最后一笔**写入值 —— 它在 RTDE 掉线后依然存在。
     于是会话断掉（机器人被换掉 / 断电 / 网线拔了）时，推送线程会继续用**当下的时间戳**
-    发**掉线前**的关节角：宿主的孪生于是看起来一切正常，实际冻在最后一帧，而且因为推送
+    发**掉线前**的关节角：宿主的仿真于是看起来一切正常，实际冻在最后一帧，而且因为推送
     一直"新鲜"，宿主永远不会回退到显式读 —— 而**显式读才是会重连、从而发现"换了一台
     机器人"的那条路**。所以：RTDE 接收循环不在跑，就一帧都不推。
 
     这也顺带修掉了"型号永远停在旧值"：停推 ⇒ 宿主发起显式读 ⇒ `ensure_connected`
-    重建连接（`ROBOT_CONN_SEQ` +1）⇒ 宿主按新代次重读型号 ⇒ 孪生换模型。
+    重建连接（`ROBOT_CONN_SEQ` +1）⇒ 宿主按新代次重读型号 ⇒ 仿真换模型。
 
     ## 离线仿真（0.7.0）
     仿真是**纯内存状态、纯函数式推进**（`ur_sim.VirtualRobot.advance()` 按墙上时钟算 q），
     所以这里直接取它的一帧即可：零往返、零副作用，而且与真机共用同一条推送通道 ——
-    于是孪生面板、SSE、陈旧检测那一整套逻辑对仿真**一行都不用改**。
+    于是仿真面板、SSE、陈旧检测那一整套逻辑对仿真**一行都不用改**。
     """
     sim = SIMS.get(ip)
     if sim is not None:
@@ -4876,8 +4876,8 @@ def route_op(op_name, params):
 
 def main():
     global _CURRENT_REQUEST_ID, _CURRENT_TIMEOUT_MS
-    # 孪生遥测的推送线程：与运动命令**并行**（RTDE 缓存由 URBasic 自己的接收线程更新），
-    # 所以机器人运动期间孪生照样有数据。daemon=True：主线程退出即随之结束。
+    # 仿真遥测的推送线程：与运动命令**并行**（RTDE 缓存由 URBasic 自己的接收线程更新），
+    # 所以机器人运动期间仿真照样有数据。daemon=True：主线程退出即随之结束。
     if not TWIN_PUSH_DISABLED:
         threading.Thread(target=_twin_push_loop, name="twin-push", daemon=True).start()
     for line in sys.stdin:

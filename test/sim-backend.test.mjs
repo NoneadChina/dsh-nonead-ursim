@@ -3,7 +3,7 @@
  *
  * ## 为什么需要它
  * 仿真最大的风险不是"跑不起来"，而是**跑起来但与真机不是同一回事**，而界面上看不出来：
- *   - 正解必须与客户端 `src/client/robot/fk.js` **逐元素一致**，否则读回的 TCP 与孪生画出来的
+ *   - 正解必须与客户端 `src/client/robot/fk.js` **逐元素一致**，否则读回的 TCP 与仿真画出来的
  *     位置对不上（HUD 一套数、画面另一套数）；
  *   - 圆的几何必须与真机那条 URScript 同源（同一份途经点计算），否则"仿真里画了个圆"与
  *     "真机上画了个圆"会是两个不同的圆；
@@ -111,7 +111,7 @@ out["circle"] = {
 limit = ur_sim.joint_limits("ur5e")[2]
 out["joint_limit"] = ur_worker.sim_dispatch("movej", {"ip": IP, "q": [0.0, 0.0, 99.0, 0.0, 0.0, 0.0]})["code"]
 
-# ── 6. 孪生推送：仿真帧必须带 simulated 与 conn ───────────────────────────────
+# ── 6. 仿真推送：仿真帧必须带 simulated 与 conn ───────────────────────────────
 captured = []
 ur_worker._write_protocol_line = lambda body: captured.append(body)
 ur_worker.TWIN_PUSH_INTERVAL_S = 0.01
@@ -197,7 +197,7 @@ test('★ 仿真帧走的是与真机同一条推送通道，并自带 simulated
   assert.ok(out.push, '推送线程必须真的在推仿真帧')
   assert.equal(out.push.push, 'telemetry')
   assert.equal(out.push.ip, '127.0.0.1')
-  assert.equal(out.push.simulated, true, '仿真帧必须带 simulated（孪生据此打水印）')
+  assert.equal(out.push.simulated, true, '仿真帧必须带 simulated（仿真据此打水印）')
   assert.equal(typeof out.push.conn, 'number', '必须带连接代次（宿主据此判断型号缓存作不作数）')
   assert.equal(out.push.data.q.length, 6)
   assert.equal(out.push.id, undefined, '推送行不能有 id')

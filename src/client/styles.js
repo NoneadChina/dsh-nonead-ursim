@@ -1,5 +1,5 @@
 /**
- * src/client/styles.js — 数字孪生面板的样式（**JS 字符串**，不是 .css 文件）。
+ * src/client/styles.js — 数字仿真面板的样式（**JS 字符串**，不是 .css 文件）。
  *
  * ## Ruling 28（为什么要用字符串注入）
  * 客户端产物只有单个 `client.js`，shell **不会**加载同目录的任何 `.css`。

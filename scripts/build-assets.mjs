@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Task 2 资产管线 —— 抓取官方 UR 描述数据，生成数字孪生所需的本地资产。
+ * Task 2 资产管线 —— 抓取官方 UR 描述数据，生成数字仿真所需的本地资产。
  *
  * 数据源（BSD-3-Clause 的 `config/*.yaml`；网格许可分层见 THIRD_PARTY_NOTICES.md）：
  *   https://raw.githubusercontent.com/UniversalRobots/Universal_Robots_ROS2_Description/humble

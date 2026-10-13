@@ -1,14 +1,14 @@
 /**
- * 探针（不是测试）：**推送架构**下，worker 被运动命令占住时孪生流是否仍然连续。
+ * 探针（不是测试）：**推送架构**下，worker 被运动命令占住时仿真流是否仍然连续。
  *
- * 为什么需要它：孪生此前停在「数据已停止更新 Ns」的根因，是它的读与运动命令共用
+ * 为什么需要它：仿真此前停在「数据已停止更新 Ns」的根因，是它的读与运动命令共用
  * Python worker 那条单线程 stdin 队列 —— 运动确认循环（`_movej_confirm` 等）占住队列，
  * 读就排在后面直到超时。
  *
  * 做法：假 worker 的 `call()` **永不 settle**（精确模拟"队列被占住"），同时提供
  * `telemetry()` 的新鲜读数（模拟 `ur_worker.py` 的 `_twin_push_loop` 主动推送）。
  *
- * 期望：帧照常按 `intervalMs` 到达 —— 孪生不再依赖那条被占住的命令通道。
+ * 期望：帧照常按 `intervalMs` 到达 —— 仿真不再依赖那条被占住的命令通道。
  * 对照：同一场景下不提供 telemetry 时，流会退化成 stale 通知（修复前的行为）。
  *
  * 运行：node scripts/probe-twin-push-continuity.mjs
@@ -81,6 +81,6 @@ console.log(`无推送：${withoutPush.length} 个事件，类型 ${[...new Set(
 
 const ok = pushFrames.length >= expected && gap <= INTERVAL_MS * 4
 console.log(ok
-  ? '结论：✅ worker 被运动命令占住时，孪生靠主动推送仍按节拍出帧（运动期间不再停更）'
+  ? '结论：✅ worker 被运动命令占住时，仿真靠主动推送仍按节拍出帧（运动期间不再停更）'
   : `结论：❌ 期望 ≥${expected} 帧且帧间隔 ≤${INTERVAL_MS * 4}ms —— 检查 twin-routes 的推送缓存分支`)
 process.exit(ok ? 0 : 1)

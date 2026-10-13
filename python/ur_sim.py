@@ -6,7 +6,7 @@ python/ur_sim.py — 运动学级离线仿真引擎（**没有任何网络/机�
 ## 这个模块是什么
 
 `ur_worker.py` 用它实现「离线仿真」：一个**虚拟机器人**，让 AI 在没有真机的情况下驱动数字
-孪生里的模型动起来。它只做**运动学**：正解、逆解、关节/笛卡尔轨迹插值、位姿读回。
+仿真里的模型动起来。它只做**运动学**：正解、逆解、关节/笛卡尔轨迹插值、位姿读回。
 
 ## 它明确**不是**什么（诚实边界，务必与 README 一致）
 
@@ -17,9 +17,9 @@ python/ur_sim.py — 运动学级离线仿真引擎（**没有任何网络/机�
 - 时间参数是**近似**：`a`/`v` 只用来决定每段运动的时长（smoothstep 时间标度），
   不做真实控制器的梯形/jerk 限幅。
 
-## 与孪生的一致性（硬约束）
+## 与仿真的一致性（硬约束）
 
-孪生客户端用 `src/client/robot/fk.js` 从 `q` 正解出 TCP 与各连杆位姿。所以：
+仿真客户端用 `src/client/robot/fk.js` 从 `q` 正解出 TCP 与各连杆位姿。所以：
 
 1. 仿真**只产出 `q`**，`tcp` 由本模块的正解算出 —— 读回的 TCP 与界面画出来的位置**必然一致**；
 2. 本模块的正解必须与 `fk.js` **逐元素等价**（同一份 `assets/kinematics.json`、同一套链序：
@@ -87,7 +87,7 @@ def kinematics_path():
 def load_kinematics():
     """读一次并缓存 `assets/kinematics.json`；读不到时抛 `SimError`（附上找过的路径）。
 
-    为什么缓存：孪生 20 Hz 推送每一帧都要正解，重复读盘是纯粹的浪费；文件在运行期不会变。
+    为什么缓存：仿真 20 Hz 推送每一帧都要正解，重复读盘是纯粹的浪费；文件在运行期不会变。
     """
     global _KIN_CACHE, _KIN_PATH
     if _KIN_CACHE is not None:
@@ -113,7 +113,7 @@ def model_ids():
 def canonical_model_name(model_id):
     """`ur5e` → `UR5e`（与真机 dashboard 报的型号写法对齐）。
 
-    孪生按 `snap.model` 小写化后取 GLB 与运动学，所以大小写不影响渲染；这个转换只为让
+    仿真按 `snap.model` 小写化后取 GLB 与运动学，所以大小写不影响渲染；这个转换只为让
     数值面板与工具返回看起来像一台真机。
     """
     value = str(model_id or "").strip()
@@ -356,7 +356,7 @@ def ik(model_id, target_matrix, seed, limits=None, iterations=120, tol_pos=1e-4,
 
     - **阻尼最小二乘（DLS）** + 定步长上限：靠近奇异位形时阻尼自动变大，不会炸出巨大步长；
     - 雅可比用**前向差分**（每个关节一次额外正解，共 6 次/迭代），与正解同一份代码 ⇒ 自洽；
-    - 关节限位在**接受结果时**校验（越限即判失败，绝不悄悄钳到边界 —— 那会让孪生画出
+    - 关节限位在**接受结果时**校验（越限即判失败，绝不悄悄钳到边界 —— 那会让仿真画出
       一条真机根本走不了的轨迹）。
     """
     q = [float(seed[i]) if isinstance(seed, (list, tuple)) and i < len(seed) else 0.0
@@ -510,7 +510,7 @@ def preset_joints(name, model_id=None):
 # 虚拟机器人
 # ---------------------------------------------------------------------------
 
-# 单段运动的最短时长（秒）：太短会让 20 Hz 的孪生丢帧（看不清动作）
+# 单段运动的最短时长（秒）：太短会让 20 Hz 的仿真丢帧（看不清动作）
 _MIN_SEGMENT_S = 0.05
 
 
@@ -523,8 +523,8 @@ class VirtualRobot:
     - 每段时长取 `max(maxdq / v_eff, 2·sqrt(maxdq / a))` —— 前者是匀速下限、后者是
       三角速度剖面的最短时间；位置用 **smoothstep** 时间标度（起停平滑，但不做 jerk 限幅）；
     - 状态是**纯函数式推进**的：`advance()` 按墙上时钟算出当前 q，**不需要线程**。
-      于是 20 Hz 的孪生推送线程读到的是连续姿态，而命令线程只需等到 `is_steady()`。
-    - `target_q` 是这条运动的终点（等价真机 RTDE 的 `target_q`），用于孪生的"幽灵臂"。
+      于是 20 Hz 的仿真推送线程读到的是连续姿态，而命令线程只需等到 `is_steady()`。
+    - `target_q` 是这条运动的终点（等价真机 RTDE 的 `target_q`），用于仿真的"幽灵臂"。
     """
 
     def __init__(self, ip, model, q=None, speed_scaling=1.0, preset="zero"):
@@ -561,7 +561,7 @@ class VirtualRobot:
 
         为什么不是"每段各自 smoothstep"：movel 沿直线每 1 cm 取一个细分点，逐段各自
         smoothstep 等于**每 1 cm 就减速到零再重新加速**（一次 0.5 m 的 movel 有 50 次启停），
-        视觉上就是一顿一顿，孪生每帧拿到的关节角速度也忽大忽小、插值后像在跳帧。
+        视觉上就是一顿一顿，仿真每帧拿到的关节角速度也忽大忽小、插值后像在跳帧。
         改成整条折线共用一条剖面后，整段运动只有一次加速—匀速—减速，关节角连续变化。
         """
         count = len(self._waypoints) - 1
@@ -705,13 +705,13 @@ class VirtualRobot:
 
     # ── 读回 ──────────────────────────────────────────────────
     def snapshot(self, now=None):
-        """孪生推送用的一帧：**只给 q 与由 q 正解出的 tcp**（保证界面与读回一致）。"""
+        """仿真推送用的一帧：**只给 q 与由 q 正解出的 tcp**（保证界面与读回一致）。"""
         q = self.advance(now)
         tcp = tcp_pose(self.model, q)
         return {"q": list(q), "tcp": tcp}
 
     def target_snapshot(self, now=None):
-        """控制器"打算去哪"（孪生的幽灵臂）：终点关节角与其正解 TCP。"""
+        """控制器"打算去哪"（仿真的幽灵臂）：终点关节角与其正解 TCP。"""
         goal = self.target_q()
         return {"target_q": goal, "target_tcp": tcp_pose(self.model, goal)}
 

@@ -25,7 +25,7 @@ never part of the published tarball.
     one genuinely dangerous thing this feature could do.
   - The same six fields (`robot_voltage`, `robot_current`, `joint_temperatures`, `joint_currents`,
     `tcp_force`, `tcp_speed`) are now part of `ursim_get_status`, with `telemetry_estimated: true`.
-    That matters because **the twin panel's detail channel reads `status`, not
+    That matters because **the simulation panel's detail channel reads `status`, not
     `get_runtime_telemetry`** (see `body.detail` in `lib/twin-routes.js`) — without this the row would
     still be empty in simulation.
 - New test `test/sim-telemetry.test.mjs`: while a motion runs in a background thread, the main thread
@@ -102,7 +102,7 @@ the reserved loopback address, and there is still no real-robot channel.
 
 ### Fixed
 
-- **The twin's read requests could starve a stop command (H-3).** Twin reads and commands share one
+- **The simulation's read requests could starve a stop command (H-3).** Simulation reads and commands share one
   single-threaded worker with an in-flight ceiling of 8, and admission is "total ≥ ceiling ⇒ BUSY".
   Every SSE subscription has its own frame pump, so **8 subscriptions filled all 8 slots** — and
   `stopj` / `stopl` / `end_force_mode` were then rejected **on the host side**, never reaching the
@@ -208,7 +208,7 @@ unchanged.
   `set_conveyor_tick`. Simulation targets never take this gate, so the change only affects a
   real-robot deployment — which is exactly where it is needed. `check-approval-gate.py` and the
   approval-gate tests now assert these families move together.
-- **The twin's over-limit joint warning never fired.** `writeHud()` passed `fkResult?.jointLimits`, a
+- **The simulation's over-limit joint warning never fired.** `writeHud()` passed `fkResult?.jointLimits`, a
   field `fkChain()` has never returned, so `overLimitJoints()` always got `undefined` and returned
   early: the feature was 100 % dead while its tests were green. The limits now come from the
   kinematics table, and a regression test drives J2 past its limit.
@@ -227,7 +227,7 @@ unchanged.
 
 ### Fixed
 
-- **The twin no longer draws an unposed arm when the pose feed has a gap.** A model that has been
+- **The simulation no longer draws an unposed arm when the pose feed has a gap.** A model that has been
   assembled but has not had a pose written to it yet leaves all seven link meshes in their own link
   frames at the base origin — two long tubes lying side by side, the tool flange next to the base —
   and that is exactly what the panel used to show as soon as the pose channel went quiet for a
@@ -265,11 +265,11 @@ First release of **`dsh-nonead-ursim`** as an independent plugin.
 - **A persistent Python worker** (`python/ur_worker.py`, vendored `URBasic`) over a line-delimited
   JSON stdio protocol: one `connect` per IP, many commands, with RTDE / Dashboard / RealTime links kept
   alive across calls.
-- **A read-only 3D digital twin** (three.js) mounted from a card in the right sidebar's Start panel:
+- **A read-only 3D digital simulation** (three.js) mounted from a card in the right sidebar's Start panel:
   joint poses, TCP frame and recent trajectory, engineering layer toggles, and a numeric dashboard-side
   readout. It is strictly read-only and never sends a command to the robot. Telemetry is **pushed by
-  the worker** at 20 Hz and the twin reads that cache first, so the feed does not stall while the robot
-  moves; twin reads use a dedicated budget with `killOnTimeout:false` so a visualisation read can never
+  the worker** at 20 Hz and the simulation reads that cache first, so the feed does not stall while the robot
+  moves; simulation reads use a dedicated budget with `killOnTimeout:false` so a visualisation read can never
   destroy the robot session.
 - **Kinematics-level offline simulation** on the reserved loopback address `127.0.0.1`:
   `ursim_sim_start` / `ursim_sim_stop` / `ursim_sim_status` drive a virtual robot whose forward kinematics is
@@ -281,13 +281,13 @@ First release of **`dsh-nonead-ursim`** as an independent plugin.
   route, whose side effect is confined to a kinematics virtual robot on the loopback address.
 - **Release gates**: `npm run check` (static / ops / docs / manifest) and `npm test`, including the
   Python dependency manifest in `test/test-manifest.json`.
-- **The twin panel follows the app's colour theme** (light / dark / system). The panel's CSS is now
+- **The simulation panel follows the app's colour theme** (light / dark / system). The panel's CSS is now
   built on the host's `--dsw-alias-*` design tokens with theme-paired local fallbacks, so it tracks
   DSH's appearance setting — and any third-party theme overriding those aliases — with no JS. The
   WebGL base grid, whose colours live in the geometry's vertex colours and are therefore invisible to
   CSS, is repainted **in place** by `scene.js`'s `applyTheme()` from the same signal
   (`body[data-ds-dark-theme]`) that the new `src/client/theme.js` resolves and watches.
-- **The twin panel enters an offline simulation by itself when it opens** (`UR12e`, upright pose,
+- **The simulation panel enters an offline simulation by itself when it opens** (`UR12e`, upright pose,
   100 % speed scaling), whether or not a real robot is connected — collapsing the panel stops it and
   returns the data source to automatic resolution. A simulation that is **already** running (started by
   the AI through `ursim_sim_start`, or by another window) is **adopted, never rebuilt**: rebuilding
@@ -335,8 +335,8 @@ First release of **`dsh-nonead-ursim`** as an independent plugin.
   allocated in proportion to their joint displacement, and `_sample()` maps time through one global
   smoothstep before interpolating the six joint angles. Previously every 1 cm waypoint decelerated to
   zero and re-accelerated: a 0.5 m move became ~50 micro start/stops (a visible stutter, and an
-  effectively random joint speed from one twin frame to the next). Measured on a 0.5 m `movel` at the
-  20 Hz twin cadence: **3** near-zero frames instead of ~52, cruise speed flat to within 1.5 %, no
+  effectively random joint speed from one simulation frame to the next). Measured on a 0.5 m `movel` at the
+  20 Hz simulation cadence: **3** near-zero frames instead of ~52, cruise speed flat to within 1.5 %, no
   frame-to-frame speed jump above 0.02 rad/s per 50 ms, and the total duration down from ~9 s to 3.7 s.
   `test/sim-motion-smooth.test.mjs` pins both the structure and those numbers.
   - Fixed along the way: reaching the end of a long polyline relied on floating-point subtraction
@@ -349,7 +349,7 @@ First release of **`dsh-nonead-ursim`** as an independent plugin.
   `connect`-to-a-robot step: `route_op()` starts a `UR12e` simulation on demand (upright pose, 100 %
   scaling) and then dispatches, so directly issuing a motion command just works. `ursim_connect` now
   means *ensure the simulation is running* and `ursim_disconnect` means *stop it* (idempotent); the
-  `ip` parameter is optional everywhere and only `127.0.0.1` is accepted. The twin route ignores
+  `ip` parameter is optional everywhere and only `127.0.0.1` is accepted. The simulation route ignores
   `?ip=` and the client always resolves the reserved address, so no read can target a real robot
   either. Commands without simulation semantics (force mode, RTDE telemetry, safety bits, programs,
   raw script, I/O, registers, conveyor, power/brakes/freedrive) keep their tool names and answer
@@ -375,7 +375,7 @@ First release of **`dsh-nonead-ursim`** as an independent plugin.
   duplicates at load time (`tool "X" is already registered`, `webserver: duplicate exact route`), so
   sharing a namespace meant only one of the two could ever load. Renamed:
   - all **86 tools**: `ur_*` → **`ursim_*`**;
-  - the twin route prefix `/dsh-nonead-ur` → **`/nonead-ursim`** (`/nonead-ursim/twin/{state,asset,models,stream,sim}`);
+  - the simulation route prefix `/dsh-nonead-ur` → **`/nonead-ursim`** (`/nonead-ursim/twin/{state,asset,models,stream,sim}`);
   - the client's DOM/debug namespace `ur-twin` → **`ursim-twin`** (style element id and marker attribute,
     the right-dock `data-*` attributes, the panel CSS classes, the three.js object names and the
     screenshot filename) — the other plugin uses the same `dsh-ur-twin-styles` id, so a shared id would
