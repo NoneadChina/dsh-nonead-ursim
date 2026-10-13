@@ -14,3 +14,9 @@
         connectTimeoutMs: 30000
         # 运动/程序类指令是否需人工确认后再下发（true=需确认，fail-closed）。
         requireApprovalForMotion: true
+        # 运行模式：'sim'（默认）＝纯离线仿真，真机通道**结构性不可达**；
+        # 'real' ＝显式开启的真机通道（见 README 的「真机通道（默认关闭）」一节）。
+        motionMode: 'sim'
+        # 真机模式下允许操作的机器人地址，逗号分隔（例如 '192.168.1.10,192.168.1.11'）。
+        # 留空时**任何真机目标都会被拒**（fail-closed），而不是"谁都能连"。
+        realRobotIps: ''

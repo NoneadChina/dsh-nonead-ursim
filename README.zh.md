@@ -84,7 +84,7 @@ host 侧路由（均限定 loopback 调用方）：
    // C:\Users\<you>\.dsh\profiles\web\package.json
    {
      "dependencies": {
-       "dsh-nonead-ursim": "^0.1.3"
+       "dsh-nonead-ursim": "^0.1.4"
      },
      "dsh": {
        "profile": {
@@ -280,6 +280,26 @@ ursim_draw_circle(ip="192.168.1.199", center=[0.3,-0.2,0.4,0,3.14,0], r=0.05)
 逐型号派生清单、转换参数与许可全文见 [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md)。
 
 ---
+
+## 真机通道（默认关闭）
+
+本版**可以**驱动真控制器，但必须由使用者显式开启：
+
+```yaml
+motionMode: 'real'               # 默认 'sim' —— 不配它就碰不到任何真机
+realRobotIps: '192.168.1.10'     # 逗号分隔的白名单；留空则任何目标都被拒
+```
+
+- **`sim`（默认）是结构性保证，不是策略。** worker 在派发**之前**就拒绝保留回环地址以外的任何
+  地址，因此 RTDE / Dashboard / SSH / 远程控制那一整套代码**不可达** —— 不是"有但不用"。
+- **`real` 还必须配白名单。** 白名单外的目标在**宿主侧**就被拒绝，根本到不了 worker；白名单留空
+  等于拒绝一切（fail-closed），而开启 `real` 却没写白名单时插件会明确 warning。
+- **两种模式下仿真都仍然可用**，且保留回环地址**永远**表示那台虚拟机器人 —— 绝不交给真机实现
+  （否则"把真控制器端口转发到环回"就会变成一条绕回来的路）。
+- **`real` 模式下不存在任何审批豁免**：每一条受门禁的指令都要人确认，包括指向仿真的那些。这一条
+  同时关掉了审计的 H-2 —— 从前"豁免"是宿主侧、模型自己能用 `ursim_sim_start` 置位的状态；现在它
+  来自人写下的配置值。
+- 指向真机之前，请先读 [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md) 与本文档顶部的安全提示。
 
 ## License
 

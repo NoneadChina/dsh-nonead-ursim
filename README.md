@@ -93,7 +93,7 @@ Failure responses carry a **machine-readable `code`** (`no_robot` / `robot_not_c
    // C:\Users\<you>\.dsh\profiles\web\package.json
    {
      "dependencies": {
-       "dsh-nonead-ursim": "^0.1.3"
+       "dsh-nonead-ursim": "^0.1.4"
      },
      "dsh": {
        "profile": {
@@ -295,6 +295,31 @@ The client-side 3D renderer builds on [three.js](https://threejs.org/) (MIT); [e
 See [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md) for the per-model derivation list, the conversion parameters and the licence texts.
 
 ---
+
+## Real-robot channel (off by default)
+
+This release *can* drive a real controller, but only when you explicitly ask for it:
+
+```yaml
+motionMode: 'real'               # default 'sim' — nothing else can reach a real robot
+realRobotIps: '192.168.1.10'     # comma-separated allow-list; empty ⇒ every target is refused
+```
+
+- **`sim` (the default) is a structural guarantee, not a policy.** The worker rejects any address
+  other than the reserved loopback one *before* dispatching, so the RTDE / Dashboard / SSH /
+  remote-control code is unreachable — not "present but unused".
+- **`real` additionally requires the allow-list.** A target outside `realRobotIps` is refused on the
+  host side before it reaches the worker; an empty list refuses everything (fail-closed), and the
+  plugin logs a warning if you enable `real` without writing one.
+- **The simulation stays available in both modes**, and the reserved loopback address *always* means
+  the virtual robot — it is never handed to the real-robot implementation. (Otherwise forwarding a
+  controller's port to loopback would be a way back in.)
+- **There is no approval exemption in `real` mode**: every gated command asks a human, including
+  commands aimed at the simulation. That also closes the audit's H-2 finding — the exemption used to
+  be host-side state that the model itself could set via `ursim_sim_start`; now it follows from a
+  configuration value a human writes.
+- Read [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md) and the safety note at the top of this
+  file before pointing this at hardware.
 
 ## License
 

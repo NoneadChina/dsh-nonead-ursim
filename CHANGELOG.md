@@ -8,6 +8,33 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.1.4] - 2026-10-14
+
+### Added
+
+- **The real-robot channel is back — off by default, behind an allow-list (roadmap A).** Two new
+  configuration keys: `motionMode` (`'sim'` | `'real'`) and `realRobotIps` (a comma-separated
+  allow-list). In the default `sim` mode nothing about the plugin's behaviour changes: the worker
+  still rejects any address other than the reserved loopback one *before* dispatching. In `real` mode
+  a target outside the allow-list is refused on the host **before** it reaches the worker, an empty
+  allow-list refuses everything (fail-closed), and the plugin warns when `real` is enabled without
+  one.
+  - **There is no approval exemption in `real` mode**: every gated command asks a human, including
+    commands aimed at the simulation. That closes the audit's H-2 finding structurally — the
+    exemption used to be host-side state the model could set itself via `ursim_sim_start`; it now
+    follows from a configuration value a human writes.
+  - The reserved loopback address **always** means the virtual robot, in both modes: it is never
+    handed to the real-robot implementation, which would otherwise re-open the
+    controller-port-forwarded-to-loopback path the audit named.
+  - The prerequisite fixes this depended on (H-3 read-class gating, M-1 approval payload binding)
+    shipped in 0.1.3.
+- **CI** (`.github/workflows/ci.yml`): the full suite plus an explicit client-bundle rebuild checked
+  with `git diff --exit-code`, on Ubuntu **and** Windows. `verify:host` runs report-only, because it
+  compares against the *installed* host packages, which this repository does not publish.
+- **`scripts/check-doc-links.mjs`** (wired into `check:docs`): every relative link in the shipped
+  Markdown must resolve. This is the assertion that would have caught the audit's D2 and D8 dead links
+  automatically; the three intentionally-absent targets are listed with their reasons.
+
 ## [0.1.3] - 2026-10-13
 
 Everything below comes out of the four-expert audit of the 0.1.2 code base (raw reports kept in
