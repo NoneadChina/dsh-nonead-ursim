@@ -41,7 +41,7 @@
 
 除「连接」外，所有工具都接受 `ip` 参数，且都要求**先连接**该 IP。
 
-> 📚 **0.6.0 的手册对齐**：本版本逐条对照仓库内三本官方手册（URSoftware 3.15.4 / PolyScope 5 / PolyScope X）核对了签名、默认值、参数范围与已废弃函数，分析结果见 [`docs/urscript-manual-analysis.md`](./docs/urscript-manual-analysis.md)。其中三处与旧实现不同的**实质修正**：① `movel`/`movej` 默认速度改回手册值；② `ursim_force_mode` 的 `damping`/`gain_scaling` 明确标注"无法回读"而不是假装能读；③ `set_target_payload` 只有在给出 `inertia` 时才使用（旧固件上自动退回 `set_payload_mass`+`set_payload_cog`）。
+> 📚 **0.6.0 的手册对齐**：本版本逐条对照三本官方手册（URSoftware 3.15.4 / PolyScope 5 / PolyScope X）核对了签名、默认值、参数范围与已废弃函数（手册是第三方版权材料，**不随本仓库分发**；可用 `scripts/pdf-extract2.py` 从你自己合法取得的手册重新抽取，见 `THIRD_PARTY_NOTICES.md`）。其中三处与旧实现不同的**实质修正**：① `movel`/`movej` 默认速度改回手册值；② `ursim_force_mode` 的 `damping`/`gain_scaling` 明确标注"无法回读"而不是假装能读；③ `set_target_payload` 只有在给出 `inertia` 时才使用（旧固件上自动退回 `set_payload_mass`+`set_payload_cog`）。
 
 ### 只读 3D 数字孪生
 
@@ -259,7 +259,7 @@ ursim_draw_circle(ip="192.168.1.199", center=[0.3,-0.2,0.4,0,3.14,0], r=0.05)
   - **它能做什么**：关节/直线/路径/圆弧/沿轴/绘图等**到位型运动**（含速度倍率、起始姿态选择）、关节角与 TCP 位姿读回、`ursim_wait_steady`/`stopj`/`stopl`；逆解用多起点数值解，不可达会**明确拒绝**而不是给一个近似姿态。
   - **它不能做什么（也不会假装）**：力控、RTDE 遥测（温度/电流/电压/受力）、安全状态位、程序加载与执行、原始脚本、工具与标准 I/O、寄存器、传送带、电源/刹车/自由驱动 —— 这些是**控制器的行为**，没有控制器就没有语义，调用会返回 `SIM_UNSUPPORTED`。速度指令（`speedj`/`speedl`）同样不支持：开放式速度需要持续积分与减速模型，半套模型比没有更危险。
   - **它也不是安全评估工具**：没有动力学、没有安全功能、时间只是近似（`a`/`v` 决定每段时长，不做 jerk 限幅），所以**不能**用它验证碰撞、节拍或安全距离。
-  - **需要全套语义时用 URSim**：URSim 是 UR 官方的免费模拟控制器（跑在 VM 里，对外就是一台真控制器）。把 `ursim_connect` 指向它的 IP，**86 个工具与孪生全部照常工作**，不需要开仿真开关（`ursim_list_programs` 已兼容 `~/URSim_Linux-*/programs.*` 布局）。
+  - **需要全套语义时（本版做不到）**：URSim 是 UR 官方的免费模拟控制器（跑在 VM 里，对外就是一台真控制器）。要把它当成一台"机器人"驱动，需要**真机通道**——而本版**不提供**：真机 IP 会在派发前被判为非法输入（`SIM_BADARG`），`ursim_connect` 指向 URSim 的 IP 同样会被拒绝。等父线恢复真机路径后，这条路才是"86 个工具与孪生全部照常工作"。已兼容 `~/URSim_Linux-*/programs.*` 布局）。
   - **为什么仿真地址是 127.0.0.1**：真机的 RTDE(30003)/Dashboard(29999) 跑在控制器上，本机回环上不可能出现一台真 UR —— 于是"仿真碰不到真机"是**结构性**保证；配合 worker 侧的保留地址守卫，即使宿主侧的登记状态漂了，指向该地址的指令也只会得到一句拒绝。
 - **资产管线**：网格由 `python scripts/convert-meshes.py` 生成，其结构契约（每个 GLB 含 7 个固定命名节点、贴图内嵌）由 `python scripts/verify-models.py` 校验（也暴露为 `npm run verify:models`）。
 

@@ -19,6 +19,7 @@
     "CHANGELOG.md",
     "CHANGELOG.zh.md",
     "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
     "requirements.txt",
     "python/__init__.py",
     "python/ur_worker.py",
