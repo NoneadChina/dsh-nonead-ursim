@@ -12,6 +12,27 @@ This plugin shares the same ancestry as the company's `Nonead-Universal-Robots-M
 
 ---
 
+## Overview
+
+`dsh-nonead-ursim` gives a DSH agent a **Universal Robots arm it can drive in plain language** — the
+complete tool surface of a UR controller (86 `ursim_*` tools: joint and Cartesian motion, OptiMove,
+drawing primitives, pose and status readback, RTDE telemetry, standard/tool I/O and registers,
+URScript, TCP/payload/tool settings, force mode, conveyor tracking), plus a live **3D simulation
+panel** that renders the same joint data those tools read.
+
+Out of the box it drives an **offline, kinematics-level virtual UR robot** on the reserved loopback
+address `127.0.0.1`: no hardware, no real controller, nothing to install beyond Python — start a
+simulation and issue commands. A real controller is addressed only after you ask for it explicitly
+(`motionMode: 'real'` plus a `realRobotIps` allow-list), and every command that can move the arm or
+change hardware state asks a human first.
+
+What the simulation models and what it does not is a deliberate, stated boundary: **motion is real
+kinematics**; **telemetry is estimated** and labelled as such; **I/O and registers are in-memory
+state**; anything that genuinely needs a controller (force mode, safety-status bits, program load and
+execution, raw scripts, conveyor) answers `SIM_UNSUPPORTED` instead of pretending. It is **not** a
+safety-assessment tool — there is no dynamics and no safety function — so cycle time, collision and
+safety-distance questions stay outside its scope.
+
 ## Feature overview
 
 **86** tools (`ursim_*`) in total.
