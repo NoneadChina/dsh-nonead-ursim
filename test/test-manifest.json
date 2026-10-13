@@ -14,7 +14,8 @@
     "vendored-fixes.test.mjs",
     "worker-log.test.mjs",
     "worker.test.mjs",
-    "tool-schema-dsl.test.mjs"
+    "tool-schema-dsl.test.mjs",
+    "motion-mode-python.test.mjs"
   ],
   "nodeOnly": [
     "approval-gate.test.mjs",

@@ -335,6 +335,35 @@ test('★ 离线仿真目标不弹人工确认；真机 IP 与"没开仿真"的�
   assert.equal(approvalRequests.length, 3)
 })
 
+test('★ A：真机模式 = IP 白名单 + 无审批豁免（H-2 结构性关闭）', async () => {
+  const cfg = { motionMode: 'real', realRobotIps: '192.168.1.10' }
+  const Q = [0, 0, 0, 0, 0, 0]
+
+  // ① 白名单内：仍然必须人工确认 —— 真机模式下**没有**豁免（豁免只在 sim 模式存在）。
+  const ok = await harness({ config: cfg, approvalOutcome: 'allowed-once' })
+  await ok.registered.get('ursim_movej').execute({ ip: '192.168.1.10', q: Q }, exec)
+  assert.equal(ok.approvalRequests.length, 1, '真机模式下即使目标在白名单里也必须人工确认')
+  assert.deepEqual(ok.calls.map((c) => c.op), ['movej'], '批准后才下发')
+
+  // ② 白名单外：**派发前**就拒绝 —— 连 worker 都不打扰，也不弹审批。
+  const denied = await harness({ config: cfg, approvalOutcome: 'allowed-once' })
+  await assert.rejects(
+    () => denied.registered.get('ursim_movej').execute({ ip: '192.168.1.99', q: Q }, exec),
+    /不在 realRobotIps 白名单里/,
+  )
+  assert.equal(denied.calls.length, 0, '白名单外的目标绝不下发')
+  assert.equal(denied.approvalRequests.length, 0, '白名单检查先于审批')
+
+  // ③ 真机模式下连保留回环地址都没有豁免（sim 模式下这一点恰好相反：开着仿真就跳过确认）。
+  const simInReal = await harness({ config: cfg, approvalOutcome: 'denied', replies: SIM_REPLIES })
+  await simInReal.registered.get('ursim_sim_start').execute({ model: 'ur5e' }, exec)
+  await assert.rejects(
+    () => simInReal.registered.get('ursim_movej').execute({ ip: '127.0.0.1', q: Q }, exec),
+    /未获人工批准/,
+    '★ 真机模式下仿真目标同样要人工确认 —— 豁免只在 sim 模式存在，H-2 因此结构性关闭',
+  )
+})
+
 test('离线仿真工具本身不受门禁，且参数按声明白名单转发', async () => {  const { registered, calls, approvalRequests } = await harness({ approvalOutcome: 'denied', replies: SIM_REPLIES })
   assert.ok(registered.get('ursim_sim_start'), '未注册 ursim_sim_start')
   assert.ok(registered.get('ursim_sim_stop'), '未注册 ursim_sim_stop')

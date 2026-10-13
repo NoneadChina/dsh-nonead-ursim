@@ -251,6 +251,13 @@ ROBOT_CONN_SEQ = {}
 #
 # 唯一的理论边界：URSim 若配置成监听本机回环，命令会到达那个**模拟控制器** —— 那里没有真
 # 机械臂，所以最坏结果只是"仿真被送到模拟器上"，不构成人身/设备风险。
+"""运行模式（路线图 A）。
+
+`sim`（默认）＝纯离线仿真，真机通道结构性不可达；`real` ＝**显式开启**的真机通道，目标由宿主
+侧白名单收口。由宿主通过环境变量传入，缺省即 `sim` —— 也就是说"什么都不配"永远是最安全的形态。
+"""
+MOTION_MODE = os.environ.get("DSH_URSIM_MODE", "sim").strip().lower()
+REAL_MODE = MOTION_MODE == "real"
 SIM_IP = "127.0.0.1"
 
 # 本插件（dsh-nonead-ursim）**只操作仿真机器人**：不存在任何真机通道。
@@ -4468,15 +4475,29 @@ def selfcheck():
 
 
 def _pin_sim_ip(params):
-    """把 `ip` 钉死在保留的仿真地址上；给了别的地址就是**非法输入**。
+    """收口 `ip`：仿真模式下钉死在保留地址；**真机模式**下只要求显式给出。
 
-    这是"本插件不存在任何真机"的结构性保证：真机 IP 在派发**之前**就被拒绝，因此
-    URBasic 的 RTDE / Dashboard / RealTime、SSH 程序列表、远程控制探测那一整套真机通道
-    **永远不可达**（不是"有但不用"，是"到不了"）。
+    ⚠️ 运行模式由宿主通过环境变量 `DSH_URSIM_MODE` 传入（见 `lib/worker.js` 的 `_spawnOnce`），
+    默认 `sim`：
 
-    返回错误结果（调用方直接回报）或 None（已就绪，继续派发）。
+      · `sim`（默认，纯离线仿真）：真机 IP 在派发**之前**就被拒绝，因此 URBasic 的 RTDE /
+        Dashboard / RealTime、SSH 程序列表、远程控制探测那一整套真机通道**永远不可达**
+        （不是"有但不用"，是"到不了"）。
+      · `real`（**必须由使用者显式开启**，见 README 的「真机通道」一节）：ip 必须显式给出
+        （缺省在仿真模式下意味着"那台虚拟机器人"，真机模式下不该有这个便利），而"允许去哪台
+        机器人"由宿主侧白名单判定（见 `lib/index.js` 的 `realRobotIps`）—— 本层只保证
+        "目标是写出来的"，不负责授权。
+
+    返回错误结果（调用方直接回报）或 None（可以继续）。
     """
     raw = params.get("ip")
+    if REAL_MODE:
+        if raw is None or str(raw).strip() == "":
+            return err(
+                "真机模式（DSH_URSIM_MODE=real）必须显式提供 ip —— 缺省地址只属于仿真模式。",
+                "BADARG")
+        params["ip"] = str(raw).strip()
+        return None
     if raw is None or str(raw).strip() == "":
         params["ip"] = SIM_IP
         return None
@@ -4527,6 +4548,13 @@ def route_op(op_name, params):
     problem = _pin_sim_ip(params)
     if problem is not None:
         return problem
+    if REAL_MODE and params.get("ip") != SIM_IP:
+        # 真机模式（路线图 A）：非保留地址交给 HANDLERS 的真机实现。
+        #
+        # ⚠️ 保留回环地址在**两种模式**下都表示"那台虚拟机器人"，绝不交给真机实现 —— 否则
+        # `127.0.0.1` 会去连本机的 RTDE/Dashboard，把"把真控制器端口转发到环回"这条
+        # 审计里点名的绕过路径重新打开。
+        return None
     not_ready = _ensure_sim_ready()
     if not_ready is not None:
         return not_ready
