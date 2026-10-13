@@ -7,6 +7,53 @@ so it does not continue the version numbering of the code base it was separated 
 history is archived verbatim in [`CHANGELOG-archive.md`](./CHANGELOG-archive.md); it is **not** part of
 this package and is excluded from the published tarball by the `files` whitelist in `package.json`.
 
+## [0.1.2] - 2026-10-13
+
+A four-expert audit of the 0.1.1 code base (security, architecture, implementation quality and
+documentation; the raw reports are kept in
+[`docs/audit-2026-10-13-four-experts.md`](./docs/audit-2026-10-13-four-experts.md)) found nine
+defects worth fixing immediately. This release is that first batch. The simulation-only contract is
+unchanged.
+
+### Fixed
+
+- **The worker leaked one `stdin` `error` listener per call and never removed it.** The eleventh call
+  tripped Node's `MaxListenersExceededWarning`, and each call also left a closure on the stream for
+  the life of the process. One handler is now attached per child process, and a broken pipe fails
+  **all** of that child's in-flight requests instead of only the last writer. Regression: the listener
+  count stays at 1 after 20 calls.
+- **A killed worker's error message lost its stderr.** `_killFor()` assembled the reason *after*
+  `_failAll()` had dropped the per-child stderr tail, so the message that most needs a cause
+  ("process terminated") usually had none. The tail is now read first.
+- **`respawnCount` incremented before a spawn succeeded**, so one failed start made the host believe
+  the child had been replaced: it rebuilt the simulation and made every attached panel re-download
+  and rebuild 1.5–3.5 MB of GLB. The counter now increments on the `spawn` event.
+- **An IP with surrounding whitespace was treated as a real robot.** The host's simulation test is an
+  exact match against the reserved loopback address while the Python side trims, so `" 127.0.0.1"`
+  raised a human-approval prompt — which in an `approval=never` session surfaces as "command
+  rejected" and is easily misread as a worker fault. Tool arguments are normalised before the gate.
+- **Seven ops with physical side effects were reachable without approval**: `set_tcp` (rewrites the
+  reference frame of *every later* motion), `set_tool_output_mode` / `set_tool_voltage` /
+  `tool_communication` (tool-flange pin semantics; enabling TCI disables the tool analog inputs),
+  `set_digital_out` / `set_analog_out` (they drive grippers, conveyors, welders) and
+  `set_conveyor_tick`. Simulation targets never take this gate, so the change only affects a
+  real-robot deployment — which is exactly where it is needed. `check-approval-gate.py` and the
+  approval-gate tests now assert these families move together.
+- **The twin's over-limit joint warning never fired.** `writeHud()` passed `fkResult?.jointLimits`, a
+  field `fkChain()` has never returned, so `overLimitJoints()` always got `undefined` and returned
+  early: the feature was 100 % dead while its tests were green. The limits now come from the
+  kinematics table, and a regression test drives J2 past its limit.
+- **Stopping the simulation on panel teardown could be aborted by the browser.** That write is sent
+  precisely while the page is unloading, so it now carries `keepalive: true`; otherwise the virtual
+  robot kept running in the host after the panel closed.
+
+### Changed
+
+- `scripts/check-tool-params.py` now fails when it parses fewer than 86 tools — a broken regex used
+  to print `0 / 0` and pass.
+- `test/sim-only.test.mjs` asserts `SIM_PASSTHROUGH_OPS` as an exact set instead of "contains these":
+  that frozenset is the only switch deciding which ops may reach the real-robot implementations.
+
 ## [0.1.1] - 2026-10-13
 
 ### Fixed

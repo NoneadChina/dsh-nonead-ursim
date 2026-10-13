@@ -7,6 +7,42 @@
 [`CHANGELOG-archive.zh.md`](./CHANGELOG-archive.zh.md)；它**不属于**本包，并已通过 `package.json`
 的 `files` 白名单排除在发布包之外。
 
+## [0.1.2] - 2026-10-13
+
+对 0.1.1 代码库做了四位专家的全面审计（安全、架构、实现质量、文档；原文收录在
+[`docs/audit-2026-10-13-four-experts.md`](./docs/audit-2026-10-13-four-experts.md)），找出九处值得
+立刻修的缺陷。本版就是这第一批。**纯仿真的契约没有任何变化。**
+
+### 修复
+
+- **worker 每次调用都往 `stdin` 挂一个 `error` 监听器且从不摘除。** 第 11 次调用即触发 Node 的
+  `MaxListenersExceededWarning`，而且每次调用都往流上永久留一个闭包。现在**每个子进程只挂一次**；
+  管道断了会失败该孩子在飞的**全部**请求，而不是只有最后写入的那一个。回归：连续 20 次调用后
+  监听器数恒为 1。
+- **被 kill 的 worker 丢失了 stderr。** `_killFor()` 在 `_failAll()` 已经清掉 per-child stderr 尾部
+  **之后**才拼错误消息，于是最需要原因的那条（"进程已被终止"）通常没有原因。现在先取尾部。
+- **`respawnCount` 在 spawn 成功前自增**，一次失败重启就会让宿主以为"子进程被换过"：它会重建仿真，
+  并让每个挂着的面板重新下载并重建 1.5–3.5 MB 的 GLB。计数器现在记在 `spawn` 事件上。
+- **带首尾空白的 IP 被当成真机。** 宿主侧的仿真判定是对保留回环地址的严格相等，而 Python 侧会
+  trim，于是 `" 127.0.0.1"` 会弹人工审批 —— 在 `approval=never` 的会话里表现为"命令被拒"，
+  极易被误诊成 worker 故障。工具参数现在在进审批门之前归一化。
+- **七个带物理副作用的 op 此前无需审批即可下发**：`set_tcp`（改写此后**每一次运动**的参考系）、
+  `set_tool_output_mode` / `set_tool_voltage` / `tool_communication`（工具法兰针脚语义；打开 TCI 会
+  禁用工具端模拟输入）、`set_digital_out` / `set_analog_out`（会致动夹爪、传送带、焊机）与
+  `set_conveyor_tick`。仿真目标本就不走这道门，所以该改动只作用于**真机部署** —— 那正是需要它生效
+  的地方。`check-approval-gate.py` 与审批门测试现在断言这些家族成组移动。
+- **孪生的"关节超限"提示从未生效。** `writeHud()` 传的是 `fkResult?.jointLimits`，而 `fkChain()`
+  从来没有这个字段，于是 `overLimitJoints()` 拿到 `undefined` 直接返回：功能 100% 死掉，测试却是绿的。
+  限位现在取自运动学表，并有一条把它推过 J2 上限的回归测试。
+- **面板收起时停仿真的写请求会被浏览器 abort。** 那条请求恰恰是在页面卸载过程中发出的，现在带上
+  `keepalive: true`；否则面板关掉之后虚拟机器人还在宿主里继续跑。
+
+### 变更
+
+- `scripts/check-tool-params.py` 现在解析到少于 86 个工具就失败 —— 以前正则失效会打印 `0 / 0` 然后通过。
+- `test/sim-only.test.mjs` 把 `SIM_PASSTHROUGH_OPS` 断言为**闭集**（此前只断言"包含"）：这个 frozenset
+  是"哪些 op 能落到真机实现"的唯一开关。
+
 ## [0.1.1] - 2026-10-13
 
 ### 修复
