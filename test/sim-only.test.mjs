@@ -33,13 +33,16 @@ test('契约：主派发只经 route_op —— 真机实现除 SIM_PASSTHROUGH_O
 
   const passthrough = /SIM_PASSTHROUGH_OPS = frozenset\(\{([\s\S]*?)\}\)/.exec(workerSource)
   assert.ok(passthrough, '必须声明 SIM_PASSTHROUGH_OPS')
-  for (const op of ['sim_start', 'sim_stop', 'sim_status', 'ping', 'shutdown_worker']) {
-    assert.match(passthrough[1], new RegExp(`"${op}"`), `${op} 必须走 HANDLERS（仿真生命周期/运维）`)
-  }
-  // connect/disconnect 也在放行名单里，但它们的实现已改成仿真语义（见下一组用例）：
-  // 真机连接构造 `ensure_connected(` 只在**不被调用**的真机 op 里出现，route_op 不碰它。
-  assert.match(passthrough[1], /"connect"/, 'connect 的仿真语义要能落到 HANDLERS')
-  assert.match(passthrough[1], /"disconnect"/, 'disconnect 的仿真语义要能落到 HANDLERS')
+  // ⚠️ **闭集**断言（安全审计 M-2）：这个 frozenset 是"哪些 op 能落回 HANDLERS（真机实现）"
+  // 的**唯一开关**。只断言"包含"的话，任何一次看起来无害的新增（`list_programs` / `send_script` /
+  // `power_off` 这类"像仿真生命周期或运维"的名字）都会重新打通真机路径 —— 而四个静态门禁与
+  // 全部测试**都不会红**。所以这里钉成相等：新增一项就必须同步复核并更新本断言。
+  const declared = [...passthrough[1].matchAll(/"([a-z_0-9]+)"/g)].map((m) => m[1]).sort()
+  assert.deepEqual(
+    declared,
+    ['connect', 'disconnect', 'ping', 'shutdown_worker', 'sim_start', 'sim_status', 'sim_stop'],
+    'SIM_PASSTHROUGH_OPS 是闭集：新增一项即重新打开真机实现',
+  )
 
   const routeBody = /def route_op\(op_name, params\):[\s\S]*?\n\ndef /.exec(workerSource)?.[0] ?? ''
   assert.match(routeBody, /_pin_sim_ip\(params\)/, 'route_op 必须先收口 ip')

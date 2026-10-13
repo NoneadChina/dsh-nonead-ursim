@@ -136,6 +136,13 @@ HELPER_READS = {
 out = open(REPORT, "w", encoding="utf-8")
 print("tool op -> handler, declared vs read")
 print("=" * 78)
+# ⚠️ 解析失效会**静默放行**：`tools` 解析不全时下面的循环只会打印 "0 / 0" 然后 PASS。
+# 四个门禁共用同一条脆弱正则（要求 `op:` 与 `toolName:` 相邻两行且顺序固定），任何重排
+# （加字段、改单行、换成生成器输出）都会让它解析不到工具 —— 这条守卫把一个"看起来绿"的
+# 失败变成红。数目与 test/tool-schema-dsl.test.mjs、check-host-compat.mjs 的期望值一致。
+if len(tools) < 86:
+    print("FAIL  只解析到 %d 个工具（应为 86）：lib/index.js 的工具声明解析失效，本门禁会静默放行" % len(tools))
+    raise SystemExit(1)
 problems = 0
 for op, info in sorted(tools.items()):
     fn = op_to_fn.get(op)
