@@ -26,7 +26,12 @@ import ur_worker  # noqa: E402
 _TMP = os.path.join(HERE, ".tmp-new-ops.log")
 for _stale in (_TMP, _TMP + ".1"):
     if os.path.exists(_stale):
-        os.remove(_stale)
+        try:
+            os.remove(_stale)
+        except OSError:
+            # 上一轮异常退出时可能留下**被占用**的临时日志（本轮实测：WinError 32）。
+            # 清理失败不该让整条门禁死在临时文件上 —— 这只是个草稿文件，继续往下走。
+            pass
 ur_worker._LOG = ur_worker._CappedLog(_TMP, 4096)
 sys.stdout = ur_worker._LOG
 

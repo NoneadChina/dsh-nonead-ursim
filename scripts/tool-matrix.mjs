@@ -34,6 +34,8 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const INDEX = `${root}lib/index.js`;
+/** 工具声明面（0.1.3 起独立成模块；APPROVAL_OPS 仍留在 `lib/index.js`）。 */
+const DEFS = `${root}lib/tool-defs.js`;
 const WORKER = `${root}python/ur_worker.py`;
 const DECLARATIONS = `${root}docs/tool-matrix.json`;
 const DOC = `${root}docs/tool-matrix.md`;
@@ -46,9 +48,10 @@ const SIM_UNSUPPORTED = 'unsupported'; // neither ⇒ refused with SIM_UNSUPPORT
 /** Read the code's actual state — this is the ground truth the declarations are checked against. */
 function readSources() {
   const index = readFileSync(INDEX, 'utf8');
+  const defs = readFileSync(DEFS, 'utf8');
   const worker = readFileSync(WORKER, 'utf8');
 
-  const tools = [...index.matchAll(/\{\s*op:\s*'([a-z_0-9]+)',\s*\n\s*toolName:\s*'(ursim_[a-zA-Z_0-9]+)'/g)]
+  const tools = [...defs.matchAll(/\{\s*op:\s*'([a-z_0-9]+)',\s*\n\s*toolName:\s*'(ursim_[a-zA-Z_0-9]+)'/g)]
     .map((m) => ({ op: m[1], toolName: m[2] }));
 
   const approvalBlock = /const APPROVAL_OPS = new Set\(\[(.*?)\]\);/s.exec(index)?.[1] ?? '';

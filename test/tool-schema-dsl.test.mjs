@@ -34,7 +34,7 @@ import { join } from 'node:path'
 const EXPECTED_TOOLS = 86
 const pythonDir = fileURLToPath(new URL('../python/', import.meta.url))
 const workerSource = readFileSync(join(pythonDir, 'ur_worker.py'), 'utf8').replace(/\r\n/g, '\n')
-const indexSource = readFileSync(fileURLToPath(new URL('../lib/index.js', import.meta.url)), 'utf8')
+const indexSource = readFileSync(fileURLToPath(new URL('../lib/tool-defs.js', import.meta.url)), 'utf8')
 
 /** DSL 允许的作者关键字（见文件头）。 */
 const ANNOTATION_KEYS = ['description', 'title', 'default', 'examples']

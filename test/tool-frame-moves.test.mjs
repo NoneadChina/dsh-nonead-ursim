@@ -25,6 +25,9 @@ const packageRoot = fileURLToPath(new URL('..', import.meta.url))
 const pythonDir = join(packageRoot, 'python')
 const workerSource = readFileSync(join(pythonDir, 'ur_worker.py'), 'utf8').replace(/\r\n/g, '\n')
 const hostSource = readFileSync(join(packageRoot, 'lib', 'index.js'), 'utf8').replace(/\r\n/g, '\n')
+// 工具声明（`{ op, toolName, … }`）自 0.1.3 起搬到了 lib/tool-defs.js；APPROVAL_OPS 仍留在
+// lib/index.js（它是运行时策略）。两份都要读 —— 别把断言指向错的那一份。
+const defsSource = readFileSync(join(packageRoot, 'lib', 'tool-defs.js'), 'utf8').replace(/\r\n/g, '\n')
 
 const HARNESS = `
 import json, math, os, sys, tempfile, ur_worker
@@ -142,6 +145,6 @@ test('契约：不用 URScript 的 pose_trans，只发基座系 movel', () => {
 test('安全：三个新工具必须挂进人工审批门禁', () => {
   assert.match(hostSource, /'move_tool_x', 'move_tool_y', 'move_tool_z',/, 'APPROVAL_OPS 必须包含三个新 op')
   for (const tool of ['ursim_move_tool_x', 'ursim_move_tool_y', 'ursim_move_tool_z']) {
-    assert.match(hostSource, new RegExp(`toolName: '${tool}'`), `${tool} 必须注册`)
+    assert.match(defsSource, new RegExp(`toolName: '${tool}'`), `${tool} 必须注册`)
   }
 })

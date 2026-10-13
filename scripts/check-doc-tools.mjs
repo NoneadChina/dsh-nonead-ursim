@@ -24,7 +24,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
-const indexSource = readFileSync(`${root}lib/index.js`, 'utf8');
+const indexSource = readFileSync(`${root}lib/tool-defs.js`, 'utf8');
 
 /** Tool names as registered by lib/index.js. */
 const registered = [...indexSource.matchAll(/toolName:\s*'(ursim_[a-z0-9_]+)'/g)].map((m) => m[1]);

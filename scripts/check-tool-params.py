@@ -19,7 +19,7 @@ import json
 import os
 import re
 
-INDEX = "lib/index.js"
+INDEX = "lib/tool-defs.js"
 WORKER = "python/ur_worker.py"
 
 index = open(INDEX, encoding="utf-8").read()
@@ -141,7 +141,7 @@ print("=" * 78)
 # （加字段、改单行、换成生成器输出）都会让它解析不到工具 —— 这条守卫把一个"看起来绿"的
 # 失败变成红。数目与 test/tool-schema-dsl.test.mjs、check-host-compat.mjs 的期望值一致。
 if len(tools) < 86:
-    print("FAIL  只解析到 %d 个工具（应为 86）：lib/index.js 的工具声明解析失效，本门禁会静默放行" % len(tools))
+    print("FAIL  只解析到 %d 个工具（应为 86）：lib/tool-defs.js 的工具声明解析失效，本门禁会静默放行" % len(tools))
     raise SystemExit(1)
 problems = 0
 for op, info in sorted(tools.items()):

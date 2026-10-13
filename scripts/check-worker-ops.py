@@ -16,7 +16,7 @@ import re
 import sys
 
 WORKER = "python/ur_worker.py"
-INDEX = "lib/index.js"
+INDEX = "lib/tool-defs.js"
 
 src = open(WORKER, encoding="utf-8").read()
 tree = ast.parse(src)

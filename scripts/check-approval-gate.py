@@ -46,6 +46,9 @@ MUST_BE_GATED = {
 failures = []
 
 idx = open("lib/index.js", encoding="utf-8").read()
+# ⚠️ 工具声明（`{ op: …, toolName: … }`）自 0.1.3 起搬到了 lib/tool-defs.js；
+#    APPROVAL_OPS 仍留在 lib/index.js —— 它是**运行时策略**，不是声明面的数据。
+defs = open("lib/tool-defs.js", encoding="utf-8").read()
 src = open("python/ur_worker.py", encoding="utf-8").read()
 tree = ast.parse(src)
 
@@ -55,7 +58,7 @@ for node in ast.walk(tree):
         handlers = node
 ops = [k.value for k in handlers.value.keys]
 
-pairs = re.findall(r"\{\s*op:\s*'([a-z_0-9]+)',\s*\n\s*toolName:\s*'(ursim_[a-zA-Z_0-9]+)'", idx)
+pairs = re.findall(r"\{\s*op:\s*'([a-z_0-9]+)',\s*\n\s*toolName:\s*'(ursim_[a-zA-Z_0-9]+)'", defs)
 tool_of_op = {op: name for op, name in pairs}
 
 orphans = [o for o in ops if o not in tool_of_op and o != "shutdown_worker"]
