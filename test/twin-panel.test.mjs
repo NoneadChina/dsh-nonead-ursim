@@ -521,7 +521,7 @@ test('快照 connected:false 时显示「未连接」且不加载模型、不渲
  * 用例 3：connected:true —— 正确型号 + 只 add root + 每帧 applyFK
  * ------------------------------------------------------------------ */
 
-test('connected:true 时以正确型号调用 modelLoader、只 add handle.root，且每帧 applyFK', async () => {
+test('connected:true 时以正确型号调用 modelLoader、只 add handle.root，且数据推进时摆姿态', async () => {
   const ctx = boot({ initial: { connected: true, model: 'UR3', q: Q0, tcp: TCP0, ts: 1000 } })
 
   ctx.clock.flush()
@@ -535,12 +535,17 @@ test('connected:true 时以正确型号调用 modelLoader、只 add handle.root�
   // Task 7 的 assemble() 已把 7 个装配组挂回 root；再手动 add groups[0] 会把它摘出 root。
   assert.ok(!scene.added.includes(h.groups[0]), '不得再手动 add groups[0]')
 
-  // 模型就绪后的每一帧都必须 applyFK
-  const frames = 5
-  for (let i = 1; i <= frames; i++) {
-    ctx.clock.flush(16)
-    assert.equal(h.applyFKCount, i, `第 ${i} 帧必须调用一次 applyFK`)
-  }
+  // 有数据在推进时必须摆姿态（插值窗口内逐帧更新）；数据静止并收敛到测量值之后**不得**再
+  // 反复重算 —— 这是「静止降频」的契约（旧写法每帧无条件 applyFK，60 Hz 全跑）。
+  for (let i = 1; i <= 5; i++) ctx.clock.flush(16)
+  assert.ok(h.applyFKCount >= 2, `数据推进期间必须摆姿态（实得 ${h.applyFKCount}）`)
+  const settled = h.applyFKCount
+  for (let i = 0; i < 20; i++) ctx.clock.flush(16)
+  assert.equal(
+    h.applyFKCount,
+    settled,
+    `数据静止后不得再重算姿态（静止 20 帧后又算了 ${h.applyFKCount - settled} 次）`,
+  )
 
   // 姿态正确性：单采样（无 prev）时插值退化为样本本身，应与独立算出的 FK 逐元素一致。
   const expected = fkChain(resolveKinematics('ur3'), Q0).tool0
@@ -1122,12 +1127,13 @@ test('fix round 1：滞后上限生效（超长间隔不卡在很久以前）', 
 test('fix round 1：只有单个样本时不插值（行为不变）', async () => {
   const ctx = await bootConnectedSampleA()
 
-  // 长时间无新样本：prev 始终为空 ⇒ 每帧都应精确等于 fk(A0)（不插值、不 NaN）
+  // 长时间无新样本：prev 始终为空 ⇒ 呈现的必须精确等于 fk(A0)（不插值、不 NaN）。
+  // ⚠️ "静止后不再重算"是 ① 的契约，所以这里只断言**结果**，不要求每帧都算一次。
   for (const dt of [16, 16, 500, 5000]) {
     ctx.clock.flush(dt)
     assertClose(lastFk(ctx), fkOf(A0), `单样本阶段（+${dt}ms）必须就是样本本身`)
   }
-  assert.equal(ctx.modelLoader.handles[0].applyFKCount >= 4, true)
+  assert.ok(ctx.modelLoader.handles[0].applyFKCount >= 1, '至少要摆过一次姿态')
 
   ctx.panel.dispose()
 })
@@ -1168,6 +1174,28 @@ test('overLimitJoints：只标出真正超限的关节，且绝不因畸形输�
   assert.deepEqual(overLimitJoints([0, 0], [[-1, 1], [-1, 1]]), [], '长度不齐只比对公共部分')
   assert.deepEqual(overLimitJoints([0, 0, 0, 0, 0, 0], [[1, -1], 0, null, 'x', [], [-1, 1]]), [],
     '非法限位条目跳过')
+})
+
+test('★ ① 静止降频：数据没变时不再每帧重算姿态（旧写法 60 Hz 全跑）', async () => {
+  const ctx = boot({ initial: { connected: true, model: 'UR5E', q: Q0, tcp: TCP0, ts: 1000 } })
+  ctx.clock.flush()
+  await tick()
+  ctx.clock.flush(16) // 首帧：吃下采样并摆姿态
+
+  const handle = ctx.modelLoader.handles[0]
+  assert.ok(handle.applyFKCount >= 1, '首帧必须摆过一次姿态')
+
+  // 越过插值窗口后再数：此刻数据没有任何变化，姿态结果与上一帧逐位相同。
+  ctx.clock.flush(300)
+  const baseline = handle.applyFKCount
+  for (let i = 0; i < 62; i += 1) ctx.clock.flush(16) // ≈1 秒的 60 Hz 帧
+
+  const extra = handle.applyFKCount - baseline
+  assert.ok(
+    extra <= 3,
+    `静止 1 秒内只应在数据/窗口变化时重算姿态，实际重算了 ${extra} 次（旧写法约 62 次）`,
+  )
+  ctx.panel.dispose()
 })
 
 test('未超限时关节行与 formatJoints 逐字一致（不引入任何后缀），并标记 overlimit=false', async () => {

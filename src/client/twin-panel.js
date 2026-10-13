@@ -630,6 +630,21 @@ export function mountTwinPanel({
   let dirty = true
   /** 插值推进到此毫秒之前必须连续出帧（否则平滑会退化成阶梯）。 */
   let animatingUntil = -Infinity
+  /**
+   * 最近一次真正算出来的 FK 结果（`applyPoseToScene` 的返回值）。
+   *
+   * 静止帧（见 `step()` 里的 `staticFrame`）直接复用它，于是**不重算** FK / 姿态矩阵 / 轨迹：
+   * 那个结果与上一帧逐位相同，重算是纯浪费（60 Hz 全跑，而有新信息的只有 10 Hz 的采样与它
+   * 之后的一小段插值窗口）。
+   */
+  let poseResult = null
+  /**
+   * 姿态是否已经**收敛到测量值**（插值窗口结束后的那一帧算完即置位）。
+   *
+   * 只有置位之后才允许复用 `poseResult`：窗口内最后一帧算的是内插值，而那之后的第一个静止帧
+   * 才会把姿态精确收敛到"控制器最近报出的那一笔"。
+   */
+  let poseSettled = false
   /** 页面是否在后台。隐藏时**彻底停帧**（见 onVisibility / pauseLoop）。 */
   let hidden = doc.hidden === true
 
@@ -1879,18 +1894,38 @@ export function mountTwinPanel({
         // 而不是注释里说的 60 s），并且每帧都要重建 ~600 个数组（持续 GC 抖动）。
         pushTrajectorySample(snap)
         dirty = true
+        poseSettled = false // 新样本 ⇒ 重新进入"插值 → 收敛"过程
         // 插值要在 `nowMs - delay` 走过 [prev, cur] 这段时间内连续出帧；多留 64 ms（≈4 帧）
         // 吸收调度抖动，否则最后一次插值会被按需渲染跳过、画面退化成阶梯。
         animatingUntil = nowMs + renderDelayMs(prevSample, curSample) + 64
       }
 
-      // 渲染滞后一个采样周期（自校准）：只有一个样本时不插值，直接呈现该样本。
-      const smooth = prevSample
-        ? interpolateAt(prevSample, curSample, nowMs - renderDelayMs(prevSample, curSample))
-        : curSample.q.slice()
-      // 姿态：只在模型就绪时写（applyFK 不产生 GPU 资源，无需暂存）。这一步同时把模型置为
-      // 可见、并把本次关节角记下来（换型号时新模型据此立刻摆姿态）—— 见 applyPoseToScene。
-      fkResult = applyPoseToScene(smooth, kin)
+      /*
+       * 静止帧（①）：既不脏、插值窗口也走完、采样也没换 —— 此刻 `interpolateAt` 在窗口外会把
+       * 结果**钳到 curSample**，所以本帧的 `smooth` 与上一帧逐位相同，FK 结果与姿态矩阵自然
+       * 也相同。旧写法照样每帧重算一遍（FK + 若干矩阵写入 + 一次轨迹重绘），60 Hz 全跑。
+       */
+      const windowDone = nowMs >= animatingUntil
+      const staticFrame = !isNewSample && !dirty && windowDone && poseSettled && poseResult !== null
+      if (staticFrame) {
+        fkResult = poseResult
+      } else {
+        // 渲染滞后一个采样周期（自校准）：只有一个样本时不插值，直接呈现该样本。
+        const smooth = prevSample
+          ? interpolateAt(prevSample, curSample, nowMs - renderDelayMs(prevSample, curSample))
+          : curSample.q.slice()
+        // 姿态：只在模型就绪时写（applyFK 不产生 GPU 资源，无需暂存）。这一步同时把模型置为
+        // 可见、并把本次关节角记下来（换型号时新模型据此立刻摆姿态）—— 见 applyPoseToScene。
+        fkResult = applyPoseToScene(smooth, kin)
+        poseResult = fkResult
+        /*
+         * ⚠️ 窗口**刚结束**的那一帧必须照常算（`windowDone && !poseSettled` 走的就是这里）：
+         * 窗口内最后一帧算的是**内插值**，而这一帧 `interpolateAt` 已把结果钳到 `curSample`，
+         * 于是 `lastResult` 才精确等于"控制器最近报出的那一笔" —— 画面与读数都收敛到测量值。
+         * 只有算过这一帧之后，同样的数据才允许复用。
+         */
+        poseSettled = windowDone
+      }
 
       // 幽灵臂：把"控制器打算去哪"画出来，与上面的**实际**姿态叠加 —— 跟随误差、滞后与
       // 交融过程一眼可见。
@@ -1936,7 +1971,9 @@ export function mountTwinPanel({
 
       // TCP gizmo 与受力箭头已随 applyPoseToScene 一起写好（与姿态同一个入口，不会各写一次）。
 
-      drawTrajectory()
+      // 轨迹只在**新采样**时才会多一个点（见上面的 `pushTrajectorySample`），所以静止帧
+      // 重绘它只是把同一批顶点再上传一次 —— 跳过。
+      if (!staticFrame) drawTrajectory()
       // HUD 用**测量值**而不是插值值：插值是为了让网格看起来连续，而工程读数必须是
       // 控制器真实报出的那一笔（两者可能相差一个采样周期 + 渲染滞后）。
       writeHud(nowMs, snap, joints, fkResult, kin)
