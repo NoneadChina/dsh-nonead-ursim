@@ -8,6 +8,21 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.1.15] - 2026-10-15
+
+### Fixed (development tooling only — no runtime change)
+
+- **`npm run verify:host` now works out of the box.** The host API compatibility check (peer versions,
+  compiling all tool schemas through the host's real DSL, route shapes, the client-load contract) used to
+  fail immediately with "pass the host node_modules path": its candidate list hard-coded the product
+  directory name (`C:\Program Files\DSH Desktop\…`) while this machine's install is
+  `Nonead DSH Desktop`, so every candidate missed and the audit effectively never ran — and a check that
+  does not run is worse than one that reports a problem, because this is exactly what guards against
+  silently missing tools. It now scans the usual install roots for any DSH directory, and reports
+  `result: 全部通过` (86/86 tools registered through the host DSL) with no arguments.
+- This release contains **no change to the shipped plugin**: `scripts/` is not part of the published
+  package (`files` in package.json). The version is bumped so the tooling fix is traceable.
+
 ## [0.1.14] - 2026-10-15
 
 ### Fixed
