@@ -115,7 +115,7 @@ Host-side routes (all fenced to loopback callers):
 | `GET /nonead-ursim/twin/asset?model=<urXX>` | GLB mesh, with a content-hash `ETag` + `immutable` and `If-None-Match` → 304 support |
 | `GET /nonead-ursim/twin/models` | The model list actually present locally |
 | `GET /nonead-ursim/twin/sim` | Current offline-simulation state (on/off, model, start pose, speed scaling, available models), the capability list, and the **configured mode** (`motion_mode` plus the `real_robots` allow-list) that the panel's mode badge displays. No side effects |
-| `POST /nonead-ursim/twin/sim` | **The plugin's only write route**: `{"enabled":true,"model":"ur10e","preset":"upright","speed_scaling":1}` starts the simulation, `{"enabled":false}` stops it. Its write guard is stricter than the read routes (beyond the loopback trust fence it **requires an `Origin`**, `content-type: application/json`, and a body of at most 4 KB). Its side effect is confined to a **kinematics virtual robot on the loopback address** — no real robot ever receives a command through it |
+| `POST /nonead-ursim/twin/sim` | **The plugin's only write route**: `{"enabled":true,"model":"ur10e","preset":"upright","speed_scaling":1}` starts the simulation, `{"enabled":false}` stops it. Its write guard is stricter than the read routes (beyond the loopback trust fence it **requires an `Origin`**, `content-type: application/json`, and a body of at most 4 KB). Its side effect is confined to a **kinematics virtual robot on the loopback address** — no real robot ever receives a command through it | The same route also performs **panel I/O writes** (`{"io":{"kind":"digital_out","n":3,"value":true}}` — `digital_out` with a boolean value, or `analog_out` with a finite value in engineering units plus an optional `full_scale` of 10/20), and **only while the offline simulation is running**: otherwise it answers `409 SIM_NOT_RUNNING`. Panel writes never target a real robot — real I/O still goes through the tools, where the approval gate and the declared-parameter allow-list apply. |
 
 Failure responses carry a **machine-readable `code`** (e.g. `no_robot` / `robot_not_connected` / `ambiguous_robot` / `worker_unavailable` / `robot_error`) and echo the resolved `ip`, so the UI can say which of four very different failures happened (it used to render one "not connected" line for all of them). A read that is only **temporarily** unavailable (most often: the worker is busy executing a motion command) is *not* reported as `robot_error`: the host replays the last known reading with `stale:true` (for up to 30 s), so the simulation keeps its picture and says the data is stale.
 
@@ -131,7 +131,7 @@ Failure responses carry a **machine-readable `code`** (e.g. `no_robot` / `robot_
    // C:\Users\<you>\.dsh\profiles\web\package.json
    {
      "dependencies": {
-       "dsh-nonead-ursim": "^0.1.12"
+       "dsh-nonead-ursim": "^0.1.13"
      },
      "dsh": {
        "profile": {

@@ -103,7 +103,7 @@ host 侧路由（均限定 loopback 调用方）：
 | `GET /nonead-ursim/twin/asset?model=<urXX>` | GLB 网格，带内容哈希 `ETag` + `immutable`，支持 `If-None-Match` → 304 |
 | `GET /nonead-ursim/twin/models` | 本地实际存在的模型清单 |
 | `GET /nonead-ursim/twin/sim` | 离线仿真的当前状态（是否开启、型号、起始姿态、倍率、可用型号）、能力清单，以及**配置里的模式**（`motion_mode` 加 `real_robots` 白名单）—— 面板的模式角标读的就是它。无副作用 |
-| `POST /nonead-ursim/twin/sim` | **本插件唯一的写路由**：`{"enabled":true,"model":"ur10e","preset":"upright","speed_scaling":1}` 开仿真、`{"enabled":false}` 关。写守卫比只读路由更严（除回环信任围栏外**必须带 `Origin`**、`content-type: application/json`、请求体 ≤4 KB）。它的副作用被限制在**回环地址上的运动学虚拟机器人**，任何真机都不会因此收到指令 |
+| `POST /nonead-ursim/twin/sim` | **本插件唯一的写路由**：`{"enabled":true,"model":"ur10e","preset":"upright","speed_scaling":1}` 开仿真、`{"enabled":false}` 关。写守卫比只读路由更严（除回环信任围栏外**必须带 `Origin`**、`content-type: application/json`、请求体 ≤4 KB）。它的副作用被限制在**回环地址上的运动学虚拟机器人**，任何真机都不会因此收到指令 | 同一条路由还承担**面板的 I/O 写**（`{"io":{"kind":"digital_out","n":3,"value":true}}` —— `digital_out` 收布尔值，`analog_out` 收工程单位下的有限数并可选 `full_scale` 10/20），且**只在离线仿真运行时**才受理：否则回 `409 SIM_NOT_RUNNING`。面板写通道不面向真机 —— 真机 I/O 仍走工具，那里有审批门与声明面白名单。 |
 
 失败响应带**机器可读的 `code`**（例如 `no_robot` / `robot_not_connected` / `ambiguous_robot` / `worker_unavailable` / `robot_error`）并回显本次解析到的 `ip`，界面据此给出不同的提示与处置建议（以前四种完全不同的故障都渲染成同一句「未连接机器人」）。读**暂时**拿不到（worker 正忙着执行运动指令是最常见的原因）时不会报 `robot_error`：宿主回放最后一笔已知读数并标记 `stale:true`（最多 30 s），仿真保留画面并显示停滞提示。
 
@@ -119,7 +119,7 @@ host 侧路由（均限定 loopback 调用方）：
    // C:\Users\<you>\.dsh\profiles\web\package.json
    {
      "dependencies": {
-       "dsh-nonead-ursim": "^0.1.12"
+       "dsh-nonead-ursim": "^0.1.13"
      },
      "dsh": {
        "profile": {

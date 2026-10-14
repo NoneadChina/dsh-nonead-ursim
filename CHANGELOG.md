@@ -8,6 +8,25 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.1.13] - 2026-10-15
+
+### Added
+
+- **The panel can write I/O (design plan P1, host half).** Through the single write route the panel could
+  already start and stop the simulation; it can now also write **digital outputs** (a boolean) and
+  **analog outputs** (a finite value in engineering units, with an optional `full_scale` of 10 V or
+  20 mA) — the two things the reference I/O page actually writes. Three deliberate restrictions:
+  - **Only while the offline simulation is running** (`409 SIM_NOT_RUNNING` otherwise). Panel writes never
+    target a real robot: real I/O still goes through the tools, where the approval gate and the
+    declared-parameter allow-list apply. A panel button must not become a way around the gate.
+  - **A parameter whitelist, validated as untrusted input** (`lib/twin-io.js`): only `digital_out` and
+    `analog_out` exist, `n` must be an integer 0–15 (standard 0–7 plus configurable 8–15), and the value
+    type follows the kind. Validating it in a pure module (rather than inline in the route) is what makes
+    it unit-testable — the route itself is then thin enough to need no test of its own.
+  - Writing that validation turned up two real holes worth keeping in mind for any write endpoint:
+    `Number('')` and `Number(null)` are both **0**, so "the port was not supplied" would have been silently
+    read as "write port 0". Both are rejected now, and the tests pin them.
+
 ## [0.1.12] - 2026-10-15
 
 ### Fixed
