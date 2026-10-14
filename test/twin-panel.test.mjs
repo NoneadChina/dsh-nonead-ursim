@@ -2262,3 +2262,20 @@ test('★ C1：HUD 里必须有奇异点/可操作度提示行，且按等级写
   assert.ok(String(row.getAttribute('title')).length > 0, '判据要放在 title 里，便于解释"凭什么这么说"')
   ctx.panel.dispose()
 })
+
+test('★ 0.1.12：断连必须清空风险行并复位等级（否则残留"⚠ 奇异点"这种假信息）', async () => {
+  const ctx = boot({ initial: { connected: true, model: 'UR5E', q: Q0, tcp: TCP0, ts: 1000 }, autoSim: false })
+  ctx.clock.flush()
+  await tick()
+  const row = byAttr(ctx.container, 'data-ursim-twin-risk-row')[0]
+  assert.ok(row, '必须有风险行')
+  assert.ok(row.textContent.length > 0, '连着的时候风险行要有内容')
+
+  ctx.state.set({ connected: false, ts: 2000 })
+  ctx.clock.flush()
+  await tick()
+  assert.equal(row.textContent, '', '★ 断连后风险行必须清空（上一版漏了，会挂着旧的腕角/等级）')
+  assert.equal(row.getAttribute('data-ursim-twin-risk'), 'ok', '等级必须复位，否则样式还染着红/琥珀')
+  assert.equal(row.getAttribute('title'), '', 'title 也要清')
+  ctx.panel.dispose()
+})

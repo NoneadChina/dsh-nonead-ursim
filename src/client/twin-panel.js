@@ -1736,6 +1736,20 @@ export function mountTwinPanel({
         hudTcp.textContent = ''
         hudDetail.textContent = ''
         hudPower.textContent = ''
+        /*
+         * C1/C4 的收尾（0.1.12 修）：风险行必须跟着清空，**3D 上的超限着色也必须撤掉**。
+         *
+         * 上一版漏了这几件事，后果是断连后残留两条假信息：① HUD 还挂着上一次的「⚠ 奇异点
+         * 腕 1.2°」；② 那节被染红的连杆**继续红着** —— 重连到另一台机器人、甚至换了型号之后
+         * 仍然红，而被点名的关节早已不是那个位姿。两个 `last*` 缓存也必须一起重置，否则重连后
+         * 会因"结果没变"而跳过重新渲染与重新着色。
+         */
+        hudRisk.textContent = ''
+        hudRisk.setAttribute('data-ursim-twin-risk', 'ok')
+        hudRisk.setAttribute('title', '')
+        lastRiskText = null
+        lastOverKey = null
+        tintJointLinks(handle?.root ?? null, [])
         // 数据通道看门狗：断连即重置（重连后从新的一帧重新计时）。
         hudFeed.textContent = ''
         hudFeed.style.display = 'none'
