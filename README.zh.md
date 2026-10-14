@@ -77,13 +77,21 @@
 **面板跟随桌面端的配色主题**：浅色 / 深色 / 跟随系统来自 DSH 自己的外观设置 —— 主题插件把解析后的快照投影到 document 上：布尔属性 `body[data-ds-dark-theme]` 加一整套 `--dsw-alias-*` 设计 token。面板因此**直接吃这些 token**（只有在宿主 token 缺失时——例如独立预览页——才退回与主题成对的本地值），于是既跟随设置、也跟随任何通过 `ctx.theme` 覆盖别名的第三方主题，**不需要任何 JS 参与**。CSS 唯一够不到的是 WebGL 侧的基座网格：它的颜色烘在几何体顶点色里，`src/client/theme.js` 盯同一个信号、`scene.js` 的 `applyTheme()` **就地**重刷网格（不重建几何体、不新建 `GridHelper`），所以切主题不会打扰相机、模型与已录轨迹。
 
 host 侧路由（均限定 loopback 调用方）：
+**面板多显示的三件事 —— 光有工具做不到这些**：自 0.1.8 起，左上角那枚角标是**三态模式指示**，而不
+只是仿真水印：驱动虚拟机器人时是紫色 `仿真`；只要配置了 `motionMode: 'real'` 就常显红色
+**`真机模式 · <允许的 IP>`**（**断连时也显示** —— "没有角标"绝不能被读成"安全"；白名单为空时明说
+全部拒绝）；什么都不在驱动时是中性的 `未连接`。遥测行补上了**已经送到客户端却从未画出来**的两项读数
+（关节电流、TCP 速度），并且只要宿主标了 `telemetry_estimated`，这几行就带 **`（估算）`** 后缀 ——
+界面不能把估算值画成和测量值一样。仿真能力边界现在也能在面板里读到：仿真控件下面多了一行可展开的
+说明，列出每个桶有多少项，完整清单在悬停提示里。
+
 | 路由 | 说明 |
 |---|---|
 | `GET /nonead-ursim/twin/stream[?ip=<ip>]` | **SSE 实时流**（客户端默认走这条）：每 100 ms 一帧完整状态快照，另有 `stale`（这一帧读还没回来）与 `frame-error`（这一帧失败）事件 |
 | `GET /nonead-ursim/twin/state[?ip=<ip>][&detail=1]` | 实时位姿（关节角 / TCP / 型号）。`detail=1` 附带 dashboard 侧状态（安全模式、运行状态、速度倍率、关节温度/电流等），位姿通道仍独立轮询，detail 失败不影响位姿 |
 | `GET /nonead-ursim/twin/asset?model=<urXX>` | GLB 网格，带内容哈希 `ETag` + `immutable`，支持 `If-None-Match` → 304 |
 | `GET /nonead-ursim/twin/models` | 本地实际存在的模型清单 |
-| `GET /nonead-ursim/twin/sim` | 离线仿真的当前状态（是否开启、型号、起始姿态、倍率、可用型号）+ 能力清单。无副作用 |
+| `GET /nonead-ursim/twin/sim` | 离线仿真的当前状态（是否开启、型号、起始姿态、倍率、可用型号）、能力清单，以及**配置里的模式**（`motion_mode` 加 `real_robots` 白名单）—— 面板的模式角标读的就是它。无副作用 |
 | `POST /nonead-ursim/twin/sim` | **本插件唯一的写路由**：`{"enabled":true,"model":"ur10e","preset":"upright","speed_scaling":1}` 开仿真、`{"enabled":false}` 关。写守卫比只读路由更严（除回环信任围栏外**必须带 `Origin`**、`content-type: application/json`、请求体 ≤4 KB）。它的副作用被限制在**回环地址上的运动学虚拟机器人**，任何真机都不会因此收到指令 |
 
 失败响应带**机器可读的 `code`**（例如 `no_robot` / `robot_not_connected` / `ambiguous_robot` / `worker_unavailable` / `robot_error`）并回显本次解析到的 `ip`，界面据此给出不同的提示与处置建议（以前四种完全不同的故障都渲染成同一句「未连接机器人」）。读**暂时**拿不到（worker 正忙着执行运动指令是最常见的原因）时不会报 `robot_error`：宿主回放最后一笔已知读数并标记 `stale:true`（最多 30 s），仿真保留画面并显示停滞提示。
@@ -100,7 +108,7 @@ host 侧路由（均限定 loopback 调用方）：
    // C:\Users\<you>\.dsh\profiles\web\package.json
    {
      "dependencies": {
-       "dsh-nonead-ursim": "^0.1.7"
+       "dsh-nonead-ursim": "^0.1.8"
      },
      "dsh": {
        "profile": {

@@ -8,6 +8,27 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.1.8] - 2026-10-14
+
+### Added
+
+- **The panel now shows the current mode (P0, safety-relevant).** The top-left badge used to appear
+  *only* while a simulation was running, which made "no badge" read like "nothing will move" — yet in
+  `motionMode: 'real'` a command does reach hardware. It is now a **three-state indicator**: purple
+  `SIMULATION` while a virtual robot is driven, red **`REAL MODE · <allowed IPs>`** whenever real mode is
+  configured (**shown even while disconnected**, and it says so explicitly when the allow-list is empty),
+  and a neutral `NOT CONNECTED` when nothing is driving anything. `GET /nonead-ursim/twin/sim` now
+  carries `motion_mode` and `real_robots` so the client can render it.
+- **Telemetry rows: the estimation label plus two readings that were never drawn (P1).** `joint_currents`
+  and `tcp_speed` were already delivered in `detail` but nothing rendered them; both have rows now (TCP
+  speed as the linear-velocity magnitude). And whenever the host marks the telemetry
+  `telemetry_estimated`, those rows carry an **`(estimated)`** suffix — the panel must not present an
+  estimate in the same shape as a measurement, which is exactly the honesty the tool replies carry.
+- **The simulation's capability boundary is readable in the panel (P2).** A collapsible line under the
+  simulation controls lists how many ops each bucket holds (motion / readback / I/O and registers /
+  telemetry / not simulated), with the full list in its tooltip; the data was already in the
+  `twin/sim` response.
+
 ## [0.1.7] - 2026-10-14
 
 ### Changed

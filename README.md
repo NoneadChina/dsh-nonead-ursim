@@ -83,13 +83,24 @@ The plugin also ships a **read-only 3D digital simulation** of the robot, render
 
 Host-side routes (all fenced to loopback callers):
 
+**Three things the panel shows that the tools alone cannot.** Since 0.1.8 the top-left badge is a
+**three-state mode indicator**, not just a simulation watermark: purple `SIMULATION` while a virtual
+robot is being driven, red **`REAL MODE · <allowed IPs>`** whenever `motionMode: 'real'` is configured
+(shown even while disconnected — "no badge" must never read as "safe", and an empty allow-list says so
+explicitly), and a neutral `NOT CONNECTED` when nothing is driving anything. The telemetry rows gained
+the two readings that were already being delivered but never drawn (joint currents, TCP speed) and are
+suffixed **`(estimated)`** whenever the host marks them `telemetry_estimated` — the panel must not
+present an estimate in the same shape as a measurement. And the capability boundary is now readable in
+the panel itself: a collapsible line under the simulation controls lists how many ops each bucket
+holds, with the full list in its tooltip.
+
 | Route | Description |
 |---|---|
 | `GET /nonead-ursim/twin/stream[?ip=<ip>]` | **SSE stream** (what the client uses by default): one full state frame every 100 ms, plus `stale` (this frame's read has not returned yet) and `frame-error` (this frame failed) events |
 | `GET /nonead-ursim/twin/state[?ip=<ip>][&detail=1]` | Live pose (joint angles / TCP / model). `detail=1` adds the dashboard-side state (safety mode, run state, speed scaling, joint temperatures/currents); the pose channel keeps polling independently and a failing detail query never takes it down |
 | `GET /nonead-ursim/twin/asset?model=<urXX>` | GLB mesh, with a content-hash `ETag` + `immutable` and `If-None-Match` → 304 support |
 | `GET /nonead-ursim/twin/models` | The model list actually present locally |
-| `GET /nonead-ursim/twin/sim` | Current offline-simulation state (on/off, model, start pose, speed scaling, available models) plus the capability list. No side effects |
+| `GET /nonead-ursim/twin/sim` | Current offline-simulation state (on/off, model, start pose, speed scaling, available models), the capability list, and the **configured mode** (`motion_mode` plus the `real_robots` allow-list) that the panel's mode badge displays. No side effects |
 | `POST /nonead-ursim/twin/sim` | **The plugin's only write route**: `{"enabled":true,"model":"ur10e","preset":"upright","speed_scaling":1}` starts the simulation, `{"enabled":false}` stops it. Its write guard is stricter than the read routes (beyond the loopback trust fence it **requires an `Origin`**, `content-type: application/json`, and a body of at most 4 KB). Its side effect is confined to a **kinematics virtual robot on the loopback address** — no real robot ever receives a command through it |
 
 Failure responses carry a **machine-readable `code`** (e.g. `no_robot` / `robot_not_connected` / `ambiguous_robot` / `worker_unavailable` / `robot_error`) and echo the resolved `ip`, so the UI can say which of four very different failures happened (it used to render one "not connected" line for all of them). A read that is only **temporarily** unavailable (most often: the worker is busy executing a motion command) is *not* reported as `robot_error`: the host replays the last known reading with `stale:true` (for up to 30 s), so the simulation keeps its picture and says the data is stale.
@@ -106,7 +117,7 @@ Failure responses carry a **machine-readable `code`** (e.g. `no_robot` / `robot_
    // C:\Users\<you>\.dsh\profiles\web\package.json
    {
      "dependencies": {
-       "dsh-nonead-ursim": "^0.1.7"
+       "dsh-nonead-ursim": "^0.1.8"
      },
      "dsh": {
        "profile": {
