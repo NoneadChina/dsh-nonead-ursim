@@ -2056,7 +2056,8 @@ export function mountTwinPanel({
           hint.level === 'at' ? S.riskAt : (hint.level === 'near' ? S.riskNear : S.riskOk),
           S.riskWrist(hint.wristDeg.toFixed(1)),
           hint.manip === null ? '' : S.riskManip(hint.manip.toFixed(4)),
-          hint.limitDeg === null || hint.limitDeg > 5 ? '' : S.riskLimit(hint.limitJoint, hint.limitDeg.toFixed(1)),
+          // 阈值判断在模块里（hint.limitNear）：面板不再硬编码 5°，否则改常量会两边不一致。
+          hint.limitNear === true ? S.riskLimit(hint.limitJoint, hint.limitDeg.toFixed(1)) : '',
         ].filter(Boolean).join('  ·  ')
     if (riskText !== lastRiskText) {
       lastRiskText = riskText

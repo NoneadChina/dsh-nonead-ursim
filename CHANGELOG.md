@@ -8,6 +8,30 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.1.14] - 2026-10-15
+
+### Fixed
+
+- **Code review: two "same rule, two places" drifts.** Both were found by sweeping for the failure classes
+  this project has hit before (duplicated constants, thresholds re-implemented by the caller, capabilities
+  with no caller), not by re-reading the diff:
+  - **The loopback address was written in two places.** `lib/index.js` had its own `SIM_IP` and
+    `lib/twin-io.js` carried a second copy "to avoid an import cycle". Changing one would have made the
+    panel's I/O writes silently target a different address — the hardest kind of drift to notice, because
+    both sides still look right. The address now lives in a zero-dependency module (`lib/sim-ip.js`, which
+    is why it cannot create a cycle) and both files import it; a test pins the write path to that source.
+  - **The panel re-implemented the module's threshold.** The singularity row decided "is this joint near
+    its limit" with a hard-coded `hint.limitDeg > 5`, while the real threshold is `LIMIT_MARGIN_DEG` in
+    `manipulability.js`. The fix is not "have the panel import the constant" but **letting the module
+    return the verdict** (`limitNear`), so the rule exists in exactly one place; the boundary (5° counts,
+    5.1° does not) is now pinned by tests.
+
+### Note
+
+- The `io` write verb added in 0.1.13 currently has **no caller in the panel** (the I/O page shipped in
+  0.1.14 and was rolled back on request). It is kept deliberately — it is part of what 0.1.13 released and
+  documented — but it is recorded here so a later reader does not delete it as dead code.
+
 ## [0.1.13] - 2026-10-15
 
 ### Added

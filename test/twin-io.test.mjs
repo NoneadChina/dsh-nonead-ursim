@@ -18,6 +18,13 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import { IO_WRITE_OPS, parseIoWrite } from '../lib/twin-io.js'
+import { SIM_IP } from '../lib/sim-ip.js'
+
+test('★ 0.1.14：回环地址来自唯一真源模块（两处常量各改各的会静默打到别的目标）', () => {
+  assert.equal(SIM_IP, '127.0.0.1')
+  assert.equal(parseIoWrite({ kind: 'digital_out', n: 0, value: true }).params.ip, SIM_IP,
+    '整形出来的 ip 必须就是那个唯一真源')
+})
 
 test('白名单只有两种 I/O，且映射到固定的 worker op', () => {
   assert.deepEqual(IO_WRITE_OPS, { digital_out: 'set_digital_out', analog_out: 'set_analog_out' })

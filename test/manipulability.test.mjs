@@ -136,6 +136,23 @@ test('★ 三档判定：腕角判据 + 可操作度判据 + 贴限位', () => {
   assert.ok(beyond.limitDeg < 0)
 })
 
+test('★ 0.1.14：limitNear 由模块判定（阈值只存在一处，面板不再自己比 5°）', () => {
+  // ⚠️ 限位必须**容得下 BASE 的其余关节**：BASE 的 q[1] = -π/3 ≈ -1.047 rad，用 ±1 rad 会让
+  // joint 1 一开始就超限，于是"最紧的那个"永远命中它、这组断言全部失真（初版就踩了这个）。
+  const limits = [[-2, 2], [-2, 2], [-2, 2], [-2, 2], [-2, 2], [-2, 2]]
+  const DEG = Math.PI / 180
+  const near = (deg) => {
+    const q = withWrist(BASE, 90).slice()
+    q[1] = limits[1][0] + deg * DEG
+    return singularityHint({ kin: ur5e, joints: q, limits, reach: REACH.ur5e })
+  }
+  assert.equal(near(4.9).limitNear, true, '4.9° < LIMIT_MARGIN_DEG ⇒ 算贴边')
+  assert.equal(near(5.1).limitNear, false, '5.1° > LIMIT_MARGIN_DEG ⇒ 不算')
+  assert.equal(near(5).limitNear, true, '边界值本身算贴边（<=）')
+  assert.equal(near(-5).limitNear, true, '超限（负余量）当然算')
+  assert.equal(singularityHint({ kin: ur5e, joints: withWrist(BASE, 90) }).limitNear, false, '没有限位表 ⇒ 不臆断')
+})
+
 test('limitMarginDeg：取六轴里最紧的那个；无限位信息给 null', () => {
   const limits = [[-1, 1], [-1, 1], [-1, 1], [-1, 1], [-1, 1], [-1, 1]]
   const m = limitMarginDeg([0, 0, 0, 0, 0, 0.9], limits)

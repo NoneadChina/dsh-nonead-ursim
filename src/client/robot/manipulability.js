@@ -213,6 +213,12 @@ export function singularityHint({ kin, joints, limits = null, reach = null, mani
     manip: value,
     limitDeg: margin === null ? null : margin.deg,
     limitJoint: margin === null ? null : margin.joint,
+    /*
+     * `limitNear` 由**模块**判定，而不是把阈值抛给调用方去比较（0.1.14 修）：
+     * 面板一度自己写 `hint.limitDeg > 5`，而 5 的真源是这里的 `LIMIT_MARGIN_DEG` ——
+     * 改常量时面板不会跟着变，属于"同一规则两处实现"的典型漂移。
+     */
+    limitNear: margin !== null && margin.deg <= LIMIT_MARGIN_DEG,
     reasons,
   }
 }
