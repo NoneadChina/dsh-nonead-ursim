@@ -152,6 +152,14 @@ export const zh = {
   simCapsTelemetry: '遥测',
   /* ---- 跨重启恢复仿真（0.1.10，路线图 E2）---- */
   simRestoreFailed: (reason) => `上次的仿真未能恢复：${reason}（可在这里重新开启）`,
+  /* ---- 奇异点与可操作度提示（0.1.11，路线图 C1）---- */
+  riskOk: '正常',
+  riskNear: '⚠ 接近奇异点',
+  riskAt: '⚠ 奇异点',
+  riskWrist: (deg) => `腕 ${deg}°`,
+  riskManip: (value) => `可操作度 ${value}`,
+  riskLimit: (joint, deg) => `J${joint} 距限位 ${deg}°`,
+  riskTitle: '奇异点判据：第 5 关节角（腕部共线时趋 0）+ 归一化可操作度 |det J|/臂展³ + 离关节限位的余量',
   /* ---- I/O 与寄存器读数（0.1.9）---- */
   ioSummary: 'I/O 与寄存器',
   ioDigitalOut: (bits) => `数字输出  ${bits}`,
@@ -295,6 +303,15 @@ export const en = {
   simCapsTelemetry: 'Telemetry',
   /* ---- restoring the simulation across restarts (0.1.10, roadmap E2) ---- */
   simRestoreFailed: (reason) => `The previous simulation could not be restored: ${reason} (switch it on here to retry)`,
+  /* ---- singularity and manipulability hints (0.1.11, roadmap C1) ---- */
+  riskOk: 'OK',
+  riskNear: '⚠ near singularity',
+  riskAt: '⚠ at singularity',
+  riskWrist: (deg) => `wrist ${deg}°`,
+  riskManip: (value) => `manipulability ${value}`,
+  riskLimit: (joint, deg) => `J${joint} is ${deg}° from its limit`,
+  riskTitle:
+    'Singularity criteria: joint 5 angle (goes to 0 when the wrist axes line up) + normalised manipulability |det J|/reach³ + distance to the joint limits',
   /* ---- I/O and register readout (0.1.9) ---- */
   ioSummary: 'I/O & registers',
   ioDigitalOut: (bits) => `Digital out  ${bits}`,

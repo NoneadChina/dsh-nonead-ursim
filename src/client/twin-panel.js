@@ -65,7 +65,8 @@ import {
   updateTcpAxesSize,
   TCP_AXES_SIZE,
 } from './robot/tcp-axes.js'
-import { linkLengthsFromKinematics, loadRobotModel } from './robot/loader.js'
+import { linkLengthsFromKinematics, loadRobotModel, tintJointLinks } from './robot/loader.js'
+import { singularityHint } from './robot/manipulability.js'
 import { createGhostArm, disposeGhostArm } from './robot/ghost-arm.js'
 import {
   createCogMarker,
@@ -624,6 +625,9 @@ export function mountTwinPanel({
   let clock = null // 快照时间戳 → now() 时钟轴的锚点
   let wasConnected = false
   let lastHudMs = -Infinity
+  /** C1/C4 的"上次结果"：只在变化时动 DOM/材质（材质克隆是真实开销）。 */
+  let lastRiskText = null
+  let lastOverKey = null
   /** 最近一次"尺寸还没量出来"的重试计数（见 ensureSized）。 */
   let pendingResize = false
   /** 3D 上下文是否已丢失（丢失后不再尝试渲染，只显示提示）。 */
@@ -749,6 +753,8 @@ export function mountTwinPanel({
   // dashboard 侧状态（detail=1）：安全模式/机器人模式/程序状态/速度倍率一行，温度与母线一行。
   const hudDetail = makeEl(doc, 'div', 'ursim-twin-hud-row', 'data-ursim-twin-detail')
   const hudPower = makeEl(doc, 'div', 'ursim-twin-hud-row', 'data-ursim-twin-power')
+  /** 奇异点/可操作度提示行（0.1.11，C1）。 */
+  const hudRisk = makeEl(doc, 'div', 'ursim-twin-hud-row', 'data-ursim-twin-risk-row')
   hud.appendChild(hudRobots)
   hud.appendChild(hudFeed)
   hud.appendChild(hudPending)
@@ -843,6 +849,7 @@ export function mountTwinPanel({
   hud.appendChild(hudTcp)
   hud.appendChild(hudDetail)
   hud.appendChild(hudPower)
+  hud.appendChild(hudRisk)
 
   /*
    * I/O 与寄存器读数（0.1.9）。
@@ -2016,6 +2023,38 @@ export function mountTwinPanel({
       ? formatJoints(joints)
       : `${formatJoints(joints)}  ${S.overLimit(`J${over.join('/J')}`)}`
     hudJoints.setAttribute('data-ursim-twin-overlimit', over.length === 0 ? 'false' : 'true')
+    /*
+     * C1/C4（0.1.11）：奇异点提示 + 把"哪一节有问题"标到 3D 上。
+     *
+     * 只在这两处**结果变化**时才动 DOM/材质（`hudRisk` 的文本与 `tintJointLinks` 的调用）：
+     * 静态帧不该每帧重写材质（材质克隆是真实开销，且渲染器要重编程序）。
+     * 着色按关节下标 → `groups[i+1]` 的映射，见 `loader.js` 的 `tintJointLinks`。
+     */
+    const hint = singularityHint({
+      kin,
+      joints,
+      limits: kin?.jointLimits ?? null,
+      reach: reachRadiusFromKinematics(kin?.links) ?? null,
+    })
+    const riskText = hint === null
+      ? ''
+      : [
+          hint.level === 'at' ? S.riskAt : (hint.level === 'near' ? S.riskNear : S.riskOk),
+          S.riskWrist(hint.wristDeg.toFixed(1)),
+          hint.manip === null ? '' : S.riskManip(hint.manip.toFixed(4)),
+          hint.limitDeg === null || hint.limitDeg > 5 ? '' : S.riskLimit(hint.limitJoint, hint.limitDeg.toFixed(1)),
+        ].filter(Boolean).join('  ·  ')
+    if (riskText !== lastRiskText) {
+      lastRiskText = riskText
+      hudRisk.textContent = riskText
+      hudRisk.setAttribute('title', riskText === '' ? '' : S.riskTitle)
+      hudRisk.setAttribute('data-ursim-twin-risk', hint?.level ?? 'ok')
+    }
+    const overKey = over.join(',')
+    if (overKey !== lastOverKey) {
+      lastOverKey = overKey
+      if (handle !== null) tintJointLinks(handle.root, over)
+    }
     // 关节行在窄侧栏里会被省略号截断；把完整值放到 title 上，鼠标悬停即可读到 J5/J6。
     hudJoints.setAttribute('title', hudJoints.textContent)
     // TCP 行优先用控制器报的 TCP；拿不到时才退回 FK 的 tool0 位置（并标注是推算值）。

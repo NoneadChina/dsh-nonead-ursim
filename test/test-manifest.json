@@ -18,7 +18,8 @@
     "motion-mode-python.test.mjs",
     "sim-io.test.mjs",
     "sim-telemetry.test.mjs"
-  ],  "nodeOnly": [
+  ],
+  "nodeOnly": [
     "approval-gate.test.mjs",
     "fallback-arm.test.mjs",
     "fk.test.mjs",
@@ -47,6 +48,7 @@
     "twin-routes.test.mjs",
     "twin-stream.test.mjs",
     "twin-worker.test.mjs",
-    "sim-persistence.test.mjs"
+    "sim-persistence.test.mjs",
+    "manipulability.test.mjs"
   ]
 }

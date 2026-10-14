@@ -80,6 +80,70 @@ async function defaultLoadGltf(url) {
  * - `groups[0]` 会被挂回 `root`，使调用方直接 `scene.add(handle.root)` 即可看到模型
  *   （见报告「偏差与理由」D1）。
  */
+/** 关节连杆的着色（默认红，与 HUD 的「⚠ 超限」同色系）。 */
+export const JOINT_TINT_COLOR = 0xff2d2d
+
+/**
+ * 把"这个关节有问题"标到**对应的连杆**上（0.1.11，路线图 C4）。
+ *
+ * ## 为什么是这一层
+ *
+ * HUD 只会告诉你"J2 超限了"，而画面上**看不出是哪一节** —— 六根连杆长得几乎一样。着色解决的
+ * 正是"指哪一节"，所以它必须挂在**模型的分组**上（`assemble()` 建的 7 个 Group：
+ * `groups[0]` 是基座，`groups[i+1]` 由关节 i 驱动）。
+ *
+ * ## 两个实现细节
+ *
+ * 1. **按名字找组，不按子节点顺序**：组名是 `assemble_<link>`（由 `LINK_MESH_NODES` 决定），
+ *    而 `applyFK` 会写这些组的 `matrix`；用 `children[k]` 取组会在任何装配顺序调整后静默错位。
+ * 2. **第一次着色时克隆材质**：GLB 的材质在多实例之间是共享的（见本文件文件头的说明），直接改
+ *    `emissive` 会把**另一个正在显示的面板**里同一节也染红。克隆一次并记在 `mesh.userData` 上，
+ *    原值同时存下来，取消着色时逐字段还原 —— 纹理与其余参数原样保留。
+ *
+ * @param {object} root 模型根（`handle.root`）
+ * @param {ArrayLike<number>} jointIndexes 0 基关节下标（超限/异常的那些）
+ * @param {{emissive?: number, intensity?: number}} [options]
+ * @returns {number} 实际着色的**组数**（0 表示没匹配到组）
+ */
+export function tintJointLinks(root, jointIndexes, { emissive = JOINT_TINT_COLOR, intensity = 0.55 } = {}) {
+  const wanted = new Set(Array.from(jointIndexes ?? []).map(Number).filter((v) => Number.isInteger(v)))
+  if (root == null || typeof root.getObjectByName !== 'function') return 0
+  let tinted = 0
+  for (let joint = 0; joint < 6; joint += 1) {
+    const group = root.getObjectByName(`assemble_${LINK_MESH_NODES[joint + 1]}`)
+    if (group == null) continue
+    const on = wanted.has(joint)
+    if (on) tinted += 1
+    group.traverse?.((object) => {
+      if (object?.isMesh !== true) return
+      let material = object.material
+      if (material == null || typeof material.emissive?.setHex !== 'function') return
+      if (object.userData?.ursimTintOriginal === undefined) {
+        object.userData.ursimTintOriginal = {
+          hex: material.emissive.getHex(),
+          intensity: material.emissiveIntensity ?? 1,
+          shared: true,
+        }
+      }
+      const saved = object.userData.ursimTintOriginal
+      if (saved.shared === true) {
+        // 共享材质：先克隆成这一格自己的，免得染红别的实例。
+        material = material.clone()
+        object.material = material
+        saved.shared = false
+      }
+      if (on) {
+        material.emissive.setHex(emissive)
+        material.emissiveIntensity = intensity
+      } else {
+        material.emissive.setHex(saved.hex)
+        material.emissiveIntensity = saved.intensity
+      }
+    })
+  }
+  return tinted
+}
+
 function assemble(root) {
   const groups = []
   for (let i = 0; i < 7; i++) {

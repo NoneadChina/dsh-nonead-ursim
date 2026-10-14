@@ -267,6 +267,9 @@ body[data-ds-dark-theme] .ursim-twin-panel {
 }
 .ursim-twin-sim-caps-summary { cursor: pointer; }
 .ursim-twin-sim-caps-body { margin: 2px 0 0 12px; line-height: 1.5; }
+/* 奇异点提示行（0.1.11，C1）：near 走警告色、at 走危险色，与「⚠ 超限」同一套语义。 */
+.ursim-twin-hud-row[data-ursim-twin-risk='near'] { color: var(--ursim-warn); }
+.ursim-twin-hud-row[data-ursim-twin-risk='at'] { color: var(--ursim-danger); font-weight: 600; }
 /* I/O 与寄存器读数（0.1.9）：等宽 + 保留换行，位串才对齐。 */
 .ursim-twin-io {
   flex: 1 1 100%;

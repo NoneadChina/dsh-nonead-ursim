@@ -2248,3 +2248,17 @@ test('★ 0.1.9：I/O 折叠块按需读 —— 折叠着不发请求，展开�
   assert.match(String(regCalls[0].url), /reg=int&from=0&count=8/)
   ctx.panel.dispose()
 })
+
+test('★ C1：HUD 里必须有奇异点/可操作度提示行，且按等级写 data 属性', async () => {
+  const ctx = boot({ initial: { connected: true, model: 'UR5E', q: Q0, tcp: TCP0, ts: 1000 }, autoSim: false })
+  ctx.clock.flush()
+  await tick()
+  const row = byAttr(ctx.container, 'data-ursim-twin-risk-row')[0]
+  assert.ok(row, '★ 必须有奇异点提示行（0.1.11 起）')
+  assert.match(row.textContent, /可操作度/, '提示行必须给出可操作度数值')
+  assert.match(row.textContent, /腕/, '提示行必须给出腕角')
+  assert.equal(['ok', 'near', 'at'].includes(row.getAttribute('data-ursim-twin-risk')), true,
+    '风险等级必须落到 data 属性上（样式据此染色）')
+  assert.ok(String(row.getAttribute('title')).length > 0, '判据要放在 title 里，便于解释"凭什么这么说"')
+  ctx.panel.dispose()
+})

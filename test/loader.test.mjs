@@ -15,7 +15,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Group, Mesh, Object3D, Matrix4 } from 'three'
 
-import {
+import { tintJointLinks,
   LINK_MESH_NODES,
   ARM_LINKS,
   buildFallbackArm,
@@ -414,4 +414,73 @@ test('★ 并发去重：同型号两次并发调用只触发一次 loadGltf，�
   })
   assert.equal(again, 1, '两个引用都释放后缓存必须已清空')
   h3.dispose()
+})
+
+/* ── C4：把"哪一节有问题"标到 3D 上（0.1.11） ───────────────────────────── */
+
+/** 造一个能按名字找组的假模型根。 */
+function fakeRootWithLinks() {
+  const makeMaterial = (hex) => {
+    let current = hex
+    return {
+      clones: 0,
+      emissive: {
+        setHex(v) { current = v },
+        getHex() { return current },
+      },
+      emissiveIntensity: 1,
+      clone() {
+        this.clones += 1
+        // 克隆体是**新的一份**材质：它自己的计数从 0 起（夹具曾把原件计数带过来，
+        // 于是"克隆体不该再被克隆"这条断言永远为假 —— 那是夹具的错，不是产品的）。
+        return makeMaterial(current)
+      },
+    }
+  }
+  const groups = new Map()
+  for (const name of ['shoulder', 'upperarm', 'forearm', 'wrist1', 'wrist2', 'wrist3']) {
+    const material = makeMaterial(0x000000)
+    const mesh = { isMesh: true, material, userData: {} }
+    const group = {
+      name: `assemble_${name}`,
+      mesh,
+      traverse(fn) { fn(this.mesh) },
+    }
+    groups.set(group.name, group)
+  }
+  return {
+    groups,
+    getObjectByName(name) { return groups.get(name) ?? null },
+  }
+}
+
+test('★ C4：超限关节对应的连杆被着色，且共享材质只克隆一次、取消后原值还原', () => {
+  const root = fakeRootWithLinks()
+  const forearm = root.getObjectByName('assemble_forearm') // 关节下标 2
+  const shoulder = root.getObjectByName('assemble_shoulder')
+  const forearmOriginal = forearm.mesh.material
+
+  // 关节 2 超限 ⇒ 只有 forearm 变色
+  assert.equal(tintJointLinks(root, [2]), 1, '只应命中一个组')
+  assert.equal(forearm.mesh.material.emissive.getHex(), 0xff2d2d)
+  assert.ok(forearm.mesh.material.emissiveIntensity > 0)
+  assert.notEqual(forearm.mesh.material, forearmOriginal, '★ 共享材质必须被克隆（否则会染红别的实例）')
+  assert.equal(forearmOriginal.clones, 1, '★ 原件只应被克隆一次')
+  assert.equal(shoulder.mesh.material.emissive.getHex(), 0x000000, '没被点名的连杆不得变色')
+
+  // 再点一次同一个关节：不得再次克隆（否则每帧都在造材质）
+  const materialAfterFirst = forearm.mesh.material
+  tintJointLinks(root, [2])
+  assert.equal(forearm.mesh.material, materialAfterFirst, '★ 重复着色必须复用同一个克隆材质')
+  assert.equal(materialAfterFirst.clones, 0, '克隆体自己不该再被克隆（否则每帧都在造材质）')
+
+  // 换成关节 0：forearm 复原、shoulder 变色
+  assert.equal(tintJointLinks(root, [0]), 1)
+  assert.equal(forearm.mesh.material.emissive.getHex(), 0x000000, '取消点名必须还原原值')
+  assert.equal(shoulder.mesh.material.emissive.getHex(), 0xff2d2d)
+
+  // 清空：全部还原
+  tintJointLinks(root, [])
+  assert.equal(shoulder.mesh.material.emissive.getHex(), 0x000000)
+  assert.equal(tintJointLinks(null, [1]), 0, '拿不到根就安静返回 0，不抛')
 })
