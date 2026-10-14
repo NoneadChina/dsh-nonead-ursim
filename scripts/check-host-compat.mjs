@@ -14,11 +14,12 @@
  *
  * 用法：
  *   node scripts/check-host-compat.mjs [hostNodeModules]
- *   缺省依次尝试 $DSH_HOST_NODE_MODULES、../dsh-plugin-desktop/node_modules、自插件目录向上查找。
+ *   缺省依次尝试 $DSH_HOST_NODE_MODULES、常见安装根下**任意含 DSH 的目录**\resources\app\node_modules、
+ *   ../dsh-plugin-desktop/node_modules，最后才自插件目录向上查找。
  *
  * 退出码：0 = 全部通过；1 = 存在失败；2 = 环境错误。
  */
-import { existsSync, readFileSync } from 'node:fs'
+import { readdirSync, existsSync, readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { createRequire, registerHooks } from 'node:module'
 import { dirname, join, resolve as resolvePath } from 'node:path'
@@ -69,6 +70,38 @@ function findHostModules(argv) {
 
   for (const candidate of candidates) {
     if (hasHost(candidate)) return resolvePath(candidate)
+  }
+
+  /*
+   * 按**名字模式**扫安装根，而不是写死产品目录名（0.1.14 修）。
+   *
+   * 这里原本写死 `C:\\Program Files\\DSH Desktop\\...`，而本机实际目录是
+   * `Nonead DSH Desktop` ⇒ 候选全部落空，`npm run verify:host` 直接报"请显式传路径"，
+   * 于是这个"宿主 API 兼容性自审"实际上没人跑得起来 —— 一个静态检查工具**跑不起来**，
+   * 比它查出问题更糟。
+   *
+   * ⚠️ 必须排在下面对 PLUGIN_ROOT 的"向上查找"之前：本仓库自己的 node_modules 里带着
+   * **旧 dev 副本**（0.1.2-rc.1）的 @deepseek-ai/dsh-tools，用它校验会得到误导性结论
+   * （例如"0/67 注册成功"）。
+   */
+  const installRoots = [
+    process.env.ProgramFiles,
+    process.env['ProgramFiles(x86)'],
+    typeof process.env.LOCALAPPDATA === 'string' ? join(process.env.LOCALAPPDATA, 'Programs') : undefined,
+    '/Applications',
+  ].filter((value) => typeof value === 'string' && value !== '')
+  for (const root of installRoots) {
+    let entries = []
+    try {
+      entries = readdirSync(root, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory() !== true || /dsh/i.test(entry.name) !== true) continue
+      const candidate = join(root, entry.name, 'resources', 'app', 'node_modules')
+      if (hasHost(candidate)) return resolvePath(candidate)
+    }
   }
 
   const desktopSibling = resolvePath(PLUGIN_ROOT, '..', 'dsh-plugin-desktop', 'node_modules')
