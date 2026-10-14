@@ -8,6 +8,28 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.1.10] - 2026-10-14
+
+### Added
+
+- **The simulation state is persisted, so it survives a host restart (roadmap E2).** The host has always
+  remembered "what simulation ought to be running" in order to rebuild one when the Python child is
+  replaced — but that memory was process-local, so **reopening DSH or reloading the plugin** lost it and
+  the self-healing had nothing to heal from (the symptom was "it was on a minute ago, now everything
+  starts over, and nothing says why"). It is now written to disk:
+  `<DSH_HOME>/plugin-data/dsh-nonead-ursim/sim-state.json`, atomic (temp file + rename), overridable
+  with `simStateFile` and switchable with `persistSimState` (default on).
+  - What is persisted is the **intent**, not the last picture: `enabled: true` plus the model, start pose
+    and speed scaling. Stopping a simulation writes `enabled: false`, so **an explicitly stopped
+    simulation stays stopped across restarts**, exactly like the in-process self-healing already
+    promised. A simulation that was running is created again on load (one `sim_start`, logged).
+  - Persistence is a bonus and can never break the plugin: a read-only data directory, a missing file,
+    bad JSON, an unknown format version or an `enabled: true` entry without a model all degrade to "no
+    memory" (the last two with a warning) — writes go through try/catch and only log.
+  - `GET /nonead-ursim/twin/sim` now also returns `remembered` and `restore_error`, and the panel says
+    so in the simulation bar when a restore failed, instead of leaving "why is there no simulation
+    here?" unanswered.
+
 ## [0.1.9] - 2026-10-14
 
 ### Added
