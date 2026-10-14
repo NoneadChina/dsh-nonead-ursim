@@ -8,6 +8,18 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.1.12] - 2026-10-15
+
+### Fixed
+
+- **A disconnect now cleans up the C1/C4 state (a 0.1.11 regression).** 0.1.11 added the singularity row and
+  the over-limit link tinting, but the disconnect path only cleared the older HUD rows — so two stale
+  readings could survive a disconnect: the row kept showing the previous pose's "⚠ at singularity · wrist
+  1.2°", and the tinted link **stayed red**, including after reconnecting to a different robot or switching
+  models, where that joint is no longer the one out of range. The row (text, level and title) and the tint
+  are both cleared now, and the "last rendered" caches are reset with them — without that reset the next
+  frame would skip re-rendering and re-tinting entirely, because it would see "nothing changed".
+
 ## [0.1.11] - 2026-10-15
 
 ### Added
