@@ -8,6 +8,32 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.1.11] - 2026-10-15
+
+### Added
+
+- **Singularity and manipulability hints (roadmap C1).** The 3D view can show *where* the arm is but not
+  *how close it is to not being able to move there*: a UR wrist singularity (joint 5 ≈ 0, the wrist axes
+  lining up) looks exactly like any other pose, yet inverse kinematics diverges there and a Cartesian
+  command suddenly demands very fast joint motion. A HUD row now reports three things, all computed
+  client-side from the same forward kinematics the picture is drawn from: the **wrist angle**, the
+  **normalised manipulability** `|det J| / reach³`, and the **distance to the nearest joint limit**
+  (amber past the near thresholds, red past the at thresholds).
+  - The Jacobian is the **analytic geometric** one (position rows `z × (p_end − p)`, angular rows `z`,
+    read straight out of `fkChain`'s link matrices) — no finite differences, no extra FK calls.
+  - Thresholds are **calibrated, not guessed**: `scripts/calibrate-manipulability.mjs` samples 4000 poses
+    per model across all 14 models and sweeps the wrist angle. Two findings from that calibration are
+    worth keeping: a **position-only** Jacobian cannot see the UR wrist singularity at all (σ_min/reach
+    moves from 0.2766 to 0.2413 as `|q5|` goes 0.5° → 90°, because the degeneracy lives in the angular
+    rows), and taking the joint axis from `links[i-1]` instead of `links[i]` silently drops the 90°
+    fixed transform, making `det J` identically 0. The shipped thresholds (`at = 0.001`, `near = 0.004`)
+    sit where ordinary poses trip them 3% and 10% of the time.
+- **Over-limit joints are tinted in 3D (roadmap C4).** The HUD already said "J2 over limit"; the picture
+  gave no clue *which* of six similar-looking links that was. The matching link group is now tinted red.
+  Materials are cloned on first tint (GLB materials are shared between instances, so tinting one panel
+  must not colour another) and the original emissive values are restored when the joint comes back in
+  range.
+
 ## [0.1.10] - 2026-10-14
 
 ### Added

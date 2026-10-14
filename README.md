@@ -83,7 +83,7 @@ That memory used to be process-local, so a **host** restart (reopening DSH, relo
 
 **The panel follows the app's colour theme.** Light / dark / system is DSH's own appearance setting: the theme plugin projects the resolved snapshot onto the document as the boolean `body[data-ds-dark-theme]` attribute plus the `--dsw-alias-*` design tokens. The panel therefore colours itself **from those tokens** (falling back to theme-paired local values only when the host tokens are absent, e.g. a bare preview page), so it follows the setting — and any third-party theme that overrides aliases via `ctx.theme` — with **no JavaScript involved**. The one thing CSS cannot reach is the WebGL base grid, whose colours are baked into the geometry's vertex colours: `src/client/theme.js` watches the same signal and `scene.js`'s `applyTheme()` repaints the grid **in place** (no geometry rebuild, no new `GridHelper`), so switching the theme never disturbs the camera, the model or the recorded trajectory.
 
-**Four things the panel shows that the tools alone cannot.** Since 0.1.8 the top-left badge is a
+**Six things the panel shows that the tools alone cannot.** Since 0.1.8 the top-left badge is a
 **three-state mode indicator**, not just a simulation watermark: purple `SIMULATION` while a virtual
 robot is being driven, red **`REAL MODE · <allowed IPs>`** whenever `motionMode: 'real'` is configured
 (shown even while disconnected — "no badge" must never read as "safe", and an empty allow-list says so
@@ -97,7 +97,14 @@ read the 16 digital outputs, the 16 digital inputs and both analog inputs (bits 
 `00000000 00000001` — the standard and configurable halves), plus one 8-value slice each of the int,
 double and bit registers. It reads **on demand**: one request for the bits and one per register slice
 when you expand it, and nothing at all while it is collapsed. In simulation it also says outright that
-the inputs have no source (they stay 0) rather than letting those zeros pass for signals.
+the inputs have no source (they stay 0) rather than letting those zeros pass for signals. And since
+0.1.11 it answers the question a picture cannot: **how close is this pose to a singularity?** One HUD
+row reports the wrist angle (joint 5 goes to 0 when the wrist axes line up — the textbook UR criterion),
+the normalised manipulability `|det J| / reach³`, and the distance to the nearest joint limit, turning
+amber then red past calibrated thresholds; and every **over-limit joint has its link tinted red in the
+3D view**, so you can see *which* body the HUD is complaining about. Both are computed client-side from
+the same forward kinematics the picture is drawn from — no extra worker round-trip, and no numbers that
+could disagree with what you see.
 
 Host-side routes (all fenced to loopback callers):
 
@@ -124,7 +131,7 @@ Failure responses carry a **machine-readable `code`** (e.g. `no_robot` / `robot_
    // C:\Users\<you>\.dsh\profiles\web\package.json
    {
      "dependencies": {
-       "dsh-nonead-ursim": "^0.1.10"
+       "dsh-nonead-ursim": "^0.1.11"
      },
      "dsh": {
        "profile": {
