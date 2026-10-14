@@ -397,7 +397,8 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
  * 这些行为可以被逐条断言。`status` 决定 GET 返回什么、`postResult` 决定 POST 的结果。
  */
 function makeFakeRequest({ active = false, model = 'ur5e', models = ['ur3', 'ur5e', 'ur10e'],
-  postResult = { ok: true }, rejectWith = null } = {}) {
+  postResult = { ok: true }, rejectWith = null, motionMode = 'sim', realRobots = [],
+  capabilities = null } = {}) {
   const calls = []
   const impl = async (url, init = {}) => {
     const method = init.method ?? 'GET'
@@ -405,7 +406,10 @@ function makeFakeRequest({ active = false, model = 'ur5e', models = ['ur3', 'ur5
     if (rejectWith !== null) throw rejectWith instanceof Error ? rejectWith : new Error(String(rejectWith))
     const payload = method === 'POST'
       ? { ...postResult, active: postResult.ok === true && active !== true ? true : active }
-      : { ok: true, active, model, model_id: model, preset: 'zero', speed_scaling: 1, models }
+      // `motion_mode` / `real_robots` / `capabilities` 是 0.1.8 给界面加的三样：模式指示（P0）、
+      // 能力清单（P2）—— 真机模式与白名单是**配置**，能力清单来自宿主 `sim_status` 的透传。
+      : { ok: true, active, model, model_id: model, preset: 'zero', speed_scaling: 1, models,
+          motion_mode: motionMode, real_robots: realRobots, capabilities }
     return { json: async () => payload }
   }
   impl.calls = calls
@@ -1892,16 +1896,107 @@ test('★ 水印以**数据**为准：AI 用工具开的仿真（本地没点过
 
   assert.equal(panelRoot(ctx).getAttribute('data-ursim-twin-sim'), 'true', 'root 上要有仿真标记（供样式/测试）')
   assert.notEqual(simBadgeEl(ctx).style.display, 'none', '★ 仿真角标必须显示')
+  assert.equal(simBadgeEl(ctx).getAttribute('data-ursim-twin-mode'), 'sim', '仿真态写进 data 属性（供样式）')
   assert.match(simBadgeEl(ctx).textContent, /仿真/)
   assert.match(statusEl(ctx).textContent, /离线仿真 · UR20/, '状态行必须写明这是仿真')
   assert.equal(simToggleEl(ctx).getAttribute('aria-pressed'), 'true', '开关要跟着数据走')
-  // 这一帧是真机（simulated 变 false）⇒ 水印必须消失，不能留着误导读的人
+  // 这一帧是真机（simulated 变 false）⇒ 仿真标记与水印文案必须撤掉，不能留着误导读的人。
+  // 但**角标不隐藏**（0.1.8 起它是三态模式指示）：此时显示「未连接」——"没有角标"读起来就是
+  // "安全"，而"仿真没开"并不等于"什么都不会被驱动"（真机模式下就可能是真机）。
   ctx.state.set({ simulated: false, ts: 1100 })
   ctx.clock.flush()
   assert.equal(panelRoot(ctx).getAttribute('data-ursim-twin-sim'), 'false')
-  assert.equal(simBadgeEl(ctx).style.display, 'none')
+  const idle = simBadgeEl(ctx)
+  assert.notEqual(idle.style.display, 'none', '★ 角标不再隐藏：没有角标 ≠ 安全')
+  assert.equal(idle.getAttribute('data-ursim-twin-mode'), 'idle')
+  assert.match(idle.textContent, /未连接/)
   assert.match(statusEl(ctx).textContent, /已连接 · ur20/)
 
+  ctx.panel.dispose()
+})
+
+test('★ P0：模式角标三态 —— 真机模式红色常显（含白名单），白名单为空必须明说', async () => {
+  // ① 真机模式 + 白名单：**未连接**时也必须常显（这正是"没有角标 ≠ 安全"要修的）
+  const request = makeFakeRequest({
+    active: false,
+    motionMode: 'real',
+    realRobots: ['192.168.1.10', '192.168.1.11'],
+  })
+  const ctx = boot({ initial: { connected: false, ts: 0 }, request, autoSim: false })
+  ctx.clock.flush()
+  await tick()
+  await tick()
+  const badge = simBadgeEl(ctx)
+  assert.ok(badge, '必须有模式角标')
+  assert.equal(badge.getAttribute('data-ursim-twin-mode'), 'real')
+  assert.notEqual(badge.style.display, 'none', '★ 真机模式下角标必须常显')
+  assert.match(badge.textContent, /真机模式/)
+  assert.match(badge.textContent, /192\.168\.1\.10/, '★ 必须写出允许的 IP')
+  assert.match(badge.textContent, /192\.168\.1\.11/)
+  ctx.panel.dispose()
+
+  // ② 真机模式 + 白名单为空：明说"全部拒绝"，不能让人以为"没限制"
+  const empty = makeFakeRequest({ motionMode: 'real', realRobots: [] })
+  const ctx2 = boot({ initial: { connected: false, ts: 0 }, request: empty, autoSim: false })
+  ctx2.clock.flush()
+  await tick()
+  await tick()
+  assert.equal(simBadgeEl(ctx2).getAttribute('data-ursim-twin-mode'), 'real')
+  assert.match(simBadgeEl(ctx2).textContent, /白名单为空/)
+  ctx2.panel.dispose()
+})
+
+test('★ P1：遥测行的「估算」标注与补上的两行读数（关节电流 / TCP 速度）', () => {
+  const rows = formatDetail({
+    safety_mode: 'NORMAL',
+    robot_mode: 'IDLE',
+    program_state: 'STOPPED',
+    speed_scaling: 1,
+    joint_temperatures: [30, 31, 32, 33, 34, 35],
+    robot_voltage: 48,
+    robot_current: 1.25,
+    joint_currents: [1.1, 1.2, 1.3, 1.4, 1.5, 1.6],
+    tcp_speed: [0.01, 0.02, 0.02, 0, 0, 0],
+    telemetry_estimated: true,
+  })
+  assert.match(rows.temps, /估算/, '★ 估算值必须标注出来')
+  assert.match(rows.power, /估算/)
+  assert.match(rows.currents, /电流/, '★ 关节电流行必须补上')
+  assert.match(rows.currents, /估算/)
+  assert.match(rows.tcpSpeed, /TCP 速度/, '★ TCP 速度行必须补上')
+  assert.match(rows.tcpSpeed, /0\.030/, '线速度模长 = hypot(0.01,0.02,0.02) ≈ 0.030')
+
+  // 真机读数（没有 telemetry_estimated）不得被标成估算；拿不到的字段给空串，不编数字
+  const plain = formatDetail({ safety_mode: 'NORMAL', joint_temperatures: [30, 31, 32, 33, 34, 35] })
+  assert.doesNotMatch(plain.temps, /估算/, '真机读数不是估算')
+  assert.equal(plain.currents, '', '没有 joint_currents 就给空串')
+  assert.equal(plain.tcpSpeed, '', '没有 tcp_speed 就给空串')
+})
+
+test('★ P2：仿真能力清单进界面 —— 折叠块正文给"每项几项"，完整清单在 title', async () => {
+  const capabilities = {
+    read: ['ursim_get_joint_pose', 'ursim_get_tcp_pose'],
+    motion: ['ursim_movej', 'ursim_movel', 'ursim_draw_circle'],
+    io: ['ursim_set_digital_out'],
+    telemetry: ['ursim_get_runtime_telemetry'],
+    not_simulated: ['力控', '传送带'],
+  }
+  const request = makeFakeRequest({ capabilities })
+  const ctx = boot({
+    initial: { connected: true, model: 'UR5E', q: Q0, tcp: TCP0, ts: 1000 },
+    request,
+    autoSim: false,
+  })
+  ctx.clock.flush()
+  await tick()
+  await tick()
+  const box = byAttr(ctx.container, 'data-ursim-twin-sim-caps')[0]
+  const body = byAttr(ctx.container, 'data-ursim-twin-sim-caps-body')[0]
+  assert.ok(box && body, '必须有能力清单折叠块')
+  assert.notEqual(box.style.display, 'none', '有数据时必须显示')
+  assert.match(body.textContent, /运动 3 项/)
+  assert.match(body.textContent, /不支持 2 类/)
+  assert.match(String(body.getAttribute('title')), /ursim_movej/, '完整清单进 title（正文只给数量）')
   ctx.panel.dispose()
 })
 

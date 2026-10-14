@@ -433,7 +433,14 @@ export function formatDetail(detail) {
   const d = detail && typeof detail === 'object' ? detail : null
   if (d === null || typeof d.error === 'string') {
     // detail 通道自己报错（host 把 dashboard 失败包成 `{error}`）：如实说，不冒充"没有异常"。
-    return { status: d?.error ? S.detailStatusFailed(d.error) : '', temps: '', power: '', hazard: false }
+    return {
+      status: d?.error ? S.detailStatusFailed(d.error) : '',
+      temps: '',
+      power: '',
+      currents: '',
+      tcpSpeed: '',
+      hazard: false,
+    }
   }
   const bits = [
     `安全 ${describeSafetyMode(d.safety_mode)}`,
@@ -442,14 +449,34 @@ export function formatDetail(detail) {
     `速度 ${formatSpeedScaling(d.speed_scaling)}`,
   ]
   if (d.running === true) bits.push(S.detailRunning)
+  /*
+   * 估算标注（P1）：仿真下这几行是**运动学估算**（宿主用 `telemetry_estimated` 标出来），面板必须
+   * 一并说出来 —— 否则界面显示的是"和真机一样的数字"，工具回复里那句"估算，不是测量"就丢了。
+   */
+  const est = d.telemetry_estimated === true ? S.detailEstimatedSuffix : ''
+  const withEst = (row) => (row === '' || row === undefined ? '' : `${row}${est}`)
+  const speed = tcpSpeedLine(d.tcp_speed)
   return {
     status: bits.join('  '),
-    temps: formatJointRow(d.joint_temperatures, S.detailTempsPrefix),
+    temps: withEst(formatJointRow(d.joint_temperatures, S.detailTempsPrefix)),
     power: Number.isFinite(Number(d.robot_voltage)) && Number.isFinite(Number(d.robot_current))
-      ? S.detailBus(Number(d.robot_voltage).toFixed(1), Number(d.robot_current).toFixed(2))
+      ? withEst(S.detailBus(Number(d.robot_voltage).toFixed(1), Number(d.robot_current).toFixed(2)))
       : '',
+    // 这两个字段（关节电流、TCP 速度）本来就在 detail 里传到客户端了，只是没人渲染（P1 补上）。
+    currents: withEst(Array.isArray(d.joint_currents)
+      ? formatJointRow(d.joint_currents, S.detailCurrentsPrefix, 2)
+      : ''),
+    tcpSpeed: withEst(speed),
     hazard: isSafetyHazard(d.safety_mode),
   }
+}
+
+/** TCP 速度行：六维向量取**线速度模长**（`[vx,vy,vz,ωx,ωy,ωz]`）；拿不到就给空串，不编数字。 */
+function tcpSpeedLine(value) {
+  if (!Array.isArray(value) || value.length < 3) return ''
+  const [vx, vy, vz] = value.slice(0, 3).map(Number)
+  if (!Number.isFinite(vx) || !Number.isFinite(vy) || !Number.isFinite(vz)) return ''
+  return S.detailTcpSpeed(Math.hypot(vx, vy, vz).toFixed(3))
 }
 
 /** 视图预设按钮（顺序即 UI 顺序；`reset` 是"对准当前模型"而不是某个固定方向）。 */
@@ -879,6 +906,21 @@ export function mountTwinPanel({
   simBar.appendChild(simNote)
   simBar.appendChild(simError)
 
+  /*
+   * 仿真能力清单（P2）：数据本来就在 `GET /twin/sim` 的 `capabilities` 里（`sim_capabilities()`），
+   * 过去只有工具侧拿得到。折成一行可展开的说明挂在仿真行下面：折叠态不占版面，展开就是
+   * 「能做什么 / 不能做什么」。正文只写"每一项几项"（避免把 python 侧的中文散文混进英文界面），
+   * 完整清单放 `title` 里悬停可见。
+   */
+  const simCaps = makeEl(doc, 'details', 'ursim-twin-sim-caps', 'data-ursim-twin-sim-caps')
+  const simCapsSummary = makeEl(doc, 'summary', 'ursim-twin-sim-caps-summary', 'data-ursim-twin-sim-caps-summary')
+  simCapsSummary.textContent = S.simCapsSummary
+  const simCapsBody = makeEl(doc, 'div', 'ursim-twin-sim-caps-body', 'data-ursim-twin-sim-caps-body')
+  simCaps.appendChild(simCapsSummary)
+  simCaps.appendChild(simCapsBody)
+  simCaps.style.display = 'none'
+  simBar.appendChild(simCaps)
+
   root.appendChild(toolbar)
   root.appendChild(simBar)
   root.appendChild(view)
@@ -1277,6 +1319,15 @@ export function mountTwinPanel({
   let simModels = [...SIM_MODEL_FALLBACK]
   /** 宿主自报的 `active`（GET /twin/sim）；`null` = 还没读到或读失败。 */
   let hostSimActive = null
+  /*
+   * 当前模式指示（P0）与能力清单（P2）的数据：都来自 `GET /twin/sim`。
+   *
+   * `motionMode` 缺省按最保守的 `sim` 处理：在读到宿主回答之前，角标显示「未连接」而不是
+   * 冒充某一种模式。真机模式下角标必须**常显**（见 renderModeBadge）。
+   */
+  let motionMode = 'sim'
+  let realRobots = []
+  let simCapsData = null
   /**
    * 数据源是不是**本面板**切到仿真地址的。
    *
@@ -1320,6 +1371,59 @@ export function mountTwinPanel({
       String(simConfig.speed_scaling))
     for (const select of [simModelSelect, simPresetSelect, simSpeedSelect]) select.disabled = simApplying
     simNote.textContent = simApplying ? S.simApplying : (simActive ? S.simUnsupported : S.simUses)
+    renderSimCaps()
+  }
+
+  /** 能力清单的正文（P2）：正文只给"每一项几项"，完整清单进 `title`。 */
+  function renderSimCaps() {
+    const caps = simCapsData !== null && typeof simCapsData === 'object' ? simCapsData : null
+    if (caps === null) {
+      simCaps.style.display = 'none'
+      simCapsBody.textContent = ''
+      // `?.()`：测试用的假 DOM 不实现 removeAttribute（本仓库既有约定）。
+      simCapsBody.removeAttribute?.('title')
+      return
+    }
+    const buckets = [
+      [S.simCapsMotion, caps.motion],
+      [S.simCapsRead, caps.read],
+      [S.simCapsIo, caps.io],
+      [S.simCapsTelemetry, caps.telemetry],
+    ].filter(([, list]) => Array.isArray(list) && list.length > 0)
+    const bits = buckets.map(([label, list]) => S.simCapsBucket(label, list.length))
+    const missing = Array.isArray(caps.not_simulated) ? caps.not_simulated : []
+    if (missing.length > 0) bits.push(S.simCapsCannot(missing.length))
+    simCapsBody.textContent = bits.join('  ·  ')
+    const detail = buckets.map(([label, list]) => `${label}: ${list.join(', ')}`)
+    if (missing.length > 0) detail.push(`${S.simCapsCannot(missing.length)}: ${missing.join('; ')}`)
+    if (detail.length > 0) simCapsBody.setAttribute('title', detail.join('\n'))
+    else simCapsBody.removeAttribute?.('title')
+    simCaps.style.display = bits.length > 0 ? '' : 'none'
+  }
+
+  /**
+   * 当前模式角标（P0）：**仿真中 / 真机模式 / 未连接** 三态。
+   *
+   * 为什么不能只有"仿真"角标：真机模式下原本一个标识都没有，而"没有角标"读起来就是"安全"。
+   * 仿真中 = 紫色（沿用旧水印）；真机模式 = 红色且**常显**（含允许的 IP，白名单为空时明说
+   * 全部拒绝）；未连接 = 中性灰（既没仿真也没连真机，没有任何东西会被驱动）。
+   */
+  function renderModeBadge(simNow) {
+    const mode = motionMode === 'real' ? 'real' : (simNow === true ? 'sim' : 'idle')
+    simBadge.setAttribute('data-ursim-twin-mode', mode)
+    if (mode === 'real') {
+      simBadge.textContent = realRobots.length > 0
+        ? S.realModeBadge(realRobots.join('、'))
+        : S.realModeBadgeEmpty
+      simBadge.setAttribute('title', S.realModeBadgeTitle)
+    } else if (mode === 'sim') {
+      simBadge.textContent = S.simBadge
+      simBadge.setAttribute('title', S.simBadgeTitle)
+    } else {
+      simBadge.textContent = S.modeBadgeIdle
+      simBadge.setAttribute('title', S.modeBadgeIdleTitle)
+    }
+    simBadge.style.display = ''
   }
 
   /**
@@ -1337,12 +1441,17 @@ export function mountTwinPanel({
       if (disposed || body === null || typeof body !== 'object') return
       hostSimActive = body.active === true
       if (Array.isArray(body.models) && body.models.length > 0) simModels = body.models.map(String)
+      // 模式是**配置**（人写的），与运行状态无关 —— 但它必须在界面上一直可见（P0）。
+      motionMode = body.motion_mode === 'real' ? 'real' : 'sim'
+      realRobots = Array.isArray(body.real_robots) ? body.real_robots.map(String) : []
+      simCapsData = body.capabilities !== null && typeof body.capabilities === 'object' ? body.capabilities : null
       const modelId = typeof body.model_id === 'string' && body.model_id !== ''
         ? body.model_id : String(body.model ?? '').toLowerCase()
       if (modelId !== '') simConfig.model = modelId
       if (typeof body.preset === 'string' && body.preset !== '') simConfig.preset = body.preset
       if (Number.isFinite(body.speed_scaling)) simConfig.speed_scaling = body.speed_scaling
       renderSimBar()
+      renderModeBadge(simActive)
     } catch {
       /* 读不到就保持缺省显示：这只影响选择项的初值，不影响开关本身 */
     }
@@ -1524,8 +1633,9 @@ export function mountTwinPanel({
         lastFeedRetryMs = -Infinity
         root.setAttribute('data-ursim-twin-hazard', 'false')
         // 未连接就谈不上"正在展示一台虚拟机器人"：水印必须跟着消失。
+        // 但角标本身**不隐藏** —— 真机模式下断连也仍然是真机模式（P0：没有角标 ≠ 安全）。
         root.setAttribute('data-ursim-twin-sim', 'false')
-        simBadge.style.display = 'none'
+        renderModeBadge(false)
         lastHudMs = -Infinity
       }
       invalidate()
@@ -1813,7 +1923,7 @@ export function mountTwinPanel({
     hudDetail.textContent = detail.status
     hudDetail.setAttribute('title', detail.status)
     hudDetail.setAttribute('data-ursim-twin-hazard', detail.hazard ? 'true' : 'false')
-    const power = [detail.temps, detail.power].filter(Boolean).join('   ')
+    const power = [detail.temps, detail.power, detail.currents, detail.tcpSpeed].filter(Boolean).join('   ')
     hudPower.textContent = power
     hudPower.setAttribute('title', power)
     root.setAttribute('data-ursim-twin-hazard', detail.hazard ? 'true' : 'false')
@@ -1844,7 +1954,7 @@ export function mountTwinPanel({
       refreshStatus()
     }
     root.setAttribute('data-ursim-twin-sim', simNow ? 'true' : 'false')
-    simBadge.style.display = simNow ? '' : 'none'
+    renderModeBadge(simNow)
 
     // 安全模式只在 detail 通道（慢节拍）变化，连接态本身没变 —— 但它必须能改写状态行，
     // 否则一次保护性停止要等到下次断连/重连才会显示出来。

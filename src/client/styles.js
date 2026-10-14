@@ -248,6 +248,25 @@ body[data-ds-dark-theme] .ursim-twin-panel {
 }
 .ursim-twin-panel[data-ursim-twin-sim='true'] .ursim-twin-view { outline: 1px solid var(--ursim-sim); outline-offset: -1px; }
 .ursim-twin-panel[data-ursim-twin-sim='true'] .ursim-twin-status { color: var(--ursim-sim); }
+/* 模式角标的三态（P0）：仿真中沿用上面的紫色；**真机模式红色且常显**（这是操作员最该一眼看到的
+   事 —— 从前真机模式下什么标识都没有，而"没有角标"读起来就是"安全"）；未连接走中性灰。 */
+.ursim-twin-sim-badge[data-ursim-twin-mode='real'] {
+  color: #ffffff;
+  background: var(--ursim-danger);
+}
+.ursim-twin-sim-badge[data-ursim-twin-mode='idle'] {
+  color: var(--ursim-text-secondary);
+  background: var(--ursim-hover-bg);
+  border: 1px solid var(--ursim-border-subtle);
+}
+/* 仿真能力清单（P2）：折叠态只有一行摘要。 */
+.ursim-twin-sim-caps {
+  flex: 1 1 100%;
+  font-size: 11px;
+  color: var(--ursim-text-secondary);
+}
+.ursim-twin-sim-caps-summary { cursor: pointer; }
+.ursim-twin-sim-caps-body { margin: 2px 0 0 12px; line-height: 1.5; }
 `.trim()
 
 /**
