@@ -81,23 +81,28 @@ The plugin also ships a **read-only 3D digital simulation** of the robot, render
 
 **The panel follows the app's colour theme.** Light / dark / system is DSH's own appearance setting: the theme plugin projects the resolved snapshot onto the document as the boolean `body[data-ds-dark-theme]` attribute plus the `--dsw-alias-*` design tokens. The panel therefore colours itself **from those tokens** (falling back to theme-paired local values only when the host tokens are absent, e.g. a bare preview page), so it follows the setting — and any third-party theme that overrides aliases via `ctx.theme` — with **no JavaScript involved**. The one thing CSS cannot reach is the WebGL base grid, whose colours are baked into the geometry's vertex colours: `src/client/theme.js` watches the same signal and `scene.js`'s `applyTheme()` repaints the grid **in place** (no geometry rebuild, no new `GridHelper`), so switching the theme never disturbs the camera, the model or the recorded trajectory.
 
-Host-side routes (all fenced to loopback callers):
-
-**Three things the panel shows that the tools alone cannot.** Since 0.1.8 the top-left badge is a
+**Four things the panel shows that the tools alone cannot.** Since 0.1.8 the top-left badge is a
 **three-state mode indicator**, not just a simulation watermark: purple `SIMULATION` while a virtual
 robot is being driven, red **`REAL MODE · <allowed IPs>`** whenever `motionMode: 'real'` is configured
 (shown even while disconnected — "no badge" must never read as "safe", and an empty allow-list says so
 explicitly), and a neutral `NOT CONNECTED` when nothing is driving anything. The telemetry rows gained
 the two readings that were already being delivered but never drawn (joint currents, TCP speed) and are
 suffixed **`(estimated)`** whenever the host marks them `telemetry_estimated` — the panel must not
-present an estimate in the same shape as a measurement. And the capability boundary is now readable in
-the panel itself: a collapsible line under the simulation controls lists how many ops each bucket
-holds, with the full list in its tooltip.
+present an estimate in the same shape as a measurement. The capability boundary is readable in the
+panel itself: a collapsible line under the simulation controls lists how many ops each bucket holds,
+with the full list in its tooltip. And since 0.1.9 there is an **I/O and registers** block: expand it to
+read the 16 digital outputs, the 16 digital inputs and both analog inputs (bits rendered as
+`00000000 00000001` — the standard and configurable halves), plus one 8-value slice each of the int,
+double and bit registers. It reads **on demand**: one request for the bits and one per register slice
+when you expand it, and nothing at all while it is collapsed. In simulation it also says outright that
+the inputs have no source (they stay 0) rather than letting those zeros pass for signals.
+
+Host-side routes (all fenced to loopback callers):
 
 | Route | Description |
 |---|---|
 | `GET /nonead-ursim/twin/stream[?ip=<ip>]` | **SSE stream** (what the client uses by default): one full state frame every 100 ms, plus `stale` (this frame's read has not returned yet) and `frame-error` (this frame failed) events |
-| `GET /nonead-ursim/twin/state[?ip=<ip>][&detail=1]` | Live pose (joint angles / TCP / model). `detail=1` adds the dashboard-side state (safety mode, run state, speed scaling, joint temperatures/currents); the pose channel keeps polling independently and a failing detail query never takes it down |
+| `GET /nonead-ursim/twin/state[?ip=<ip>][&detail=1][&io=1][&reg=int|double|bit&from=0&count=8]` | Live pose (joint angles / TCP / model). `detail=1` adds the dashboard-side state (safety mode, run state, speed scaling, joint temperatures/currents); `io=1` adds the 16 digital outputs, 16 digital inputs and both analog inputs; `reg=<set>&from=&count=` adds one **slice** of registers (`count` capped at 16 — they are per-index getters). The pose channel keeps polling independently: a failing `detail`, `io` or `reg` query never takes it down, it only writes `{error}` into its own field |
 | `GET /nonead-ursim/twin/asset?model=<urXX>` | GLB mesh, with a content-hash `ETag` + `immutable` and `If-None-Match` → 304 support |
 | `GET /nonead-ursim/twin/models` | The model list actually present locally |
 | `GET /nonead-ursim/twin/sim` | Current offline-simulation state (on/off, model, start pose, speed scaling, available models), the capability list, and the **configured mode** (`motion_mode` plus the `real_robots` allow-list) that the panel's mode badge displays. No side effects |
@@ -117,7 +122,7 @@ Failure responses carry a **machine-readable `code`** (e.g. `no_robot` / `robot_
    // C:\Users\<you>\.dsh\profiles\web\package.json
    {
      "dependencies": {
-       "dsh-nonead-ursim": "^0.1.8"
+       "dsh-nonead-ursim": "^0.1.9"
      },
      "dsh": {
        "profile": {

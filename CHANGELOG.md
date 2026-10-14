@@ -8,6 +8,29 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.1.9] - 2026-10-14
+
+### Added
+
+- **An I/O and registers readout in the panel.** Remove the last "feature without an entry point": the
+  simulation has had an in-memory I/O and register state since 0.1.5, and `ursim_get_digital_out_bits`
+  and friends could read it, but nothing in the panel showed it. Expanding the new **I/O & registers**
+  block reads the 16 digital outputs, the 16 digital inputs and both analog inputs (bits rendered as
+  `00000000 00000001` — the standard and configurable halves), plus one 8-value slice each of the int,
+  double and bit registers.
+  - **It reads on demand**: nothing at all while collapsed; one request for the bits and one per
+    register slice when you expand it, and the bits then refresh at 1 Hz while it stays open. The
+    registers are per-index getters (24 for a full int sweep, 64 for the bit registers), so they are
+    read once per expansion rather than on a timer.
+  - The host side is two optional channels on the **existing** `twin/state` route (`io=1` and
+    `reg=<set>&from=&count=`, `count` capped at 16) instead of two new routes: that route already
+    resolves the IP, carries the read trust fence, and treats a failing bonus channel as `{error}` in
+    its own field without taking the pose channel down.
+  - It deliberately uses **RTDE-side reads only** (`get_digital_out_bits` / `get_digital_input_bits` /
+    `get_analog_in`): `get_digital_in` with `which="tool"` sends a short URScript that can interrupt a
+    running program, and a read-only panel must not cause that. In simulation the block also states
+    that inputs have no source (they stay 0) rather than letting those zeros pass for signals.
+
 ## [0.1.8] - 2026-10-14
 
 ### Added
