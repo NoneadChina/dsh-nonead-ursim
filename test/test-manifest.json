@@ -49,6 +49,7 @@
     "twin-stream.test.mjs",
     "twin-worker.test.mjs",
     "sim-persistence.test.mjs",
-    "manipulability.test.mjs"
+    "manipulability.test.mjs",
+    "twin-io.test.mjs"
   ]
 }
