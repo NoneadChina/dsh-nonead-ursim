@@ -1083,3 +1083,81 @@ test('推送读取抛错时静默降级到显式读（遥测是加分项，不�
   assert.deepEqual(result.body.q, [0, 0, 0, 0, 0, 0]);
 });
 
+
+// ── I/O 与寄存器通道（0.1.9）────────────────────────────────────────────────
+
+test('★ 0.1.9：io=1 一次读回数字位与模拟输入，并带上"仿真没有输入源"的说明', async () => {
+  const calls = [];
+  const ioWorker = {
+    call: async (op, params) => {
+      calls.push({ op, params });
+      if (op === 'get_digital_out_bits') {
+        return { data: { bits: [true, false, false, false, false, false, false, false,
+                               false, false, false, false, false, false, false, true] } };
+      }
+      if (op === 'get_digital_input_bits') {
+        return { data: { bits: new Array(16).fill(false), note: '仿真没有输入信号源：恒为 0。' } };
+      }
+      if (op === 'get_analog_in') return { data: { value: 0 } };
+      return { data: {} };
+    },
+  };
+  const res = await createTwinStateHandler({ worker: ioWorker, connectedIps: () => new Set(['9.9.9.9']) })(
+    { ip: '9.9.9.9', io: '1' },
+  );
+  assert.equal(res.status, 200);
+  assert.equal(res.body.io.digital_out.length, 16);
+  assert.equal(res.body.io.digital_out[0], true);
+  assert.equal(res.body.io.digital_out[15], true);
+  assert.equal(res.body.io.digital_in.length, 16);
+  assert.equal(res.body.io.digital_in.every((b) => b === false), true);
+  assert.deepEqual(res.body.io.analog_in, [0, 0]);
+  assert.match(String(res.body.io.note), /输入/);
+  // ⚠️ 状态路由**总会**读位姿与型号，所以这里只筛 I/O 相关 op 来断言。
+  assert.deepEqual(
+    calls.filter((c) => /digital|analog/.test(c.op)).map((c) => c.op).sort(),
+    ['get_analog_in', 'get_analog_in', 'get_digital_input_bits', 'get_digital_out_bits'],
+    '★ 只走 RTDE 侧的读法（不走会打断程序的 get_digital_in(which=tool)）',
+  );
+});
+
+test('★ 0.1.9：寄存器按 set + from/count 分片，count 有硬上限、上界按集合截断', async () => {
+  const seen = [];
+  const regWorker = {
+    call: async (op, params) => {
+      seen.push({ op, index: params.index });
+      return { data: { value: params.index } };
+    },
+  };
+  const make = () => createTwinStateHandler({ worker: regWorker, connectedIps: () => new Set(['9.9.9.9']) });
+
+  const res = await make()({ ip: '9.9.9.9', reg: 'int', from: '0', count: '999' });
+  assert.equal(res.body.registers.set, 'int');
+  assert.equal(res.body.registers.values.length, 16, '★ count 必须被夹到 16');
+  assert.deepEqual(res.body.registers.values.slice(0, 3), [0, 1, 2]);
+  // 同样只筛寄存器 op：状态路由总会先读位姿与型号。
+  const regOps = (list) => list.filter((c) => c.op.startsWith('get_int_register') || c.op.startsWith('get_bit_register'));
+  assert.equal(regOps(seen).every((c) => c.op === 'get_int_register'), true);
+  assert.equal(regOps(seen).length, 16, 'int 分片应恰好读 16 个下标');
+
+  seen.length = 0;
+  const tail = await make()({ ip: '9.9.9.9', reg: 'bit', from: '60', count: '8' });
+  assert.equal(tail.body.registers.values.length, 4, 'bit 集合的上界是 63 ⇒ 60 起只剩 4 个');
+  assert.equal(regOps(seen).every((c) => c.op === 'get_bit_register'), true);
+});
+
+test('★ 0.1.9：I/O 读失败只写进自己的字段，位姿通道照常', async () => {
+  const picky = {
+    call: async (op) => {
+      if (op === 'get_joint_pose') return { data: { joint_positions: [0, 0, 0, 0, 0, 0] } };
+      if (op === 'get_tcp_pose') return { data: { tcp_pose: [0, 0, 0.5, 0, 0, 0] } };
+      if (op === 'get_robot_model') return { data: { robot_model: 'UR3', remote_control: false } };
+      throw new Error('I/O 读不到');
+    },
+  };
+  const res = await createTwinStateHandler({ worker: picky, connectedIps: () => new Set(['9.9.9.9']) })(
+    { ip: '9.9.9.9', io: '1' },
+  );
+  assert.equal(res.body.connected, true, '★ 位姿通道不受影响');
+  assert.match(String(res.body.io.error), /I\/O 读不到/);
+});

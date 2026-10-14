@@ -267,6 +267,19 @@ body[data-ds-dark-theme] .ursim-twin-panel {
 }
 .ursim-twin-sim-caps-summary { cursor: pointer; }
 .ursim-twin-sim-caps-body { margin: 2px 0 0 12px; line-height: 1.5; }
+/* I/O 与寄存器读数（0.1.9）：等宽 + 保留换行，位串才对齐。 */
+.ursim-twin-io {
+  flex: 1 1 100%;
+  font-size: 11px;
+  color: var(--ursim-text-secondary);
+}
+.ursim-twin-io-summary { cursor: pointer; }
+.ursim-twin-io-body {
+  margin: 2px 0 0 12px;
+  line-height: 1.6;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
+}
 `.trim()
 
 /**

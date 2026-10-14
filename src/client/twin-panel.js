@@ -55,7 +55,7 @@ import {
 
 import kinematicsJson from '../../assets/kinematics.json' with { type: 'json' }
 // 离线仿真开关的宿主路由常量（零依赖共享模块，与 state/stream 用的是同一份真源）。
-import { TWIN_SIM_PATH } from '../../lib/twin-paths.js'
+import { TWIN_SIM_PATH, TWIN_STATE_PATH } from '../../lib/twin-paths.js'
 
 import { createScene } from './robot/scene.js'
 import {
@@ -845,6 +845,35 @@ export function mountTwinPanel({
   hud.appendChild(hudPower)
 
   /*
+   * I/O 与寄存器读数（0.1.9）。
+   *
+   * ⚠️ **按需读**：折叠着就一个请求都不发（面板默认只读镜像真机，别让"展开一次"变成常态流量）。
+   * 展开时：数字位与模拟输入随 HUD 节拍刷新；**寄存器只在展开的那一刻读一次** —— 它们是逐下标
+   * getter，一次要 24 次往返，没有理由跟着刷新。
+   */
+  const ioBox = makeEl(doc, 'details', 'ursim-twin-io', 'data-ursim-twin-io')
+  const ioSummary = makeEl(doc, 'summary', 'ursim-twin-io-summary', 'data-ursim-twin-io-summary')
+  ioSummary.textContent = S.ioSummary
+  const ioBody = makeEl(doc, 'div', 'ursim-twin-io-body', 'data-ursim-twin-io-body')
+  ioBox.appendChild(ioSummary)
+  ioBox.appendChild(ioBody)
+  hud.appendChild(ioBox)
+
+  /** 寄存器分片：类型与每片长度（宿主侧 `count` 上限 16）。 */
+  const REGISTER_SETS = ['int', 'double', 'bit']
+  const REGISTER_COUNT = 8
+  /** 展开时的 I/O 刷新间隔：**1 Hz**（面板 HUD 是 10 Hz，但这两条 op 没必要跟着跑）。 */
+  const IO_REFRESH_MS = 1000
+  let lastIoMs = -Infinity
+  /** 折叠着就一个请求都不发（见上面那段注释）。 */
+  ioBox.addEventListener('toggle', () => {
+    if (ioBox.open === true) {
+      lastIoMs = -Infinity
+      void refreshIo(true)
+    }
+  })
+
+  /*
    * 视角工具栏。
    *
    * 以前没有任何找回视角的办法：OrbitControls 允许把相机推远/缩进机械臂内部，而面板只有
@@ -1402,6 +1431,81 @@ export function mountTwinPanel({
   }
 
   /**
+   * 读一次 I/O（数字位 + 模拟输入）与寄存器。
+   *
+   * `withRegisters` 只在**展开的那一刻**为真：寄存器是逐下标 getter（一次 24 次往返），
+   * 没有理由跟着 HUD 节拍刷新。数字位则很便宜（两条 op），随节拍刷新才能看到变化。
+   */
+  async function refreshIo(withRegisters) {
+    if (typeof request !== 'function') return
+    const snap = state?.getSnapshot?.() ?? {}
+    const ip = typeof snap.ip === 'string' ? snap.ip : ''
+    const prefix = ip === '' ? '' : `ip=${encodeURIComponent(ip)}&`
+    ioBody.textContent = S.ioReading
+    try {
+      const res = await request(`${TWIN_STATE_PATH}?${prefix}io=1`, { cache: 'no-store' })
+      const body = await res.json()
+      if (disposed) return
+      renderIo(body?.io ?? null)
+      if (withRegisters !== true) return
+      for (const set of REGISTER_SETS) {
+        const r2 = await request(`${TWIN_STATE_PATH}?${prefix}reg=${set}&from=0&count=${REGISTER_COUNT}`, {
+          cache: 'no-store',
+        })
+        const b2 = await r2.json()
+        if (disposed) return
+        renderRegisters(b2?.registers ?? null)
+      }
+    } catch (e) {
+      ioBody.textContent = S.ioFailed(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  /** 位串：每 8 位空一格（std 0-7 / config 8-15 正好两组）。 */
+  function bitString(bits) {
+    if (!Array.isArray(bits)) return '—'
+    const groups = []
+    for (let i = 0; i < bits.length; i += 8) {
+      groups.push(bits.slice(i, i + 8).map((b) => (b === true ? '1' : '0')).join(''))
+    }
+    return groups.join(' ')
+  }
+
+  function renderIo(io) {
+    const lines = []
+    if (io !== null && typeof io === 'object' && typeof io.error !== 'string') {
+      lines.push(S.ioDigitalOut(bitString(io.digital_out)))
+      lines.push(S.ioDigitalIn(bitString(io.digital_in)))
+      const analog = Array.isArray(io.analog_in) ? io.analog_in : []
+      const fmt = (v) => (Number.isFinite(Number(v)) ? Number(v).toFixed(3) : '—')
+      lines.push(S.ioAnalogIn(fmt(analog[0]), fmt(analog[1])))
+      // 仿真下输入没有生产者，必须说出来 —— 否则那两行 0 会被读成"信号是 0"。
+      if (io.simulated === true) lines.push(S.ioSimInputNote)
+    } else if (io !== null && typeof io === 'object') {
+      lines.push(S.ioFailed(io.error))
+    }
+    ioBody.textContent = lines.join('\n')
+    ioBody.setAttribute('title', lines.join('\n'))
+    for (const line of lines) {
+      const row = makeEl(doc, 'div', 'ursim-twin-io-row', 'data-ursim-twin-io-row')
+      row.textContent = line
+      // 逐行插入（textContent 已经给了整块文本，这里只为样式/测试保留行节点）
+    }
+  }
+
+  function renderRegisters(registers) {
+    if (registers === null || typeof registers !== 'object') return
+    const line = typeof registers.error === 'string'
+      ? S.ioFailed(registers.error)
+      : S.ioRegisters(String(registers.set ?? ''), String(registers.from ?? 0),
+        (Array.isArray(registers.values) ? registers.values : [])
+          .map((v) => (typeof v === 'boolean' ? (v ? '1' : '0') : String(v ?? '—')))
+          .join(' '))
+    const row = makeEl(doc, 'div', 'ursim-twin-io-row', 'data-ursim-twin-io-reg-row')
+    row.textContent = line
+    ioBody.appendChild(row)
+  }
+  /**
    * 当前模式角标（P0）：**仿真中 / 真机模式 / 未连接** 三态。
    *
    * 为什么不能只有"仿真"角标：真机模式下原本一个标识都没有，而"没有角标"读起来就是"安全"。
@@ -1928,6 +2032,11 @@ export function mountTwinPanel({
     hudPower.setAttribute('title', power)
     root.setAttribute('data-ursim-twin-hazard', detail.hazard ? 'true' : 'false')
     if (snap?.ip) root.setAttribute('data-ursim-twin-ip', String(snap.ip))
+    // I/O 折叠块展开着才刷新（1 Hz；寄存器只在展开那一刻读一次，见 refreshIo）。
+    if (ioBox.open === true && nowMs - lastIoMs >= IO_REFRESH_MS) {
+      lastIoMs = nowMs
+      void refreshIo(false)
+    }
   }
 
   /* ---------------- 单帧 ---------------- */

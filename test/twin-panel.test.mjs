@@ -398,7 +398,7 @@ const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
  */
 function makeFakeRequest({ active = false, model = 'ur5e', models = ['ur3', 'ur5e', 'ur10e'],
   postResult = { ok: true }, rejectWith = null, motionMode = 'sim', realRobots = [],
-  capabilities = null } = {}) {
+  capabilities = null, io = null, registers = null } = {}) {
   const calls = []
   const impl = async (url, init = {}) => {
     const method = init.method ?? 'GET'
@@ -409,7 +409,9 @@ function makeFakeRequest({ active = false, model = 'ur5e', models = ['ur3', 'ur5
       // `motion_mode` / `real_robots` / `capabilities` 是 0.1.8 给界面加的三样：模式指示（P0）、
       // 能力清单（P2）—— 真机模式与白名单是**配置**，能力清单来自宿主 `sim_status` 的透传。
       : { ok: true, active, model, model_id: model, preset: 'zero', speed_scaling: 1, models,
-          motion_mode: motionMode, real_robots: realRobots, capabilities }
+          motion_mode: motionMode, real_robots: realRobots, capabilities,
+          // I/O 与寄存器（0.1.9）：与宿主 twin/state 的加分字段同名，供"展开才读"的断言注入。
+          io, registers }
     return { json: async () => payload }
   }
   impl.calls = calls
@@ -2205,5 +2207,44 @@ test('★ 可达范围开关上写着该型号的上界：UR3 ≈0.80 m、UR20 �
   await tick()
   assert.match(String(button().textContent), /2\.17 m/, '换型号后这个数字必须跟着变')
 
+  ctx.panel.dispose()
+})
+
+test('★ 0.1.9：I/O 折叠块按需读 —— 折叠着不发请求，展开才读且寄存器只读一次', async () => {
+  const io = {
+    digital_out: [true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true],
+    digital_in: new Array(16).fill(false),
+    analog_in: [0, 0],
+    simulated: true,
+    note: '仿真没有输入信号源',
+  }
+  const registers = { set: 'int', from: 0, values: [0, 1, 2, 3, 4, 5, 6, 7] }
+  const request = makeFakeRequest({ io, registers })
+  const ctx = boot({ initial: { connected: true, model: 'UR5E', q: Q0, tcp: TCP0, ts: 1000 }, request, autoSim: false })
+  ctx.clock.flush()
+  await tick()
+  await tick()
+
+  const box = byAttr(ctx.container, 'data-ursim-twin-io')[0]
+  const body = byAttr(ctx.container, 'data-ursim-twin-io-body')[0]
+  assert.ok(box && body, '必须有 I/O 与寄存器折叠块（0.1.9）')
+  assert.equal(
+    ctx.request.calls.filter((c) => String(c.url).includes('io=1')).length,
+    0,
+    '★ 折叠着不得发 I/O 请求（面板默认只读镜像真机，别让展开一次变成常态流量）',
+  )
+
+  box.open = true
+  box.listeners.toggle[0]()
+  await tick()
+  await tick()
+  await tick()
+  const ioCalls = ctx.request.calls.filter((c) => String(c.url).includes('io=1'))
+  assert.equal(ioCalls.length, 1, '展开后读一次 I/O')
+  assert.match(body.textContent, /10000000 00000001/, '位串必须按 8 位一组渲染（std / config 两段）')
+  assert.match(body.textContent, /仿真没有输入信号源/, '仿真下必须说明输入恒 0 的原因')
+  const regCalls = ctx.request.calls.filter((c) => String(c.url).includes('reg='))
+  assert.equal(regCalls.length, 3, '★ 寄存器只在展开那一刻读一次（int / double / bit 各一片）')
+  assert.match(String(regCalls[0].url), /reg=int&from=0&count=8/)
   ctx.panel.dispose()
 })
