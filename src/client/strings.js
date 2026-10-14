@@ -150,6 +150,8 @@ export const zh = {
   simCapsRead: '读回',
   simCapsIo: 'I/O 与寄存器',
   simCapsTelemetry: '遥测',
+  /* ---- 跨重启恢复仿真（0.1.10，路线图 E2）---- */
+  simRestoreFailed: (reason) => `上次的仿真未能恢复：${reason}（可在这里重新开启）`,
   /* ---- I/O 与寄存器读数（0.1.9）---- */
   ioSummary: 'I/O 与寄存器',
   ioDigitalOut: (bits) => `数字输出  ${bits}`,
@@ -291,6 +293,8 @@ export const en = {
   simCapsRead: 'Readback',
   simCapsIo: 'I/O & registers',
   simCapsTelemetry: 'Telemetry',
+  /* ---- restoring the simulation across restarts (0.1.10, roadmap E2) ---- */
+  simRestoreFailed: (reason) => `The previous simulation could not be restored: ${reason} (switch it on here to retry)`,
   /* ---- I/O and register readout (0.1.9) ---- */
   ioSummary: 'I/O & registers',
   ioDigitalOut: (bits) => `Digital out  ${bits}`,

@@ -104,7 +104,7 @@ async function collectTools() {
     inject: () => () => {},
     tools: { register: (tool) => registered.push(tool) },
   }
-  mod.apply(ctx, {})
+  mod.apply(ctx, { persistSimState: false })
   return { mod, registered, warnings, infos, opByName }
 }
 
@@ -125,7 +125,7 @@ async function collectWithTools(toolsService) {
       inject: () => () => {},
       tools: toolsService,
     },
-    {},
+    { persistSimState: false },
   )
   return { warnings, infos }
 }

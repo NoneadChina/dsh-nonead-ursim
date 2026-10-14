@@ -20,3 +20,9 @@
         # 真机模式下允许操作的机器人地址，逗号分隔（例如 '192.168.1.10,192.168.1.11'）。
         # 留空时**任何真机目标都会被拒**（fail-closed），而不是"谁都能连"。
         realRobotIps: ''
+        # 仿真态是否落盘（路线图 E2）。落盘后宿主重启仍能按上次的配置恢复仿真；
+        # 用户明确关掉时落盘的是 enabled:false，重启不会把它复活。
+        # 文件默认在 <DSH_HOME>/plugin-data/dsh-nonead-ursim/sim-state.json。
+        persistSimState: true
+        # 仿真态文件路径；留空 = 上面的默认位置。填绝对路径可放到别处（例如共享盘）。
+        simStateFile: ''

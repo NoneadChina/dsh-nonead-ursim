@@ -118,7 +118,14 @@ async function harness({ config = {}, approvalOutcome = 'allowed-once', approval
     inject: () => () => {},
     tools: { register: (tool) => registered.set(tool.name, tool) },
   }
-  mod.apply(ctx, config)
+  /*
+   * ⚠️ `persistSimState: false` 是**必须的测试隔离**：0.1.10 起宿主会把"应该有一台什么仿真"
+   * 落盘到 `<DSH_HOME>/plugin-data/dsh-nonead-ursim/sim-state.json`。测试若让它落到本机真实
+   * 数据目录，会造成两个后果：① 弄脏开发者的真实配置；② 从那一刻起**每一次** apply() 都读到
+   * "上次仿真还开着"并自动发起一次 sim_start，于是所有断言录音里都多出一条 sim_start（本轮实测
+   * 15 条用例一起变红，根因就是这个）。调用方仍可用显式配置覆盖它。
+   */
+  mod.apply(ctx, { persistSimState: false, ...config })
 
   return { registered, calls, approvalRequests, effects }
 }
@@ -260,7 +267,8 @@ test('fail-closed：无审批服务 / 无 agent / 审批抛异常，三种都不
         inject: () => () => {},
         tools: { register: (t) => registered.set(t.name, t) },
       },
-      {},
+      // 同 helper 里的理由：测试不得写本机真实的仿真态文件。
+      { persistSimState: false },
     )
     await assert.rejects(
       () => registered.get('ursim_brake_release').execute({ ip: '1.2.3.4' }, exec),

@@ -1348,6 +1348,8 @@ export function mountTwinPanel({
   let simModels = [...SIM_MODEL_FALLBACK]
   /** 宿主自报的 `active`（GET /twin/sim）；`null` = 还没读到或读失败。 */
   let hostSimActive = null
+  /** 上次**跨重启恢复**失败的原因（0.1.10）：非空时状态行改成说明它，而不是静默什么都没有。 */
+  let simRestoreError = ''
   /*
    * 当前模式指示（P0）与能力清单（P2）的数据：都来自 `GET /twin/sim`。
    *
@@ -1399,7 +1401,9 @@ export function mountTwinPanel({
       SIM_SPEEDS.map((value) => ({ value: String(value), label: `${Math.round(value * 100)}%` })),
       String(simConfig.speed_scaling))
     for (const select of [simModelSelect, simPresetSelect, simSpeedSelect]) select.disabled = simApplying
-    simNote.textContent = simApplying ? S.simApplying : (simActive ? S.simUnsupported : S.simUses)
+    simNote.textContent = simRestoreError !== ''
+      ? S.simRestoreFailed(simRestoreError)
+      : (simApplying ? S.simApplying : (simActive ? S.simUnsupported : S.simUses))
     renderSimCaps()
   }
 
@@ -1486,11 +1490,6 @@ export function mountTwinPanel({
     }
     ioBody.textContent = lines.join('\n')
     ioBody.setAttribute('title', lines.join('\n'))
-    for (const line of lines) {
-      const row = makeEl(doc, 'div', 'ursim-twin-io-row', 'data-ursim-twin-io-row')
-      row.textContent = line
-      // 逐行插入（textContent 已经给了整块文本，这里只为样式/测试保留行节点）
-    }
   }
 
   function renderRegisters(registers) {
@@ -1549,6 +1548,8 @@ export function mountTwinPanel({
       motionMode = body.motion_mode === 'real' ? 'real' : 'sim'
       realRobots = Array.isArray(body.real_robots) ? body.real_robots.map(String) : []
       simCapsData = body.capabilities !== null && typeof body.capabilities === 'object' ? body.capabilities : null
+      // 跨重启恢复失败的原因（0.1.10）：让"这里为什么没有仿真"有个说法 —— 从前是静默空着。
+      simRestoreError = typeof body.restore_error === 'string' ? body.restore_error : ''
       const modelId = typeof body.model_id === 'string' && body.model_id !== ''
         ? body.model_id : String(body.model ?? '').toLowerCase()
       if (modelId !== '') simConfig.model = modelId
