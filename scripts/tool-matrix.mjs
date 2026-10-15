@@ -198,7 +198,7 @@ function verify() {
     failures.push(`仿真归属不一致（声明 vs python 的 SIM_OPS/SIM_PASSTHROUGH_OPS）：${simMismatch.join(', ')}`);
   }
 
-  // ⑤ 数据可从代码完整重建（既有的 86 工具契约仍成立）
+  // ⑤ 数据可从代码完整重建（既有的 87 工具契约仍成立）
   const rows = [...observed.values()];
   notes.push(
     `op ${rows.length} 个：受门禁 ${rows.filter((r) => r.gated).length}、` +

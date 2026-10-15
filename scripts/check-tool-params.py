@@ -386,8 +386,8 @@ def fail(op, tool, message):
     out.write("FAIL %s %s: %s\n" % (op, tool, message))
 
 
-if len(decls) < 86:
-    print("FAIL  registration snapshot 只有 %d 个 op（应为 86）：schema 侧解析失效" % len(decls))
+if len(decls) < 87:
+    print("FAIL  registration snapshot 只有 %d 个 op（应为 87）：schema 侧解析失效" % len(decls))
     raise SystemExit(1)
 if set(decls) != matrix_ops:
     print("FAIL  注册面快照与声明表（docs/tool-matrix.json）的 op 集合不一致：只在快照 %s；只在声明表 %s"

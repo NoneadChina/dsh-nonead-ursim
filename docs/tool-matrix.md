@@ -5,7 +5,7 @@
 > **是否受人工审批门禁**、**仿真会怎么处理它** —— 这两件事以前是"沉默的默认值"，
 > H-1（七个带物理副作用的 op 免审批）就是这样溜过去的。
 
-共 **86** 个 op：受门禁 **47**、仿真实现 **45**、仿真透传 **6**、仿真明确不支持 **35**。
+共 **87** 个 op：受门禁 **48**、仿真实现 **46**、仿真透传 **6**、仿真明确不支持 **35**。
 
 | op | 工具 | 审批门禁 | 仿真 | 声明理由 |
 | --- | --- | --- | --- | --- |
@@ -68,6 +68,7 @@
 | `power_on` | `ursim_power_on` | **是** | unsupported |  |
 | `reset_error` | `ursim_reset_error` | **是** | unsupported |  |
 | `run_program` | `ursim_run_program` | **是** | unsupported |  |
+| `run_sequence` | `ursim_run_sequence` | **是** | simulated |  |
 | `send_script` | `ursim_send_script` | **是** | unsupported |  |
 | `servoj` | `ursim_servoj` | **是** | simulated |  |
 | `set_analog_out` | `ursim_set_analog_out` | **是** | simulated |  |

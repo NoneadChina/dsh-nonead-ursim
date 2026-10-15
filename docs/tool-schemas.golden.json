@@ -38,9 +38,13 @@
   {
     "name": "ursim_draw_circle",
     "op": "draw_circle",
-    "description": "让指定机器人以给定圆心与半径画一个圆。coordinate 为 \"z\"（竖直平面，与基座垂直）或其它（水平平面）。⚠️ 会驱动机械臂运动。",
+    "description": "让指定机器人以给定圆心与半径画一个圆。coordinate 为 \"z\"（竖直平面，与基座垂直）或其它（水平平面）。可选 v/a 决定运动速度（**不传时与从前完全一致**：a=1、v=0.25），`t` 只有仿真建模（真机路径按逐段 a/v 走，t 被忽略且回包里会说明）。⚠️ 会驱动机械臂运动。",
     "timeoutMs": null,
     "parameters": {
+      "a": {
+        "description": "加速度，必须 >0，默认 1.0（与加这个参数之前写死的值相同）",
+        "type": "number"
+      },
       "center": {
         "description": "圆心 TCP 位置：[x,y,z,rx,ry,rz]",
         "items": {
@@ -65,15 +69,27 @@
       "register": {
         "description": "用哪个 int 输出寄存器做「脚本是否被执行」的哨兵（0-23，默认 23）。该寄存器旧值会被覆盖；控制器未执行该脚本时会立刻报 NOT_EXECUTED，而不是干等到超时",
         "type": "integer"
+      },
+      "t": {
+        "description": "整条轨迹的时长（秒），≥0，默认 0 = 用 a/v。**只有仿真建模**；真机路径按逐段 a/v 走，t 被忽略且回包里会说明",
+        "type": "number"
+      },
+      "v": {
+        "description": "速度，必须 >0，默认 0.25（与加这个参数之前写死的值相同）",
+        "type": "number"
       }
     }
   },
   {
     "name": "ursim_draw_rectangle",
     "op": "draw_rectangle",
-    "description": "让指定机器人以给定起点、宽和高画一个长方形。⚠️ 会驱动机械臂运动。",
+    "description": "让指定机器人以给定起点、宽和高画一个长方形。可选 v/a 决定运动速度（**不传时与从前完全一致**：a=1、v=0.25），`t` 只有仿真建模（真机路径按逐段 a/v 走，t 被忽略且回包里会说明）。⚠️ 会驱动机械臂运动。",
     "timeoutMs": null,
     "parameters": {
+      "a": {
+        "description": "加速度，必须 >0，默认 1.0（与加这个参数之前写死的值相同）",
+        "type": "number"
+      },
       "coordinate": {
         "description": "平面：\"z\" 或其它，默认 \"z\"",
         "type": "string"
@@ -95,6 +111,14 @@
         "required": true,
         "type": "array"
       },
+      "t": {
+        "description": "整条轨迹的时长（秒），≥0，默认 0 = 用 a/v。**只有仿真建模**；真机路径按逐段 a/v 走，t 被忽略且回包里会说明",
+        "type": "number"
+      },
+      "v": {
+        "description": "速度，必须 >0，默认 0.25（与加这个参数之前写死的值相同）",
+        "type": "number"
+      },
       "width": {
         "description": "长（米，必须 >0）",
         "required": true,
@@ -105,9 +129,13 @@
   {
     "name": "ursim_draw_square",
     "op": "draw_square",
-    "description": "让指定机器人以给定起点与边长画一个正方形。⚠️ 会驱动机械臂运动。",
+    "description": "让指定机器人以给定起点与边长画一个正方形。可选 v/a 决定运动速度（**不传时与从前完全一致**：a=1、v=0.25），`t` 只有仿真建模（真机路径按逐段 a/v 走，t 被忽略且回包里会说明）。⚠️ 会驱动机械臂运动。",
     "timeoutMs": null,
     "parameters": {
+      "a": {
+        "description": "加速度，必须 >0，默认 1.0（与加这个参数之前写死的值相同）",
+        "type": "number"
+      },
       "border": {
         "description": "边长（米，必须 >0）",
         "required": true,
@@ -128,15 +156,27 @@
         },
         "required": true,
         "type": "array"
+      },
+      "t": {
+        "description": "整条轨迹的时长（秒），≥0，默认 0 = 用 a/v。**只有仿真建模**；真机路径按逐段 a/v 走，t 被忽略且回包里会说明",
+        "type": "number"
+      },
+      "v": {
+        "description": "速度，必须 >0，默认 0.25（与加这个参数之前写死的值相同）",
+        "type": "number"
       }
     }
   },
   {
     "name": "ursim_draw_star",
     "op": "draw_star",
-    "description": "让指定机器人以给定中心与边长画一个五角星（pentagram）。center 为其中心位姿；side 为每条边长度（米）。⚠️ 会驱动机械臂运动。",
+    "description": "让指定机器人以给定中心与边长画一个五角星（pentagram）。center 为其中心位姿；side 为每条边长度（米）。可选 v/a 决定运动速度（**不传时与从前完全一致**：a=1、v=0.25），`t` 只有仿真建模（真机路径按逐段 a/v 走，t 被忽略且回包里会说明）。⚠️ 会驱动机械臂运动。",
     "timeoutMs": null,
     "parameters": {
+      "a": {
+        "description": "加速度，必须 >0，默认 1.0（与加这个参数之前写死的值相同）",
+        "type": "number"
+      },
       "center": {
         "description": "中心 TCP 位置：[x,y,z,rx,ry,rz]",
         "items": {
@@ -156,6 +196,14 @@
       "side": {
         "description": "边长（米，必须 >0）",
         "required": true,
+        "type": "number"
+      },
+      "t": {
+        "description": "整条轨迹的时长（秒），≥0，默认 0 = 用 a/v。**只有仿真建模**；真机路径按逐段 a/v 走，t 被忽略且回包里会说明",
+        "type": "number"
+      },
+      "v": {
+        "description": "速度，必须 >0，默认 0.25（与加这个参数之前写死的值相同）",
         "type": "number"
       }
     }
@@ -1074,6 +1122,64 @@
     }
   },
   {
+    "name": "ursim_run_sequence",
+    "op": "run_sequence",
+    "description": "**一条命令跑完整段多段轨迹**：按顺序走完 segments 里的每一段，段与段之间**不停顿**。每段是一个对象，只有两种形态：`{\"type\":\"joint\",\"q\":[q0,q1,q2,q3,q4,q5]}`（关节空间，弧度，按最短路径）或 `{\"type\":\"cartesian\",\"pose\":[x,y,z,rx,ry,rz]}`（从上一点直线过去；米 / 旋转向量弧度，按 1 cm 细分并逐点求逆解）。序列本体（必填）示例：[{\"type\":\"joint\",\"q\":[0,-1.5708,1.5708,-1.5708,-1.5708,0]},{\"type\":\"cartesian\",\"pose\":[0.3,0,0.4,0,3.1416,0]}]。★ 仿真路径把**所有段拼成一条折线、只规划一次**，整条轨迹共用一条时间剖面 —— 所以段间不会各自起停；`t>0` 时整段时长就是 t。⚠️ 真机路径发出去的是一串 `movej`/`movel`（每段各带 a/v），控制器在每个途经点按 `r` 过渡：`r=0`（默认）时是**逐段起停**，并且**整段时长 `t` 在真机上不建模**（回包里会明说已忽略）。⚠️ 任一段的任一细分点逆解不出来就**整条序列失败**（仿真不会跳过那一段继续走）。⚠️ 会驱动机械臂运动，请确保机器人可见且无人员/障碍物。",
+    "timeoutMs": null,
+    "parameters": {
+      "a": {
+        "description": "加速度，必须 >0，默认 1.2（movel 的手册默认值；关节段也用这一对）",
+        "type": "number"
+      },
+      "ip": {
+        "description": "仿真机器人地址，可省略（默认且唯一合法值为保留回环地址 127.0.0.1；本插件不连真机）",
+        "type": "string"
+      },
+      "r": {
+        "description": "交融半径（米），≥0，默认 0。**只有真机生效**（每段途经点的圆滑过渡；0 = 逐段起停）；仿真按精确途经点走，不建模 r",
+        "type": "number"
+      },
+      "segments": {
+        "description": "要按顺序连续走过的段（至少一段，必填）。每段是 `{\"type\":\"joint\",\"q\":[6 个弧度]}` 或 `{\"type\":\"cartesian\",\"pose\":[x,y,z,rx,ry,rz]}`；type 只有这两个取值，不认别名。",
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "pose": {
+              "description": "cartesian 段的目标 TCP 位姿 [x,y,z,rx,ry,rz]（米 / 旋转向量弧度）",
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "q": {
+              "description": "joint 段的六个关节目标角（弧度）",
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "type": {
+              "description": "\"joint\"（关节段，读 q）或 \"cartesian\"（直线段，读 pose）",
+              "required": true,
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "required": true,
+        "type": "array"
+      },
+      "t": {
+        "description": "整段时长（秒），≥0，默认 0 = 用 a/v。**只有仿真建模**（整条折线共用一条时间剖面）；真机路径按逐段 a/v 走，t 被忽略且回包里会说明",
+        "type": "number"
+      },
+      "v": {
+        "description": "速度，必须 >0，默认 0.25（movel 的手册默认值；关节段也用这一对）",
+        "type": "number"
+      }
+    }
+  },
+  {
     "name": "ursim_send_script",
     "op": "send_script",
     "description": "向指定机器人发送一段 URScript 脚本并执行（用于自定义动作、I/O、逻辑等）。⚠️ 本工具会**校验执行结果**：在「真正会被执行的那段代码」前后各注入一行哨兵写寄存器并回读——脚本含 `def … end` 时注入到**函数体内部**（第一句/最后一句，绝不拼到顶层，否则会把脚本变成「函数体不跑、顶层照跑」并报出假阳性）；纯语句脚本才用顶层注入。结论分三种：「已执行完毕」/「已开始执行但未在预算内结束」/「连起始哨兵都没观察到（控制器很可能根本没执行，最常见原因是未处于远程控制模式：本地/示教器模式下 URScript 会被静默丢弃）」。**不要仅凭「已发送」就认为动作生效**。⚠️ 会驱动机械臂运动。",
@@ -1491,7 +1597,7 @@
   {
     "name": "ursim_sim_start",
     "op": "sim_start",
-    "description": "开启**离线仿真**（运动学级）：在保留地址 127.0.0.1 上创建一台虚拟 UR 机器人，让数字仿真里的模型在没有真机的情况下被驱动。必须指定 model（内置型号之一，如 ur5e/ur10e/ur20）。开启后，所有 ursim_* 调用都要带 ip=\"127.0.0.1\"。仿真只实现**运动学**：运动类工具（movej/movel/movep/movec/servoj/move_x|y|z/move_tool_*/draw_*/move_optimized/wait_steady/stopj/stopl）与位姿读回；力控、RTDE 遥测、安全状态位、程序加载与执行、原始脚本、I/O、寄存器、传送带、电源与刹车等都没有仿真语义，会明确回报而不是假装执行。真机连接不受影响。",
+    "description": "开启**离线仿真**（运动学级）：在保留地址 127.0.0.1 上创建一台虚拟 UR 机器人，让数字仿真里的模型在没有真机的情况下被驱动。必须指定 model（内置型号之一，如 ur5e/ur10e/ur20）。开启后，所有 ursim_* 调用都要带 ip=\"127.0.0.1\"。仿真只实现**运动学**：运动类工具（movej/movel/movep/movec/run_sequence/servoj/move_x|y|z/move_tool_*/draw_*/move_optimized/wait_steady/stopj/stopl）与位姿读回；力控、RTDE 遥测、安全状态位、程序加载与执行、原始脚本、I/O、寄存器、传送带、电源与刹车等都没有仿真语义，会明确回报而不是假装执行。真机连接不受影响。",
     "timeoutMs": null,
     "parameters": {
       "ip": {

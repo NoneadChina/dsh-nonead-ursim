@@ -237,6 +237,10 @@
       "gated": true,
       "sim": "unsupported"
     },
+    "run_sequence": {
+      "gated": true,
+      "sim": "simulated"
+    },
     "send_script": {
       "gated": true,
       "sim": "unsupported"

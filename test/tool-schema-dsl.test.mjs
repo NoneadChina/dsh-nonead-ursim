@@ -29,9 +29,10 @@ import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 
 /** 工具表规模（历史版本线见 CHANGELOG-archive.md：0.5.0：53 → 67；0.6.0 按三本官方手册补齐后：
- *  67 → 83；0.8.0 加离线仿真 3 个：83 → 86）。本包 0.1.0 的基线就是这 86 个。
+ *  67 → 83；0.8.0 加离线仿真 3 个：83 → 86）。本包 0.1.0 的基线是那 86 个，0.2.2 加
+ *  `ursim_run_sequence`：86 → 87。
  *  改动工具表时**必须**同步这个数与 check-host-compat.mjs。 */
-const EXPECTED_TOOLS = 86
+const EXPECTED_TOOLS = 87
 const pythonDir = fileURLToPath(new URL('../python/', import.meta.url))
 const workerSource = readFileSync(join(pythonDir, 'ur_worker.py'), 'utf8').replace(/\r\n/g, '\n')
 const indexSource = readFileSync(fileURLToPath(new URL('../lib/tool-defs.js', import.meta.url)), 'utf8')
@@ -208,6 +209,8 @@ test(`全部 ${EXPECTED_TOOLS} 个 ursim_* 工具都成功注册（不得静默�
     'ursim_unlock_protective_stop', 'ursim_shutdown', 'ursim_get_runtime_telemetry', 'ursim_get_speed_scaling',
     'ursim_get_tcp_force', 'ursim_set_gravity', 'ursim_zero_ftsensor', 'ursim_get_tool_analog_in',
     'ursim_set_conveyor_tracking',
+    // 0.2.2：多段连续运动（段间不停顿）
+    'ursim_run_sequence',
   ]) {
     assert.ok(names.includes(required), `缺少关键工具 ${required}`)
   }
@@ -413,7 +416,7 @@ test('★ 工具注册面黄金快照：重构不得改变任何工具的名称�
   const byName = new Map(golden.map((t) => [t.name, t]))
   const drift = snapshot.filter((t) => JSON.stringify(byName.get(t.name)) !== JSON.stringify(t))
   if (drift.length > 0) {
-    // 只报第一个差异的字段级 diff：86 个工具全量打印会把真正的线索淹掉。
+    // 只报第一个差异的字段级 diff：87 个工具全量打印会把真正的线索淹掉。
     const first = drift[0]
     const before = byName.get(first.name)
     const fields = ['op', 'description', 'timeoutMs', 'parameters']

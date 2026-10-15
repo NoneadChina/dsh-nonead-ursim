@@ -8,14 +8,14 @@
 
 > ⚠️ **安全提示**：本插件的目标是仿真，因此不会产生任何物理运动。各工具描述里沿用的安全警告，针对的是本插件所由派生的那份真机代码库。
 
-> 🛡️ **运动审批门禁**：`ursim_movej` / `ursim_movel` / `ursim_movep` / `ursim_movec` / `ursim_servoj` / `ursim_move_optimized` / `ursim_move_x|y|z` / `ursim_move_tool_x|y|z` / `ur_draw_*` / `ursim_load_program` / `ursim_run_program` / `ursim_send_script` / `ursim_reset_error`；0.5.0 新增的 `ursim_set_freedrive` / `ursim_set_teach_mode` / `ursim_power_on` / `ursim_power_off` / `ursim_brake_release` / `ursim_unlock_protective_stop` / `ursim_shutdown` / `ursim_zero_ftsensor` / `ursim_set_conveyor_tracking`；0.6.0 新增的 `ursim_force_mode` / `ursim_end_force_mode` / `ursim_force_mode_settings` / `ursim_speedj` / `ursim_speedl` / `ursim_stopj` / `ursim_stopl` / `ursim_set_payload_inertia`，以及 `ursim_motion_version`、`ursim_set_payload`、`ursim_set_gravity` —— 这些会驱动机器人运动、执行程序、**或让机械臂脱离程序控制 / 失去刚性支撑**的指令，在真正下发到机器人前会**暂停等待人工确认**。交互式部署（审批策略为 `ask`）会在界面上弹出确认框；未组合审批服务、无代理、或应答不是 `allowed-once` 的调用都会**以拒绝方式安全关闭**（fail-closed），绝不会在未获批准时运动。默认值写在**代码**里（`config.requireApprovalForMotion ?? true`），因此"调用方跳过 schema 解析"这种情形也不会把门禁关掉。可用配置 `requireApprovalForMotion: false` 显式关闭此门禁。`test/approval-gate.test.mjs` 驱动真实工具注册表逐条验证上述行为，包括"多传一个 `op` 参数无法把调用改派到别的指令"。
+> 🛡️ **运动审批门禁**：`ursim_movej` / `ursim_movel` / `ursim_movep` / `ursim_movec` / `ursim_run_sequence` / `ursim_servoj` / `ursim_move_optimized` / `ursim_move_x|y|z` / `ursim_move_tool_x|y|z` / `ur_draw_*` / `ursim_load_program` / `ursim_run_program` / `ursim_send_script` / `ursim_reset_error`；0.5.0 新增的 `ursim_set_freedrive` / `ursim_set_teach_mode` / `ursim_power_on` / `ursim_power_off` / `ursim_brake_release` / `ursim_unlock_protective_stop` / `ursim_shutdown` / `ursim_zero_ftsensor` / `ursim_set_conveyor_tracking`；0.6.0 新增的 `ursim_force_mode` / `ursim_end_force_mode` / `ursim_force_mode_settings` / `ursim_speedj` / `ursim_speedl` / `ursim_stopj` / `ursim_stopl` / `ursim_set_payload_inertia`，以及 `ursim_motion_version`、`ursim_set_payload`、`ursim_set_gravity` —— 这些会驱动机器人运动、执行程序、**或让机械臂脱离程序控制 / 失去刚性支撑**的指令，在真正下发到机器人前会**暂停等待人工确认**。交互式部署（审批策略为 `ask`）会在界面上弹出确认框；未组合审批服务、无代理、或应答不是 `allowed-once` 的调用都会**以拒绝方式安全关闭**（fail-closed），绝不会在未获批准时运动。默认值写在**代码**里（`config.requireApprovalForMotion ?? true`），因此"调用方跳过 schema 解析"这种情形也不会把门禁关掉。可用配置 `requireApprovalForMotion: false` 显式关闭此门禁。`test/approval-gate.test.mjs` 驱动真实工具注册表逐条验证上述行为，包括"多传一个 `op` 参数无法把调用改派到别的指令"。
 
 ---
 
 ## 简介
 
 `dsh-nonead-ursim` 让 DSH 里的 AI **用自然语言驱动一台 Universal Robots 机械臂** —— 它带上了 UR
-控制器的完整工具面（86 个 `ursim_*` 工具：关节与笛卡尔运动、OptiMove、画圆画方等图元、位姿与状态
+控制器的完整工具面（87 个 `ursim_*` 工具：关节与笛卡尔运动、多段连续轨迹、OptiMove、画圆画方等图元、位姿与状态
 回读、RTDE 遥测、标准/工具端 I/O 与寄存器、URScript、TCP/负载/工具设置、力控、传送带跟踪），并配
 一块实时 **3D 仿真面板**，渲染的正是这些工具读到的同一份关节数据。
 
@@ -31,7 +31,7 @@
 
 ## 功能一览
 
-共 **86** 个工具（`ursim_*`）。
+共 **87** 个工具（`ursim_*`）。
 
 | 类别 | 工具（`ursim_*`） | 说明 |
 |---|---|---|
@@ -51,8 +51,9 @@
 | 实时遥测 | `ursim_get_runtime_telemetry` / `ursim_get_robot_voltage` / `ursim_get_robot_current` / `ursim_get_joint_temperatures` / `ursim_get_speed_scaling` / `ursim_get_tcp_force` / `ursim_get_tool_telemetry` | 关节电流/电压/角速度、TCP 线速度与受力/力矩、工具加速度计、速度倍率、整机电压电流、关节温度、工具电流/电压、I/O 电流。**这些字段本来就在 500 Hz 的 RTDE 数据流里**，读取零代价、无需改配置。单点读取（整机电压/电流、关节温度）与一次性汇总（`ursim_get_runtime_telemetry`）并存：轮询某一项时用单点，诊断时用汇总 |
 | 传送带 | `ursim_get_conveyor` / `ursim_set_conveyor_tick` / `ursim_set_conveyor_tracking` | 传送带 tick 读取 / 设置、**线性或圆盘跟踪的开启与停止** |
 | 运动 | `ursim_movej` / `ursim_movel` / `ursim_movep` / `ursim_movec` / `ursim_servoj` / `ursim_move_optimized` / `ursim_move_x` / `ursim_move_y` / `ursim_move_z` / `ursim_move_tool_x` / `ursim_move_tool_y` / `ursim_move_tool_z` | 关节空间 / 直线 / 路径 / **真正的圆弧**（旧实现内部把 `movetype` 写死成 `'p'`，实际发的是 `movep` 且丢弃途经点；0.6.0 起补上手册的 `mode` 参数：0 插补姿态 / 1 固定姿态）/ 连续流 / **OptiMove 平滑运动**（`optimovej`/`optimovel`，jerk 受限、振动更小；⚠️ 它的 `a`/`v` 是**能力比例** (0,1] 而不是 rad/s 或 m/s）/ 沿轴直线运动 —— `_move_*` 沿**基座**轴，`_move_tool_*` 沿**当前工具**轴（worker 侧用旋转矩阵换算，不依赖 URScript 的 `pose_trans`）。**默认 a/v 已改回官方手册值**（`movej` 1.4 / 1.05，`movel` 1.2 / 0.25；旧代码默认 `movel` v=1 m/s，是手册默认的 4 倍） |
+| 连续多段 | `ursim_run_sequence` | **一条命令走完整条多段轨迹，段与段之间不停顿。** `segments` 是一串 `{"type":"joint","q":[…]}` / `{"type":"cartesian","pose":[…]}`；可选的 `v`/`a`（默认 0.25 / 1.2）作用于整条序列，`t`（≥0，默认 0 = 用 `a`/`v`）设定**整条轨迹**的时长，与 `r`（交融半径）一样**只在仿真里建模** —— 真机路径逐段发 `movej`/`movel`（`r` 就是途经点的交融半径），并在回包里明说 `t` 已被忽略。★ 仿真里每一段都转成关节航点后**拼成一条折线、只规划一次**，整条序列共用一条时间剖面：20 段就是一次加速、一次减速，而不是二十次起停。任一段的任一细分点不可达就**整条序列失败**（绝不跳过那一段继续走） |
 | 运动规划 | `ursim_motion_version` / `ursim_get_freedrive_status` | 设置 **Motion Version**（手册第 14 章）与 **jerk 增益**（0.01-1.0，只作用于 jerk 受限的剖面：版本 2 的 movej/movel 与 optimovej/optimovel）：版本 2 规划时把速度/加速度**钳到硬件上限**、交融半径重叠时**动态收缩**，而不是像版本 1 那样跳过整段运动并给 "Overlapping Blends" 警告。⚠️ 新机型与 PolyScope X **只支持版本 2**；CB3 没有这个设置。⚠️ 这两个设置**没有回读通道**，只报告本次设置值。`ursim_get_freedrive_status` 读取当前姿态在 freedrive 下离**奇异点**的距离（0 正常 / 1 接近 / 2 太接近——**不是** freedrive 的开关状态），据此提示操作员换路径 |
-| 绘图 | `ursim_draw_circle` / `ursim_draw_square` / `ursim_draw_rectangle` / `ursim_draw_star` | 画圆 / 正方形 / 长方形 / 五角星。**必须先观察到脚本真的在运行**才回报「执行完成」——旧实现发完立刻探测，必然看到"没在跑"，于是无论脚本是否执行都报成功 |
+| 绘图 | `ursim_draw_circle` / `ursim_draw_square` / `ursim_draw_rectangle` / `ursim_draw_star` | 画圆 / 正方形 / 长方形 / 五角星。可选的 `v` / `a`（默认 **0.25 / 1.0 —— 正是从前写死的那两个值**）决定速度，`t`（≥0，默认 0 = 用 `a`/`v`）在**仿真里**设定整条轮廓的时长；真机路径照旧用 `a`/`v`，并在回包里说明 `t` 被忽略。**必须先观察到脚本真的在运行**才回报「执行完成」——旧实现发完立刻探测，必然看到"没在跑"，于是无论脚本是否执行都报成功 |
 | 脚本 / 紧急 | `ursim_send_script` / `ursim_reset_error` | 发送 URScript（**校验执行**：哨兵注入到函数体内部/顶层语句之间并回读，「已发送」不再冒充「已执行」；含多个函数且看不出调用哪个时拒绝校验并给 `verified: null`）/ 复位错误 |
 | 离线仿真 | `ursim_sim_start` / `ursim_sim_stop` / `ursim_sim_status` | **运动学级离线仿真**：在保留地址 `127.0.0.1` 上创建/销毁一台虚拟 UR，让数字仿真在没有真机的情况下被驱动。`sim_start(model=..., preset=..., speed_scaling=...)` 开启后，运动类工具与位姿读回都作用于它；**默认起始姿态是 `upright`（竖直收拢）** —— 不传 `preset` 就是它，面板里换型号也会重置到它，按需自动创建的那台同样从这里开始；`sim_stop` 关闭（幂等）；`sim_status` 无副作用地读状态与能力清单。**其余指令在仿真目标上明确回报「无仿真语义」（`SIM_UNSUPPORTED`），绝不假装执行** |
 
@@ -74,7 +75,7 @@
 
 这份记忆过去只活在进程里，于是**宿主自己重启**（重开 DSH、重载插件）就把它弄丢了，自愈也就无从谈起。现在它会落盘（`persistSimState`，默认开；文件在 `<DSH_HOME>/plugin-data/dsh-nonead-ursim/sim-state.json`，可用 `simStateFile` 改）：落盘的是**意图**（`enabled`）而不是"最后一帧画面" —— 关掉仿真写的是 `enabled: false`，所以关掉的状态同样跨重启成立；而上次还开着的，加载时会用同样的型号、起始姿态与速度倍率再建一台（日志会说明；万一恢复失败，面板会显示原因）。落盘是加分项：数据目录只读或文件损坏都只降级成"没有记忆"并留一条告警，绝不让插件启动失败。
 
-**仿真的能力边界（写死在代码里，不是文档承诺）**：只实现**运动学** —— 正解/逆解、关节与笛卡尔轨迹插值、位姿读回。运动类工具（`movej`/`movel`/`movep`/`movec`/`servoj`/`move_optimized`/`move_x|y|z`/`move_tool_*`/`draw_*`/`wait_steady`/`stopj`/`stopl`）与读回（`get_joint_pose`/`get_tcp_pose`/`get_robot_model`/`status`/`get_target_values` 等）都可用；**其余指令一律明确回报 `SIM_UNSUPPORTED`**（力控、RTDE 遥测、安全状态位、程序加载与执行、原始脚本、I/O、寄存器、传送带、电源/刹车/自由驱动），并附上"要去 URSim 才能真跑这些"的提示 —— 宁可说"这里没有"，也不给一个看起来能跑的结果。正解与客户端 `fk.js` **逐元素一致**（`test/sim-backend.test.mjs` 钉住），所以读回的 TCP 与画面画出来的位置永远对得上。
+**仿真的能力边界（写死在代码里，不是文档承诺）**：只实现**运动学** —— 正解/逆解、关节与笛卡尔轨迹插值、位姿读回。运动类工具（`movej`/`movel`/`movep`/`movec`/`run_sequence`/`servoj`/`move_optimized`/`move_x|y|z`/`move_tool_*`/`draw_*`/`wait_steady`/`stopj`/`stopl`）与读回（`get_joint_pose`/`get_tcp_pose`/`get_robot_model`/`status`/`get_target_values` 等）都可用；**其余指令一律明确回报 `SIM_UNSUPPORTED`**（力控、RTDE 遥测、安全状态位、程序加载与执行、原始脚本、I/O、寄存器、传送带、电源/刹车/自由驱动），并附上"要去 URSim 才能真跑这些"的提示 —— 宁可说"这里没有"，也不给一个看起来能跑的结果。正解与客户端 `fk.js` **逐元素一致**（`test/sim-backend.test.mjs` 钉住），所以读回的 TCP 与画面画出来的位置永远对得上。
 
 **面板跟随桌面端的配色主题**：浅色 / 深色 / 跟随系统来自 DSH 自己的外观设置 —— 主题插件把解析后的快照投影到 document 上：布尔属性 `body[data-ds-dark-theme]` 加一整套 `--dsw-alias-*` 设计 token。面板因此**直接吃这些 token**（只有在宿主 token 缺失时——例如独立预览页——才退回与主题成对的本地值），于是既跟随设置、也跟随任何通过 `ctx.theme` 覆盖别名的第三方主题，**不需要任何 JS 参与**。CSS 唯一够不到的是 WebGL 侧的基座网格：它的颜色烘在几何体顶点色里，`src/client/theme.js` 盯同一个信号、`scene.js` 的 `applyTheme()` **就地**重刷网格（不重建几何体、不新建 `GridHelper`），所以切主题不会打扰相机、模型与已录轨迹。
 
@@ -119,7 +120,7 @@ host 侧路由（均限定 loopback 调用方）：
    // C:\Users\<you>\.dsh\profiles\web\package.json
    {
      "dependencies": {
-       "dsh-nonead-ursim": "^0.2.1"
+       "dsh-nonead-ursim": "^0.2.2"
      },
      "dsh": {
        "profile": {
@@ -170,7 +171,7 @@ pip install -r requirements.txt
 > （该文件**不在** `files` 清单里）之后，`import numpy` 直接失败，所有工具调用都会死。
 > 正确做法：**给 `pythonBin` 指向的解释器装好依赖**（或指向一个 venv）。`ursim_ping` /
 > `npm run test:python` 就是这条链路的自检入口；`npm run verify:host` 则用宿主真实的
-> schema DSL 校验工具注册（应报告 86/86）。
+> schema DSL 校验工具注册（应报告 87/87）。
 
 ---
 
@@ -293,10 +294,10 @@ ursim_draw_circle(ip="192.168.1.199", center=[0.3,-0.2,0.4,0,3.14,0], r=0.05)
 - **未知型号回退**：若某机器人没有内置网格（未知或定制型号字符串），会**回退到近似几何体渲染而不报错**，数字仿真不会因未知型号失败。
 - **不接机器人时能不能驱动仿真？——能，但有明确边界**：
   - **插件内建的运动学仿真**：`ursim_sim_start(model="ur10e")` 或面板上的「离线仿真」开关打开后，运动类工具与位姿读回都作用于 `127.0.0.1` 上的虚拟机器人，仿真跟着动 —— **不需要任何真机或 URSim**。
-  - **它能做什么**：关节/直线/路径/圆弧/沿轴/绘图等**到位型运动**（含速度倍率、起始姿态选择）、关节角与 TCP 位姿读回、`ursim_wait_steady`/`stopj`/`stopl`；逆解用多起点数值解，不可达会**明确拒绝**而不是给一个近似姿态。
+  - **它能做什么**：关节/直线/路径/圆弧/沿轴/绘图/**多段连续轨迹**等**到位型运动**（含速度倍率、起始姿态选择）、关节角与 TCP 位姿读回、`ursim_wait_steady`/`stopj`/`stopl`；逆解用多起点数值解，不可达会**明确拒绝**而不是给一个近似姿态。
   - **它不能做什么（也不会假装）**：力控、安全状态位、程序加载与执行、原始脚本、传送带、电源/刹车/自由驱动 —— 这些是**控制器的行为**，没有控制器就没有语义，调用会返回 `SIM_UNSUPPORTED`。速度指令（`speedj`/`speedl`）同样不支持：开放式速度需要持续积分与减速模型，半套模型比没有更危险。**有两处例外有仿真语义**：**标准/工具端 I/O 与寄存器**（0.1.5：输出写进内存态并可读回，输入没有信号源恒为 0，寄存器没有写入口恒为初值），以及**遥测**（0.1.6：由运动学估算，带 `estimated: true` 标记，绝不作为测量值呈现）。每一条返回值都在自己的字段里写明这一点。
   - **它也不是安全评估工具**：没有动力学、没有安全功能、时间只是近似（`a`/`v` 决定每段时长，不做 jerk 限幅），所以**不能**用它验证碰撞、节拍或安全距离。
-  - **想要全套语义（含 URSim）时**：URSim 是 UR 官方的免费模拟控制器（跑在 VM 里，对外就是一台真控制器）。自 0.1.4 起可以把它当成"一台机器人"驱动 —— **显式开启真机通道**（`motionMode: 'real'` 并把它的 IP 写进 `realRobotIps`），这时 86 个工具与仿真全部照常工作（已兼容 `~/URSim_Linux-*/programs.*` 布局）。默认的 `sim` 模式下该 IP 会在派发前被判为非法输入（`SIM_BADARG`）。
+  - **想要全套语义（含 URSim）时**：URSim 是 UR 官方的免费模拟控制器（跑在 VM 里，对外就是一台真控制器）。自 0.1.4 起可以把它当成"一台机器人"驱动 —— **显式开启真机通道**（`motionMode: 'real'` 并把它的 IP 写进 `realRobotIps`），这时 87 个工具与仿真全部照常工作（已兼容 `~/URSim_Linux-*/programs.*` 布局）。默认的 `sim` 模式下该 IP 会在派发前被判为非法输入（`SIM_BADARG`）。
   - **为什么仿真地址是 127.0.0.1**：真机的 RTDE(30003)/Dashboard(29999) 跑在控制器上，本机回环上不可能出现一台真 UR —— 于是"仿真碰不到真机"是**结构性**保证；配合 worker 侧的保留地址守卫，即使宿主侧的登记状态漂了，指向该地址的指令也只会得到一句拒绝。
 - **资产管线**：网格由 `python scripts/convert-meshes.py` 生成，其结构契约（每个 GLB 含 7 个固定命名节点、贴图内嵌）由 `python scripts/verify-models.py` 校验（也暴露为 `npm run verify:models`）。
 

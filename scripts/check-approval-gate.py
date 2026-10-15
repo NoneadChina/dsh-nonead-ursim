@@ -21,7 +21,7 @@ import sys
 MUST_BE_GATED = {
     # motion
     "movej", "movel", "movep", "movec", "servoj", "move_x", "move_y", "move_z",
-    "move_tool_x", "move_tool_y", "move_tool_z", "move_optimized",
+    "move_tool_x", "move_tool_y", "move_tool_z", "move_optimized", "run_sequence",
     "draw_circle", "draw_square", "draw_rectangle", "draw_star",
     # open-ended velocity / force control
     "speedj", "speedl", "stopj", "stopl", "force_mode", "end_force_mode", "force_mode_settings",

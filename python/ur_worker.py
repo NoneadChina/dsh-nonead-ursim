@@ -307,7 +307,7 @@ def sim_capabilities():
                  "ursim_get_robot_mode", "ursim_get_safety_mode", "ursim_get_program_state",
                  "ursim_get_speed_scaling", "ursim_get_uptime"],
         "motion": ["ursim_movej", "ursim_movel", "ursim_movep", "ursim_movec", "ursim_servoj",
-                   "ursim_move_optimized", "ursim_move_x", "ursim_move_y", "ursim_move_z",
+                   "ursim_move_optimized", "ursim_run_sequence", "ursim_move_x", "ursim_move_y", "ursim_move_z",
                    "ursim_move_tool_x", "ursim_move_tool_y", "ursim_move_tool_z",
                    "ursim_draw_circle", "ursim_draw_square", "ursim_draw_rectangle", "ursim_draw_star",
                    "ursim_wait_steady", "ursim_stopj", "ursim_stopl"],
@@ -1442,6 +1442,11 @@ CONVEYOR_PAYLOAD_REGISTER = 0
 # 脚本类运动（draw_* 等）"到底有没有被执行"的探测窗：足够短到能立刻给出结论。
 SCRIPT_START_CHECK_TIMEOUT_S = 1.5
 
+# 绘图四件套的默认加速度：**一直就是 1.0**（真机脚本里写的是 `a=1, v=0.25`），与 movel 的
+# 手册默认 1.2 不是一回事。新增可选 v/a 参数时**不能**顺手把这个默认值统一成 1.2 —— 那等于
+# "不传参数时行为与从前不同"，而这次加参数的前提恰恰是向后兼容。
+DRAW_ACCEL_DEFAULT = 1.0
+
 
 def _read_int_register(model, index):
     """回读 int 输出寄存器；读不到返回 None。
@@ -1914,13 +1919,19 @@ def op_draw_circle(p):
     center = _vec(p, "center", 6, "draw_circle 的 center")
     r = _nonneg_float(p["r"], "r", "draw_circle 的半径", allow_zero=False)
     coordinate = str(p.get("coordinate", "z")).lower()
+    # v/a/t 可选（0.2.2）：默认值与这条工具**一直用的**那一对相同（真机脚本原本写死
+    # `a=1, v=0.25`）⇒ 不传时行为与从前完全一致。`t` 在真机路径上没有对应物，见
+    # `_ignored_t_note`：URScript 的 `t` 是每条 move* 各一个时长，不是整段一个。
+    a = _nonneg_float(p.get("a", 1.0), "a", "draw_circle 的加速度", allow_zero=False)
+    v = _nonneg_float(p.get("v", 0.25), "v", "draw_circle 的速度", allow_zero=False)
+    t = _nonneg_float(p.get("t", 0), "t", "draw_circle 的时长")
     robot, _ = ensure_connected(ip)
     wp = _circle_waypoints(center, r, coordinate)
     # `movec` 的 mode 参数省略（默认就是 0）：某些固件对多余的关键字参数更严格，省略可提高跨版本兼容性。
-    cmd = ("movep(p%s, a=1, v=0.25, r=0.025)\n"
-           "movec(p%s, p%s, a=1, v=0.25, r=0.025)\n"
-           "movec(p%s, p%s, a=1, v=0.25, r=0.025)" %
-           (wp[0], wp[1], wp[2], wp[3], wp[0]))
+    cmd = ("movep(p%s, a=%s, v=%s, r=0.025)\n"
+           "movec(p%s, p%s, a=%s, v=%s, r=0.025)\n"
+           "movec(p%s, p%s, a=%s, v=%s, r=0.025)" %
+           (wp[0], a, v, wp[1], wp[2], a, v, wp[3], wp[0], a, v))
     _assert_remote_control(ip, "draw_circle")
 
     # 「控制器到底有没有执行这段脚本」必须当场确认：固件差异会让这段指令组合被拒（真机实测：
@@ -1946,8 +1957,9 @@ def op_draw_circle(p):
                    {"command": cmd, "register": index, "token": token, "ip": ip})
 
     ok_flag, confirm = _wait_robot_idle(ip, _budget_ms(p))
-    return ok({"message": "命令已发送（控制器已开始执行），%s：%s" % (confirm, cmd),
-               "data": {"ok": ok_flag, "command": cmd, "register": index, "ip": ip}})
+    return ok({"message": "命令已发送（控制器已开始执行），%s：%s%s" % (confirm, cmd, _ignored_t_note(t)),
+               "data": {"ok": ok_flag, "command": cmd, "register": index, "ip": ip,
+                        "t_ignored": t > 0}})
 
 
 def op_draw_square(p):
@@ -1966,18 +1978,23 @@ def op_draw_square(p):
     origin = _vec(p, "origin", 6, "draw_square 的 origin")
     border = _nonneg_float(p["border"], "border", "draw_square 的边长", allow_zero=False)
     coordinate = str(p.get("coordinate", "z")).lower()
+    # v/a/t 可选：默认 a=1.0 / v=0.25 与这条工具原本写死的那一对**完全相同**
+    # （⇒ 不传时行为不变）。`t` 在真机路径上被忽略，回包里明说（见 `_ignored_t_note`）。
+    a = _nonneg_float(p.get("a", 1.0), "a", "draw_square 的加速度", allow_zero=False)
+    v = _nonneg_float(p.get("v", 0.25), "v", "draw_square 的速度", allow_zero=False)
+    t = _nonneg_float(p.get("t", 0), "t", "draw_square 的时长")
     robot, _ = ensure_connected(ip)
     wp = _square_waypoints(origin, border, coordinate)
-    cmd = ("movel(p%s, a=1, v=0.25)\nmovel(p%s, a=1, v=0.25)\n"
-           "movel(p%s, a=1, v=0.25)\nmovel(p%s, a=1, v=0.25)\n"
-           "movel(p%s, a=1, v=0.25)" %
-           (origin, wp[0], wp[1], wp[2], origin))
+    cmd = ("movel(p%s, a=%s, v=%s)\nmovel(p%s, a=%s, v=%s)\n"
+           "movel(p%s, a=%s, v=%s)\nmovel(p%s, a=%s, v=%s)\n"
+           "movel(p%s, a=%s, v=%s)" %
+           (origin, a, v, wp[0], a, v, wp[1], a, v, wp[2], a, v, origin, a, v))
     _assert_remote_control(ip, "draw_square")
     if not _send_program(robot, cmd):
         return err("draw_square 脚本未能送达控制器：%s" % _last_send_failure(robot), "SEND_FAILED")
     ok_flag, confirm = _wait_robot_idle(ip, _budget_ms(p))
-    return ok({"message": "命令已发送，%s：%s" % (confirm, cmd),
-               "data": {"ok": ok_flag, "command": cmd, "ip": ip}})
+    return ok({"message": "命令已发送，%s：%s%s" % (confirm, cmd, _ignored_t_note(t)),
+               "data": {"ok": ok_flag, "command": cmd, "ip": ip, "t_ignored": t > 0}})
 
 
 def op_draw_rectangle(p):
@@ -1992,18 +2009,22 @@ def op_draw_rectangle(p):
     width = _nonneg_float(p["width"], "width", "draw_rectangle 的长", allow_zero=False)
     height = _nonneg_float(p["height"], "height", "draw_rectangle 的宽", allow_zero=False)
     coordinate = str(p.get("coordinate", "z")).lower()
+    # 同 `op_draw_square`：v/a/t 可选，默认 a=1.0 / v=0.25 与原来写死的值完全一致。
+    a = _nonneg_float(p.get("a", 1.0), "a", "draw_rectangle 的加速度", allow_zero=False)
+    v = _nonneg_float(p.get("v", 0.25), "v", "draw_rectangle 的速度", allow_zero=False)
+    t = _nonneg_float(p.get("t", 0), "t", "draw_rectangle 的时长")
     robot, _ = ensure_connected(ip)
     wp = _rectangle_waypoints(origin, width, height, coordinate)
-    cmd = ("movel(p%s, a=1, v=0.25)\nmovel(p%s, a=1, v=0.25)\n"
-           "movel(p%s, a=1, v=0.25)\nmovel(p%s, a=1, v=0.25)\n"
-           "movel(p%s, a=1, v=0.25)" %
-           (origin, wp[0], wp[1], wp[2], origin))
+    cmd = ("movel(p%s, a=%s, v=%s)\nmovel(p%s, a=%s, v=%s)\n"
+           "movel(p%s, a=%s, v=%s)\nmovel(p%s, a=%s, v=%s)\n"
+           "movel(p%s, a=%s, v=%s)" %
+           (origin, a, v, wp[0], a, v, wp[1], a, v, wp[2], a, v, origin, a, v))
     _assert_remote_control(ip, "draw_rectangle")
     if not _send_program(robot, cmd):
         return err("draw_rectangle 脚本未能送达控制器：%s" % _last_send_failure(robot), "SEND_FAILED")
     ok_flag, confirm = _wait_robot_idle(ip, _budget_ms(p))
-    return ok({"message": "命令已发送，%s：%s" % (confirm, cmd),
-               "data": {"ok": ok_flag, "command": cmd, "ip": ip}})
+    return ok({"message": "命令已发送，%s：%s%s" % (confirm, cmd, _ignored_t_note(t)),
+               "data": {"ok": ok_flag, "command": cmd, "ip": ip, "t_ignored": t > 0}})
 
 
 def op_draw_star(p):
@@ -2017,21 +2038,28 @@ def op_draw_star(p):
     center = _vec(p, "center", 6, "draw_star 的 center")
     side = _nonneg_float(p["side"], "side", "draw_star 的边长", allow_zero=False)
     coordinate = str(p.get("coordinate", "xy")).lower()
+    # 同 `op_draw_square`：v/a/t 可选，默认 a=1.0 / v=0.25 与原来写死的值完全一致。
+    a = _nonneg_float(p.get("a", 1.0), "a", "draw_star 的加速度", allow_zero=False)
+    v = _nonneg_float(p.get("v", 0.25), "v", "draw_star 的速度", allow_zero=False)
+    t = _nonneg_float(p.get("t", 0), "t", "draw_star 的时长")
     robot, _ = ensure_connected(ip)
 
     verts, R = _star_vertices(center, side, coordinate)
     lines = []
     for idx in STAR_ORDER:
-        v = verts[idx]
-        lines.append("movel(p[%.4f,%.4f,%.4f,%.4f,%.4f,%.4f], a=1, v=0.25, r=0.0)"
-                     % tuple(v))
+        # ⚠️ 循环变量**不能**叫 v：它是速度参数（旧写法在这里用 `v` 装顶点，那会静默遮住速度）。
+        vertex = verts[idx]
+        lines.append("movel(p[%.4f,%.4f,%.4f,%.4f,%.4f,%.4f], a=%s, v=%s, r=0.0)"
+                     % (tuple(vertex) + (a, v)))
     cmd = "\n".join(lines)
     _assert_remote_control(ip, "draw_star")
     if not _send_program(robot, cmd):
         return err("draw_star 脚本未能送达控制器：%s" % _last_send_failure(robot), "SEND_FAILED")
     ok_flag, confirm = _wait_robot_idle(ip, _budget_ms(p))
-    return ok({"message": "命令已发送（五角星，边长 %sm，外接半径 %.4fm），%s：%s" % (side, R, confirm, cmd),
-               "data": {"ok": ok_flag, "command": cmd, "vertices": verts, "radius": R, "ip": ip}})
+    return ok({"message": "命令已发送（五角星，边长 %sm，外接半径 %.4fm），%s：%s%s"
+                          % (side, R, confirm, cmd, _ignored_t_note(t)),
+               "data": {"ok": ok_flag, "command": cmd, "vertices": verts, "radius": R, "ip": ip,
+                        "t_ignored": t > 0}})
 
 
 def _build_program_target(p):
@@ -2388,6 +2416,130 @@ def op_movec(p):
     ok_flag, msg = _movel_confirm(ip, to, _budget_ms(p))
     return ok({"message": "命令 %s 已发送，%s" % (cmd, msg),
                "data": {"ok": ok_flag, "command": cmd, "ip": ip}})
+
+
+# ---------------------------------------------------------------------------
+# 多段连续运动（run_sequence）：一份解析、两条路径
+# ---------------------------------------------------------------------------
+#
+# 段的两种类型：**只有这两种，不做别名**（"movej"/"movel"/"j"/"c" 之类一律拒绝）。
+# 批量输入的宽容会让调用方以为自己在说一件事、实际执行的是另一件。
+SEQUENCE_TYPES = ("joint", "cartesian")
+
+
+def _six_numbers(raw, what):
+    """把一段的 q/pose 收敛成 6 个有穷浮点，否则抛 `ValueError`（⇒ BADARG）。
+
+    为什么不直接用 `_vec`：那个助手形如 `_vec(p, "key", …)`，而跨语言门禁
+    （`scripts/check-tool-params.py`）会把那个字符串实参当成本 op 声明的**顶层参数名** ——
+    于是段内的 `q`/`pose` 会被判成"Python 读了但 schema 没声明"。它们不是顶层参数。
+    """
+    if not isinstance(raw, (list, tuple)) or len(raw) != 6:
+        raise ValueError("%s 必须是 6 维数组，收到 %r" % (what, raw))
+    out = []
+    for value in raw:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("%s 含非数值元素：%r" % (what, value))
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError("%s 含非有限数值（NaN/Infinity），已拒绝" % what)
+        out.append(number)
+    return out
+
+
+def _sequence_segments(p):
+    """解析 `run_sequence` 的段列表（真机与仿真**共用同一份解析与校验**）。
+
+    形态：`[{"type":"joint","q":[q0..q5]}, {"type":"cartesian","pose":[x,y,z,rx,ry,rz]}, …]`。
+    非法输入一律当场拒绝（`ValueError` ⇒ BADARG）：**绝不"尽力而为"地跳过某一段** —— 一条
+    序列的意义就是每一段都走到，静默丢段等于把"A→B→C"执行成"A→C"。
+    """
+    raw = p.get("segments")
+    if not isinstance(raw, (list, tuple)) or len(raw) == 0:
+        raise ValueError("run_sequence 的 segments 必须是非空数组（至少一段），收到 %r" % (raw,))
+    out = []
+    for index, item in enumerate(raw, start=1):
+        if not isinstance(item, dict):
+            raise ValueError("segments 第 %d 段必须是对象（{type:'joint', q:[…]} 或 "
+                             "{type:'cartesian', pose:[…]}），收到 %r" % (index, item))
+        kind = str(item.get("type", "")).strip().lower()
+        if kind not in SEQUENCE_TYPES:
+            raise ValueError("segments 第 %d 段的 type 必须是 %s，收到 %r"
+                             % (index, " 或 ".join("'%s'" % t for t in SEQUENCE_TYPES),
+                                item.get("type")))
+        key = "q" if kind == "joint" else "pose"
+        out.append({"type": kind,
+                    key: _six_numbers(item.get(key), "segments 第 %d 段的 %s" % (index, key))})
+    return out
+
+
+def _ignored_t_note(t):
+    """真机路径**没有**"整段时长"这个参数（URScript 的 `t` 是每条 move* 各一个）。
+
+    给了就必须在回包里说清楚它被忽略了 ——"看起来接受了"比"明确拒绝"更危险。
+    """
+    if not (isinstance(t, (int, float)) and t > 0):
+        return ""
+    return ("\n⚠️ 整段时长 t=%s 在真机路径上不建模（URScript 的 t 是每条 move* 各一个），已被忽略；"
+            "仿真路径会用它缩放整条轨迹。" % t)
+
+
+def op_run_sequence(p):
+    """多段连续运动（**真机实现**）：一段一条 `movej`/`movel`，按顺序发进同一条脚本。
+
+    ⚠️ 真机路径与仿真路径**不等价**，这一点必须写出来、而不是让它看起来一样：
+      · 仿真把整条折线排成**一条**时间剖面（段间零停顿，见 `ur_sim.VirtualRobot.run_sequence`）；
+      · 这里发出去的是一串 movej/movel —— 控制器在每个途经点按交融半径 `r` 过渡，`r=0`
+        （默认）时**逐段起停**。这是 URScript 能表达的极限。
+      · **整段时长 `t` 在真机路径上不建模**：给了也只会在回包里被明说为"已忽略"。
+
+    起始哨兵与到位确认与 `op_draw_circle` 同一套：脚本是否真的被控制器执行必须当场区分出来
+    （非远程控制模式下 URScript 会被静默丢弃，那时旧写法只会干等满预算）。
+    """
+    ip = str(p["ip"])
+    segments = _sequence_segments(p)
+    # 默认值与 movel 的手册默认一致（1.2 / 0.25），**关节段也用同一对**：一个工具只有一组 a/v，
+    # 让 joint 段偷偷改用 movej 的 1.4/1.05 会让"不传 a/v"变成一个说不清的行为。
+    a = _nonneg_float(p.get("a", 1.2), "a", "run_sequence 的加速度", allow_zero=False)
+    v = _nonneg_float(p.get("v", 0.25), "v", "run_sequence 的速度", allow_zero=False)
+    t = _nonneg_float(p.get("t", 0), "t", "run_sequence 的时长")
+    r = _nonneg_float(p.get("r", 0), "r", "run_sequence 的交融半径")
+    robot, _ = ensure_connected(ip)
+    lines = []
+    for segment in segments:
+        if segment["type"] == "joint":
+            lines.append("movej([%s], a=%s, v=%s, r=%s)"
+                         % (",".join("%.6f" % x for x in segment["q"]), a, v, r))
+        else:
+            lines.append("movel(p[%s], a=%s, v=%s, r=%s)"
+                         % (",".join("%.6f" % x for x in segment["pose"]), a, v, r))
+    cmd = "\n".join(lines)
+    _assert_remote_control(ip, "run_sequence")
+    # 哨兵寄存器不可选：它不是这个工具的参数（参数表里没有它，多给一个也没意义），
+    # 所以固定用默认那一个 —— 与 `ursim_draw_circle` 的可配置 register 不同。
+    index = DEFAULT_SENTINEL_REGISTER
+    model = ROBOT_MODELS.get(ip)
+    token = _sentinel_token(_read_int_register(model, index))
+    script = "write_output_integer_register(%d, %d)\n%s\n" % (index, token, cmd)
+    if not _send_program(robot, script):
+        return err("run_sequence 脚本未能送达控制器：%s" % _last_send_failure(robot), "SEND_FAILED")
+    deadline = time.time() + SCRIPT_START_CHECK_TIMEOUT_S
+    while time.time() < deadline:
+        if _read_int_register(model, index) == token:
+            break
+        time.sleep(0.1)
+    else:
+        return err("控制器**没有执行** run_sequence 脚本：%.1fs 内没看到起始哨兵（寄存器 %d）。"
+                   "机器人不会移动。可能原因：该固件不接受这段指令组合（movej/movel），"
+                   "或控制器未处于远程控制模式。"
+                   % (SCRIPT_START_CHECK_TIMEOUT_S, index), "NOT_EXECUTED",
+                   {"command": cmd, "register": index, "token": token, "ip": ip})
+
+    ok_flag, confirm = _wait_robot_idle(ip, _budget_ms(p))
+    return ok({"message": "连续 %d 段已发送（控制器已开始执行），%s：%s%s"
+                          % (len(segments), confirm, cmd, _ignored_t_note(t)),
+               "data": {"ok": ok_flag, "command": cmd, "register": index, "ip": ip,
+                        "segment_count": len(segments), "t_ignored": t > 0}})
 
 
 def op_servoj(p):
@@ -3690,14 +3842,23 @@ def _sim_move_reply(sim, p, what, target_pose=None, extra=None):
     return ok({"message": "%s（%s）" % (what, confirm), "data": data})
 
 
-def _sim_motion_args(p, joint=False):
+def _sim_motion_args(p, joint=False, a_default=None, v_default=None):
     """解析运动参数（与各真机 op 的默认值一致）。
 
     `joint=True` 时回的是 movej 的手册默认（a=1.4 rad/s²、v=1.05 rad/s），否则 movel 的
     （a=1.2 m/s²、v=0.25 m/s）。`t>0` 由调用方转成 `total_s`。
+
+    `a_default` / `v_default` 只给**默认值本来就不是 movel 手册值**的工具用：绘图四件套的
+    默认一直是 a=1.0 / v=0.25（真机那条 URScript 也是 `a=1, v=0.25`），不能因为"统一走这个
+    助手"就把它悄悄改成 movel 的 1.2 —— 那会让"不传 v/a 时行为与从前不同"，而这次加参数
+    的前提正是向后兼容。
     """
-    a = _bounded_float(p.get("a", 1.4 if joint else 1.2), "a", 1e-4, 100.0, "加速度")
-    v = _bounded_float(p.get("v", 1.05 if joint else 0.25), "v", 1e-4, 100.0, "速度")
+    if a_default is None:
+        a_default = 1.4 if joint else 1.2
+    if v_default is None:
+        v_default = 1.05 if joint else 0.25
+    a = _bounded_float(p.get("a", a_default), "a", 1e-4, 100.0, "加速度")
+    v = _bounded_float(p.get("v", v_default), "v", 1e-4, 100.0, "速度")
     t = _nonneg_float(p.get("t", 0), "t", "移动时长")
     r = _nonneg_float(p.get("r", 0), "r", "交融半径")
     return a, v, t, r
@@ -3912,13 +4073,15 @@ def _sim_draw_circle(sim, p):
     center = _vec(p, "center", 6, "draw_circle 的 center")
     r = _nonneg_float(p["r"], "r", "draw_circle 的半径", allow_zero=False)
     coordinate = str(p.get("coordinate", "z")).lower()
+    # v/a/t 可选：默认仍是这条工具一直用的 a=1.0 / v=0.25（真机脚本同值）⇒ 不传时行为不变。
+    a, v, t, _blend = _sim_motion_args(p, a_default=DRAW_ACCEL_DEFAULT)
     wp = _circle_waypoints(center, r, coordinate)
     plane_u = [(wp[0][i] - center[i]) / r for i in range(3)]
     plane_v = [(wp[1][i] - center[i]) / r for i in range(3)]
     steps = max(16, min(180, int(2.0 * math.pi * r / 0.01)))
     poses = [wp[0]] + [_circle_pose(center, plane_u, plane_v, r, 2.0 * math.pi * k / steps)
                        for k in range(steps + 1)]
-    sim.move_cartesian(poses, 0.25, 1.0)
+    sim.move_cartesian(poses, v, a, total_s=t if t > 0 else None)
     return _sim_move_reply(sim, p, "画圆（半径 %.4f m，%s 平面）" % (r, coordinate), None, {
         "waypoints": wp, "steps": len(poses),
         "sim_note": ("仿真按解析圆行走（与真机那条 movep+2×movec 的 4 个共圆点等价）；"
@@ -3930,8 +4093,9 @@ def _sim_draw_square(sim, p):
     origin = _vec(p, "origin", 6, "draw_square 的 origin")
     border = _nonneg_float(p["border"], "border", "draw_square 的边长", allow_zero=False)
     coordinate = str(p.get("coordinate", "z")).lower()
+    a, v, t, _blend = _sim_motion_args(p, a_default=DRAW_ACCEL_DEFAULT)
     wp = _square_waypoints(origin, border, coordinate)
-    sim.move_cartesian([wp[0], wp[1], wp[2], origin], 0.25, 1.0)
+    sim.move_cartesian([wp[0], wp[1], wp[2], origin], v, a, total_s=t if t > 0 else None)
     return _sim_move_reply(sim, p, "画正方形（边长 %.4f m，%s 平面）" % (border, coordinate), None,
                            {"waypoints": wp})
 
@@ -3941,8 +4105,9 @@ def _sim_draw_rectangle(sim, p):
     width = _nonneg_float(p["width"], "width", "draw_rectangle 的长", allow_zero=False)
     height = _nonneg_float(p["height"], "height", "draw_rectangle 的宽", allow_zero=False)
     coordinate = str(p.get("coordinate", "z")).lower()
+    a, v, t, _blend = _sim_motion_args(p, a_default=DRAW_ACCEL_DEFAULT)
     wp = _rectangle_waypoints(origin, width, height, coordinate)
-    sim.move_cartesian([wp[0], wp[1], wp[2], origin], 0.25, 1.0)
+    sim.move_cartesian([wp[0], wp[1], wp[2], origin], v, a, total_s=t if t > 0 else None)
     return _sim_move_reply(sim, p, "画长方形（%.4f × %.4f m，%s 平面）" % (width, height, coordinate),
                            None, {"waypoints": wp})
 
@@ -3951,11 +4116,33 @@ def _sim_draw_star(sim, p):
     center = _vec(p, "center", 6, "draw_star 的 center")
     side = _nonneg_float(p["side"], "side", "draw_star 的边长", allow_zero=False)
     coordinate = str(p.get("coordinate", "xy")).lower()
+    a, v, t, _blend = _sim_motion_args(p, a_default=DRAW_ACCEL_DEFAULT)
     verts, radius = _star_vertices(center, side, coordinate)
     path = [verts[i] for i in STAR_ORDER]
-    sim.move_cartesian(path, 0.25, 1.0)
+    sim.move_cartesian(path, v, a, total_s=t if t > 0 else None)
     return _sim_move_reply(sim, p, "画五角星（边长 %.4f m，外接半径 %.4f m）" % (side, radius),
                            None, {"vertices": verts, "radius": radius})
+
+
+def _sim_run_sequence(sim, p):
+    """多段连续运动（**仿真主路径**）：整条折线只排**一次**时间表 ⇒ 段间零停顿。
+
+    这是这个工具在仿真里的全部价值：`ur_sim.VirtualRobot.run_sequence` 把每段转成关节航点
+    后拼成一条折线，再交给 `_plan`（整条折线共用一条时间剖面）。逐段调用 movej/movel 会让
+    每一段各自起停 —— 那才是它要避免的东西。
+    """
+    segments = _sequence_segments(p)
+    a, v, t, r = _sim_motion_args(p)
+    sim.run_sequence(segments, v, a, total_s=t if t > 0 else None)
+    extra = _sim_r_note(r, {})
+    notes = ["段间**不停顿**：整条折线共用一条时间剖面（只排一次时间表），不是逐段起停。"]
+    if t > 0:
+        notes.append("整段时长按 t=%.3f s 缩放（t>0 覆盖 a/v，与 movel 的 t 语义一致）。" % t)
+    if "sim_note" in extra:
+        notes.append(extra["sim_note"])
+    extra["segment_count"] = len(segments)
+    extra["sim_note"] = "".join(notes)
+    return _sim_move_reply(sim, p, "连续多段运动（%d 段，段间不停顿）" % len(segments), None, extra)
 
 
 def _sim_movec(sim, p):
@@ -4365,6 +4552,8 @@ SIM_OPS = {
     "movec": _sim_movec,
     "servoj": _sim_servoj,
     "move_optimized": _sim_move_optimized,
+    # 多段连续：一整条折线只排一次时间表（段间零停顿）—— 这是它相对"逐段调用"的全部区别。
+    "run_sequence": _sim_run_sequence,
     "move_x": lambda sim, p: _sim_axis_move(sim, p, 0),
     "move_y": lambda sim, p: _sim_axis_move(sim, p, 1),
     "move_z": lambda sim, p: _sim_axis_move(sim, p, 2),
@@ -4566,6 +4755,7 @@ HANDLERS = {
     "set_payload": op_set_payload,
     "movep": op_movep,
     "movec": op_movec,
+    "run_sequence": op_run_sequence,
     "servoj": op_servoj,
     # ── 力控 / 速度控制 / 目标值（0.6.0，手册 15.x / 16.x / 18.x 交叉核对后新增）──
     "force_mode": op_force_mode,

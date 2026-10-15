@@ -95,6 +95,41 @@ test('其它受门禁的动作与一切畸形输入 → opaque，且**永不抛�
   }
 })
 
+test('ursim_run_sequence：没有单一目标 ⇒ opaque，但如实说明"几段、什么种类"', () => {
+  const preview = describePendingMotion('ursim_run_sequence', {
+    segments: [
+      { type: 'joint', q: Q },
+      { type: 'cartesian', pose: POSE },
+      { type: 'cartesian', pose: POSE },
+    ],
+  })
+  // 它**不能**退化成"某个目标位姿"：面板会照那个位姿画一层幽灵臂，而序列根本没有单一目标。
+  assert.equal(preview.kind, 'opaque')
+  assert.equal(preview.tool, 'ursim_run_sequence')
+  assert.match(preview.summary, /共 3 段/)
+  assert.match(preview.summary, /关节段 1/)
+  assert.match(preview.summary, /直线段 2/)
+  assert.match(preview.summary, /没有单一目标姿态/)
+  assert.match(preview.summary, /确认现场安全/)
+
+  // 畸形/缺失的 segments 不抛错，退化成通用说明（审批弹窗的职责是批准/拒绝）
+  for (const args of [{}, { segments: 'nope' }, { segments: [] }, { segments: [null, 3] }]) {
+    let got
+    assert.doesNotThrow(() => {
+      got = describePendingMotion('ursim_run_sequence', args)
+    })
+    assert.equal(got.kind, 'opaque')
+    assert.ok(got.summary.length > 0)
+  }
+
+  // 只认得两种 type：其它一律计入"其它"
+  const mixed = describePendingMotion('ursim_run_sequence', {
+    segments: [{ type: 'joint', q: Q }, { type: 'nope' }, { type: 'cartesian', pose: POSE }],
+  })
+  assert.match(mixed.summary, /共 3 段/)
+  assert.match(mixed.summary, /其它 1/)
+})
+
 test('summary 有长度上限（畸形长参数不会原样塞进界面）', () => {
   const preview = describePendingMotion('ursim_run_program', { program_name: 'x'.repeat(5000) })
   assert.ok(preview.summary.length <= 200, `实测 ${preview.summary.length}`)

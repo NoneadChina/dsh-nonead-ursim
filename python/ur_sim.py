@@ -677,6 +677,71 @@ class VirtualRobot:
         """movep 语义：一趟走过多个 Cartesian 途经点（每个点各自逆解，不细分直线）。"""
         return self.move_cartesian(waypoints, v, a, now=now)
 
+    def run_sequence(self, segments, v=0.25, a=1.2, step_m=0.01, now=None, total_s=None):
+        """**多段连续运动**：把每一段转成关节航点后拼成一条折线，只排**一次**时间表。
+
+        ★ 这个方法存在的全部理由就是 `_plan` 的语义（见它的文档）：它把整条折线排成**一条**
+        时间剖面。于是段与段之间**不会各自起停** —— 20 段也只是一次加速、一次减速。反过来，
+        逐段调用 `move_joints` / `move_cartesian` 会让每一段都收敛到零速度再重新加速，那就是
+        20 次起停，与"一条连续轨迹"是两回事。这也是本方法**不**复用 `move_cartesian` 的原因：
+        那个方法内部就调用了 `_plan`，每段一次。
+
+        `segments` 形如
+        `[{"type": "joint", "q": [6 个数]}, {"type": "cartesian", "pose": [6 个数]}, …]`：
+
+        - `joint` 段：按**最短路径**取目标（与 `move_joints` / 真机 movej 同一个约定），并校验
+          关节限位；
+        - `cartesian` 段：照 `move_cartesian` 的做法，对**上一个航点的 TCP** 按 `step_m` 细分
+          直线（joint 段之后那个 TCP 是关节角的**正解**，而不是调用方写下的位姿），每个细分点
+          以上一点为种子求逆解；
+        - 任一段任一点无解 ⇒ **整条序列失败**（`SIM_UNREACHABLE`），绝不跳过这一段继续走 ——
+          在这条路径上"跳过"等于悄悄把调用方要的路线换成了另一条。
+        """
+        if not segments:
+            raise SimError("run_sequence 需要至少一段（segments 不能为空）", "SIM_BADARG")
+        current = self._sample(self.elapsed(now))
+        waypoints = []
+        seed = list(current)
+        # "上一个 TCP"（下一条 cartesian 直线的起点）。`_plan` 会把**当前实际姿态**接在折线
+        # 开头，所以这里不重复放起点。
+        last_pose = tcp_pose(self.model, current)
+        for index, segment in enumerate(segments, start=1):
+            kind = str(segment.get("type", "")).strip().lower() if isinstance(segment, dict) else ""
+            if kind == "joint":
+                goal = _segment_vector(segment, "q", index, "joint 段的 q")
+                if not _within_limits(self.model, goal, self.limits):
+                    raise SimError(
+                        "第 %d 段（joint）的目标关节角超出 %s 的关节限位，已拒绝"
+                        "（仿真不会替你钳到边界）" % (index, canonical_model_name(self.model)),
+                        "SIM_JOINT_LIMIT")
+                delta = _shortest_joint_delta(seed, goal)
+                goal = [seed[i] + delta[i] for i in range(6)]
+                waypoints.append(goal)
+                seed = list(goal)
+                last_pose = tcp_pose(self.model, goal)
+                continue
+            if kind == "cartesian":
+                target = _segment_vector(segment, "pose", index, "cartesian 段的 pose")
+                chain = _interpolate_poses(last_pose, target, step_m)
+                for point_index, pose in enumerate(chain, start=1):
+                    got = ik_reachable(self.model, pose_to_matrix_axis_angle(pose),
+                                       [seed], limits=self.limits)
+                    if got is None:
+                        raise SimError(
+                            "第 %d 段（cartesian）的第 %d 个细分点在运动学上不可达（多个起点逆解均未"
+                            "收敛）：%s。整条序列已失败：每个细分点都要求可解，序列**不会**跳过这一段"
+                            "继续走（请拆成多段、改目标或改起始姿态）。"
+                            % (index, point_index, _format_pose(pose)), "SIM_UNREACHABLE")
+                    waypoints.append(list(got))
+                    seed = list(got)
+                last_pose = tcp_pose(self.model, seed)
+                continue
+            raise SimError(
+                "第 %d 段的 type 必须是 'joint' 或 'cartesian'，收到 %r"
+                % (index, segment.get("type") if isinstance(segment, dict) else segment),
+                "SIM_BADARG")
+        self._plan(waypoints, v, a, now=now, total_s=total_s)
+
     def servoj(self, q_goal, now=None):
         """servoj：直接把姿态设过去（真机是 500 Hz 流式伺服；这里退化成一次瞬时到位）。
 
@@ -761,6 +826,28 @@ def _normalize_pose(pose):
     """把调用方给的位姿规整成 6 个浮点（缺的补 0）—— 手工输入的 pose 常常少给旋转分量。"""
     return [float(pose[i]) if isinstance(pose, (list, tuple)) and i < len(pose)
             and isinstance(pose[i], (int, float)) else 0.0 for i in range(6)]
+
+
+def _segment_vector(segment, key, index, what):
+    """取 `run_sequence` 某一段里的 6 维 q/pose；不合格就抛 `SimError`（**不**宽容补零）。
+
+    为什么不复用 `_normalize_pose`：那个是给"手工输入的位姿常常少给旋转分量"准备的宽容解析，
+    少几个就补 0。但段是**批量**输入：少一个数、或者形状搞错了，补零只会把它悄悄变成另一个
+    目标 —— 而这是一条序列，走错一段就是走错整条轨迹。批量输入的容错代价与单条指令完全不同。
+    """
+    raw = segment.get(key) if isinstance(segment, dict) else None
+    if not isinstance(raw, (list, tuple)) or len(raw) != 6:
+        raise SimError("第 %d 段的 %s 必须是 6 维数组，收到 %r" % (index, what, raw), "SIM_BADARG")
+    out = []
+    for value in raw:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise SimError("第 %d 段的 %s 含非数值元素：%r" % (index, what, value), "SIM_BADARG")
+        number = float(value)
+        if not math.isfinite(number):
+            raise SimError("第 %d 段的 %s 含非有限数值（NaN/Infinity），已拒绝" % (index, what),
+                           "SIM_BADARG")
+        out.append(number)
+    return out
 
 
 def _interpolate_poses(start, goal, step_m=0.01, max_steps=800):
