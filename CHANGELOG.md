@@ -8,6 +8,38 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.2.2] - 2026-10-15
+
+### Added
+
+- **`ursim_run_sequence` — a whole motion sequence in one call.** It takes an ordered list of segments
+  (`{"type":"joint","q":[…]}` / `{"type":"cartesian","pose":[…]}`) plus one `v`/`a` (and an optional
+  whole-sequence `t`) and runs them as **one continuous trajectory**: in the offline simulation every
+  segment becomes joint waypoints and the whole polyline gets a **single** time profile
+  (`ur_sim.VirtualRobot.run_sequence` → exactly one `_plan` call), so the arm does not stop between
+  segments — 20 segments are one acceleration and one deceleration, not 20 start-stops. A cartesian
+  segment is densified at 1 cm and inverse-solved point by point (each point seeded from the previous
+  one); any unsolvable point fails the **whole** sequence instead of silently skipping it.
+  On the real-robot path the same segments are emitted as URScript `movej`/`movel` with `a`/`v` and an
+  optional blend radius `r`; a whole-sequence `t` is **not** modelled there and the reply says so
+  explicitly (`t_ignored`).
+- `ursim_draw_circle` / `ursim_draw_square` / `ursim_draw_rectangle` / `ursim_draw_star` now accept
+  optional `v` / `a` / `t`. Their speed used to be hard-wired (`a=1.0, v=0.25`), so the only way to
+  stretch a shape was to slow the entire simulation down via `ursim_sim_start(speed_scaling=…)`.
+  Defaults are unchanged, so existing calls behave exactly as before.
+- `ursim_run_sequence` is motion-gated (`APPROVAL_OPS` / `MUST_BE_GATED`); the pending-motion summary
+  reports the segment count and kinds (joint vs cartesian) without pretending the sequence has a single
+  target pose.
+
+### Changed
+
+- Tool table 86 → **87** tools. `docs/tool-schemas.golden.json`, `docs/tool-matrix.json` and
+  `docs/tool-matrix.md` were regenerated from source; the other 81 tool schemas are unchanged
+  byte-for-byte.
+
+Verification: `npm run check` exit 0 (87 tools / 88 ops; both README tables and totals agree);
+`npm test` 57/57 (0 failed, 0 skipped); `scripts/check-host-compat.mjs` reports **87/87** tools
+registered through the host's real value-schema DSL.
 ## [0.2.1] - 2026-10-15
 
 ### Changed

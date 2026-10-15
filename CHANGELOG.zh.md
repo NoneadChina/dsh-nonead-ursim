@@ -6,6 +6,31 @@
 那份代码库的版本编号。此前那段历史已原样归档到 `CHANGELOG-archive.zh.md`；该文件在准备 0.1.1 时
 **已从本仓库移除**（可从导入源码的那个提交 `4c91704` 取回），并且从未进入过发布包。
 
+## [0.2.2] - 2026-10-15
+
+### 新增
+
+- **`ursim_run_sequence` —— 一次调用跑完整段多段轨迹。** 传入一个有序的段列表
+  （`{"type":"joint","q":[…]}` / `{"type":"cartesian","pose":[…]}`）加一对 `v`/`a`（可选整段 `t`），
+  它把这些段作为**一条连续轨迹**执行：离线仿真里每段转成关节航点后拼成一条折线、整条折线只排
+  **一次**时间剖面（`ur_sim.VirtualRobot.run_sequence` → 恰好一次 `_plan`），所以**段与段之间不起停**
+  —— 20 段是一次加速一次减速，而不是 20 次启停。直线段按 1 cm 细分并逐点求逆解（每个点以上一点为
+  种子）；任何一个点无解都让**整条序列**失败，绝不悄悄跳过。
+  真机路径把同样的段发成 URScript `movej`/`movel`（带 `a`/`v` 与可选交融半径 `r`）；整段 `t` 在真机
+  路径上**不建模**，回包会明说（`t_ignored`）。
+- `ursim_draw_circle` / `ursim_draw_square` / `ursim_draw_rectangle` / `ursim_draw_star` 新增可选
+  `v` / `a` / `t`。此前它们的速度写死（`a=1.0, v=0.25`），想把一个图形拉长只能靠
+  `ursim_sim_start(speed_scaling=…)` 把整个仿真调慢。默认值保持不变，既有调用行为与以前逐字节相同。
+- `ursim_run_sequence` 纳入运动门禁（`APPROVAL_OPS` / `MUST_BE_GATED`）；待审批摘要会如实报出段数与
+  段类型（关节/直线），不假装这条序列有单一目标位姿。
+
+### 变更
+
+- 工具表 86 → **87** 个。`docs/tool-schemas.golden.json`、`docs/tool-matrix.json`、`docs/tool-matrix.md`
+  按源码重新生成；其余 81 个工具的 schema 逐字节未变。
+
+验证：`npm run check` exit 0（87 工具 / 88 op；两份 README 的表与总数一致）；`npm test` 57/57
+（0 失败 0 跳过）；`scripts/check-host-compat.mjs` 报 **87/87** 个工具经宿主真实值 schema DSL 注册成功。
 ## [0.2.1] - 2026-10-15
 
 ### 变更
