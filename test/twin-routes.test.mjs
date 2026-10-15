@@ -26,7 +26,30 @@ import {
   createTwinModelsHandler,
   createTwinStreamHandler,
   normalizeModelEntry,
+  twinStateQuery,
 } from '../lib/twin-routes.js';
+
+/*
+ * ★ 路由那一层到底把哪些查询参数转给了读取逻辑 —— 这一步曾经被漏掉：`/state` 的路由处理器
+ * 只转发 `detail`，把 `io` / `reg` / `from` / `count` 全丢了，于是读取逻辑里 `wantsIo` /
+ * `wantsRegisters` 恒为 false，**面板的 I/O 与寄存器永远读不出值**。四道门全绿的原因是：
+ * 所有 I/O / 寄存器单测都**直接调用读取逻辑**，从不经过路由那一层。
+ * 这条测试改打纯函数 `twinStateQuery`（路由用它），把"到底转发了什么"钉死。
+ */
+test('★ /state 查询参数白名单：io / reg / from / count / detail 必须原样转发', () => {
+  assert.deepEqual(twinStateQuery('/nonead-ursim/twin/state?ip=127.0.0.1&io=1'), {
+    detail: '', io: '1', reg: '', from: '', count: '',
+  });
+  assert.deepEqual(
+    twinStateQuery('/nonead-ursim/twin/state?reg=int&from=8&count=16&detail=1'),
+    { detail: '1', io: '', reg: 'int', from: '8', count: '16' },
+  );
+  // 缺省 / 畸形 URL 一律空串，绝不抛（路由那一层不能因为一个坏 URL 变成 500 或挂住）。
+  assert.deepEqual(twinStateQuery(undefined), { detail: '', io: '', reg: '', from: '', count: '' });
+  assert.deepEqual(twinStateQuery('http://[bad'), { detail: '', io: '', reg: '', from: '', count: '' });
+  // `ip` 不在白名单里：本插件只操作离线仿真，目标由路由钉死在 SIM_IP 上。
+  assert.equal('ip' in twinStateQuery('/x?ip=1.2.3.4'), false);
+});
 
 /** 包名（取自 package.json）—— 错误响应里不得泄露它；改名时这条断言自动跟随。 */
 const PKG_NAME = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).name;
