@@ -6,6 +6,21 @@
 那份代码库的版本编号。此前那段历史已原样归档到 `CHANGELOG-archive.zh.md`；该文件在准备 0.1.1 时
 **已从本仓库移除**（可从导入源码的那个提交 `4c91704` 取回），并且从未进入过发布包。
 
+## [0.1.17] - 2026-10-15
+
+### 修复
+
+- **面板的 I/O 与寄存器永远读不出值。** `/state` 路由只把 `detail` 转给读取逻辑，把 `io` / `reg` /
+  `from` / `count` 全丢了 —— 于是 `wantsIo` / `wantsRegisters` 恒为 false，返回的帧里根本没有
+  `io` / `registers` 字段，面板那两块只能空着（或一直停在"读取中…"上）。0.1.16 修的是同一条路上的
+  op **名字**，这是第二处**独立**缺陷：**一处要参数被转发，一处要名字写对。**
+  URL→查询对象的翻译现在是一个**纯函数白名单** `twinStateQuery`，路由与单测共用它 —— 之前的单测都是
+  **直接调用读取逻辑**、从不经过路由，这正是"面板什么都看不到、四道门却全绿"的原因。
+
+验证：用真 worker、按路由的两种转发方式对照 —— 旧转发得到 `body.io = undefined` /
+`body.registers = undefined`；新转发得到 `body.io = {digital_out[16], digital_in[16], analog_in[0,0],
+simulated, note}` 与 `body.registers = {set:int, from:0, count:8, values:[0,…]}`。
+`npm run check` exit 0；`npm test` 57/57。
 ## [0.1.16] - 2026-10-15
 
 ### 修复

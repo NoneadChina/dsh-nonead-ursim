@@ -8,6 +8,23 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.1.17] - 2026-10-15
+
+### Fixed
+
+- **The panel's I/O and register readout could never show a value.** The `/state` route forwarded only
+  `detail` to the reader, dropping `io` / `reg` / `from` / `count` — so `wantsIo` / `wantsRegisters` were
+  always false and the frame simply had no `io` / `registers` field; the panel left both blocks empty (or
+  stuck on the reading hint). 0.1.16 fixed the op **name** on this same path; this is a second, independent
+  defect: **one wanted the arguments forwarded, the other wanted the name spelled right.** The URL→query
+  translation is now a pure, unit-tested whitelist function (`twinStateQuery`) shared by the route and its
+  test — the previous tests called the reader **directly** and never went through the route, which is
+  exactly why four gates stayed green while the panel showed nothing.
+
+Verification: against a real worker, using the route's two forwarding styles — the old one yields
+`body.io = undefined` / `body.registers = undefined`; the new one yields
+`body.io = {digital_out[16], digital_in[16], analog_in[0,0], simulated, note}` and
+`body.registers = {set:int, from:0, count:8, values:[0,…]}`. `npm run check` exit 0; `npm test` 57/57.
 ## [0.1.16] - 2026-10-15
 
 ### Fixed
