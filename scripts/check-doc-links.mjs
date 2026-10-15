@@ -41,6 +41,10 @@ const KNOWN_ABSENT = new Map([
     'urscript-manual-analysis',
     '手册对齐分析不随仓库分发（README 已如实说明，手册本身是第三方版权材料）',
   ],
+  [
+    'sitecustomize',
+    '本机私货（把本机用户级 site-packages 硬编码进 sys.path）已从仓库**有意删除**，README 的「依赖必须装在 worker 用的那个解释器里」一节记录了这个坑；docs/audit-2026-10-13-four-experts.md 是审计报告**存档原文**，为不改动证据而保留该引用',
+  ],
 ]);
 
 /**

@@ -38,7 +38,15 @@ const scratch = join(root, 'lib', `.client.rebuild-check.js`);
  * comment — 621855 identical bytes before it.
  */
 const bodyOf = (path) =>
-  readFileSync(path, 'utf8').replace(/\n?\/\/# sourceMappingURL=.*\s*$/, '\n');
+  readFileSync(path, 'utf8')
+    /*
+     * ⚠️ **先做行尾归一化**（`core.autocrlf=true` 的机器上检出的是 CRLF，而 blob 与重建产物是 LF）。
+     * 逐字节比较会把"这台机器的检出方式"误判成"产物落后于源码"：本仓库在 Windows 上因此假红过 ——
+     * 提交 blob 与重建产物同为 LF、正文哈希逐字节相同，只有工作树那份被 autocrlf 转成了 CRLF。
+     * 归一化对**两边都做**，真正的产物漂移（内容差异）一条也不会漏。
+     */
+    .replace(/\r\n/g, '\n')
+    .replace(/\n?\/\/# sourceMappingURL=.*\s*$/, '\n');
 
 const sha = (text) => createHash('sha256').update(text).digest('hex');
 const human = (n) => `${(n / 1024).toFixed(1)} KB`;
