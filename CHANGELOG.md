@@ -8,6 +8,43 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.1.16] - 2026-10-15
+
+### Fixed
+
+- **The panel's I/O row could never show a value.** `lib/twin-routes.js` read the digital outputs with the
+  op name `get_digital_out_bits`, following the *tool* name (`ursim_get_digital_out_bits`); the op the
+  worker actually implements is `get_digital_output_bits`. One unknown op is enough to sink the row:
+  `readIo` runs its four reads in `Promise.all`, so `body.io` degraded to `{error}` and the panel showed
+  nothing. The registers were never broken on the host side — they were hidden by that same error line. The
+  panel test faked the same wrong op name, which is why four gates stayed green; `check-worker-ops.py` now
+  audits **every op name the host calls literally** (including the twin routes, which bypass the tool table)
+  against the worker's `HANDLERS`, so this class of slip is caught statically.
+- **The animation stuttered and the panel sat on 「数据已停止更新 Ns · 正在重试」.** The SSE detail slow-beat
+  (one frame every 2 s) awaited two worker round-trips (`status` + `get_target_values`) **on the frame
+  path**. The worker is a single-threaded stdin queue, so while a motion ran those reads queued until the
+  twin read budget (2500 ms) expired — one stalled frame every two seconds, indefinitely. Detail is now read
+  with a bounded wait (`TWIN_DETAIL_BUDGET_MS`, 400 ms) plus a last-good cache and per-robot de-duplication:
+  when the worker is idle nothing changes, and a failure still reports `detail.error` honestly.
+- **Simulated frames carried no connection epoch.** The push loop sent `conn` from `ROBOT_CONN_SEQ`, which
+  has no entry for a simulation, so the host saw `undefined` and fell back to re-reading the robot model
+  every `TWIN_MODEL_TTL_MS` (10 s) — another read that queues behind a running motion. Simulated pushes now
+  send `round(sim.created_at, 3)`: constant within one simulation, changed when it is restarted.
+- **The self-healing probe could kill a worker that was executing a motion.** `heal()`'s `sim_status` probe
+  now passes `killOnTimeout: false`: a probe that times out is not a process that died.
+
+### Changed (development tooling only — not part of the published package)
+
+- `scripts/check-client-bundle.mjs` normalizes line endings before hashing: with `core.autocrlf=true` the
+  byte comparison mistook a CRLF checkout for a stale artifact (the committed blob and the rebuild are
+  byte-identical), which produced a false red gate on Windows.
+- `scripts/check-doc-links.mjs` lists `python/sitecustomize.py` as intentionally absent — the file was
+  deliberately removed, and the audit report that cites it is preserved verbatim.
+
+Verification: `npm run check` exit 0; `npm test` 57/57 (Python included); the panel reader re-run against a
+real worker (digital outputs read back after being set; `digital_in` / `analog_in` / registers populated);
+the host frame path measured during a motion (45 frames, 224 ms mean, 0 stale frames).
+
 ## [0.1.15] - 2026-10-15
 
 ### Fixed (development tooling only — no runtime change)

@@ -6,6 +6,38 @@
 那份代码库的版本编号。此前那段历史已原样归档到 `CHANGELOG-archive.zh.md`；该文件在准备 0.1.1 时
 **已从本仓库移除**（可从导入源码的那个提交 `4c91704` 取回），并且从未进入过发布包。
 
+## [0.1.16] - 2026-10-15
+
+### 修复
+
+- **面板的 I/O 一行永远读不出值。** `lib/twin-routes.js` 读数字输出用的 op 名是 `get_digital_out_bits`
+  （照**工具**名 `ursim_get_digital_out_bits` 写的），而 worker 真正实现的是 `get_digital_output_bits`。
+  一个未知 op 就足以拖垮整行：`readIo` 的四次读在 `Promise.all` 里，于是 `body.io` 退化成 `{error}`、
+  面板显示"读不到"。寄存器那条宿主侧一直是好的 —— 它被同一行错误盖住了。面板测试也伪造了同一个错名，
+  所以四道门全绿；现在 `check-worker-ops.py` 会把**宿主以字面量调用的每一个 op 名**（含绕过工具表的
+  孪生路由）与 worker 的 `HANDLERS` 对账，这类笔误静态就能抓住。
+- **动画一顿一顿，面板常驻「数据已停止更新 Ns · 正在重试」。** SSE 的 detail 慢节拍（每 2 s 一帧）在
+  **帧路径**上 await 两次 worker 往返（`status` + `get_target_values`）。worker 是单线程 stdin 队列，
+  机器人运动时这两次读会一直排队到 twin 读预算（2500 ms）耗尽 —— 每两秒就卡一帧，而且永不停止。
+  现在详情是**有界等待**（`TWIN_DETAIL_BUDGET_MS`，400 ms）+ 上一笔缓存 + 同一台机器人去重：worker
+  空闲时语义不变，读失败仍如实写 `detail.error`。
+- **仿真帧不带连接代次。** 推送循环的 `conn` 取 `ROBOT_CONN_SEQ`，仿真没有这条记录 ⇒ 宿主读到
+  `undefined` ⇒ 退回每 `TWIN_MODEL_TTL_MS`（10 s）重读一次型号 —— 又是一次会排在运动后面的读。
+  仿真帧现在发 `round(sim.created_at, 3)`：同一次仿真内恒定，重启即变化。
+- **自愈探针会杀掉正在执行运动指令的 worker。** `heal()` 的 `sim_status` 探针改为
+  `killOnTimeout: false`：探针超时不等于进程死了。
+
+### 变更（仅开发工具，不属于发布包）
+
+- `scripts/check-client-bundle.mjs` 在比对哈希前归一化行尾：`core.autocrlf=true` 时逐字节比较会把
+  CRLF 检出误判成"产物落后"（提交 blob 与重建产物其实逐字节相同），在 Windows 上产生过假红。
+- `scripts/check-doc-links.mjs` 把 `python/sitecustomize.py` 记入有意缺失 —— 该文件是被**有意删除**的，
+  引用它的审计报告原文为不改动证据而保留。
+
+验证：`npm run check` exit 0；`npm test` 57/57（含 Python）；面板取数用真 worker 复跑（置位数字输出后
+读回、`digital_in` / `analog_in` / 寄存器都有值）；宿主帧路径在运动期间实测（45 帧、平均 224 ms、0 帧
+stale）。
+
 ## [0.1.15] - 2026-10-15
 
 ### 修复（仅开发工具，运行时无变化）
