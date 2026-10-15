@@ -119,7 +119,7 @@ host 侧路由（均限定 loopback 调用方）：
    // C:\Users\<you>\.dsh\profiles\web\package.json
    {
      "dependencies": {
-       "dsh-nonead-ursim": "^0.1.17"
+       "dsh-nonead-ursim": "^0.2.1"
      },
      "dsh": {
        "profile": {

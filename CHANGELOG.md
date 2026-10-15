@@ -8,6 +8,24 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.2.1] - 2026-10-15
+
+### Changed
+
+- **The data-feed hint now shares the identity line.** The 「数据已停止更新 …」 hint used to occupy a row
+  of its own; it now sits on the same line as 「机器人 <model> · <IP>」, right after the identity text
+  (`display: flex` on the identity row, so both stay on one line and ellipsize independently). The two
+  meanings are unchanged — the identity row still answers *which robot*, the hint still answers *how the
+  data channel is doing* — they simply no longer take two lines.
+- The identity text moved into its own `<span data-ursim-twin-identity-text>` child. That is not cosmetic:
+  assigning `textContent` **removes every child element**, so writing the identity text directly on the row
+  deleted the hint that had just been nested into it (the HUD refreshes at ~10 Hz, so the hint would have
+  been invisible in practice). A panel test now pins 〔same row〕 by structure.
+
+Note: the version goes `0.1.17 → 0.2.1` at the maintainer's request; `0.2.0` was not released on its own.
+
+Verification: `npm run check` exit 0; `npm test` 57/57 (0 failed, 0 skipped); the rebuilt bundle is
+byte-reproducible from `src/client/**`.
 ## [0.1.17] - 2026-10-15
 
 ### Fixed
