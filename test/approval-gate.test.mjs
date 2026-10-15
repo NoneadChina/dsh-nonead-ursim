@@ -8,9 +8,12 @@
  * 安全回归可以完全不被察觉。
  *
  * 本文件用真实的 `apply()` + 真实的 `defineTool`（只桩掉 peer）驱动，并断言四件事：
- *   1. 受门禁的 op：批准前**绝不**到达 worker；批准后才放行。
+ *   1. **开启门禁时**（`requireApprovalForMotion: true`）：受门禁的 op 批准前**绝不**到达
+ *      worker；批准后才放行。
  *   2. 拒绝 / 未组合审批服务 / 无 agent ⇒ 三种情况都**失败关闭**（fail-closed），且不下发。
- *   3. `requireApprovalForMotion: false` 时不过门禁（显式关闭开关要真的关掉）。
+ *   3. 门禁只在**显式** `true` 时生效：产品默认（`requireApprovalForMotion: false`，0.2.3 起）
+ *      与显式 `false` 都不过门禁。`harness()` 因此默认注入 `requireApprovalForMotion: true`，
+ *      让本文件其余用例测的始终是"门禁开启"的行为；"缺省不门禁"由文末那条用例单独钉住。
  *   4. **回归守卫**：模型多传一个 `op` 字段无法把调用改派到别的 op。
  *      `lib/worker.js` 拼载荷时是 `{ id, op, _timeout_ms, ...params }`，`params` 展开在最后，
  *      而门禁判定用的是闭包里的 `op` —— 于是"未受门禁的工具 + 多传 op=power_off"曾经能
@@ -63,7 +66,7 @@ registerHooks({
  * `apply()` **之前**替换 `UrWorker.prototype.call` —— 否则记录器接不上，测试会对着一个真去
  * spawn 子进程的 worker 断言（表现为"没有调用记录"，而不是失败得清楚）。
  */
-async function harness({ config = {}, approvalOutcome = 'allowed-once', approvalService = 'present', replies = {}, stats = null } = {}) {
+async function harness({ config = {}, approvalOutcome = 'allowed-once', approvalService = 'present', replies = {}, stats = null, gateEnabled = true } = {}) {
   const mod = await import('../lib/index.js')
   const { UrWorker } = await import('../lib/worker.js')
   const registered = new Map()
@@ -124,8 +127,13 @@ async function harness({ config = {}, approvalOutcome = 'allowed-once', approval
    * 数据目录，会造成两个后果：① 弄脏开发者的真实配置；② 从那一刻起**每一次** apply() 都读到
    * "上次仿真还开着"并自动发起一次 sim_start，于是所有断言录音里都多出一条 sim_start（本轮实测
    * 15 条用例一起变红，根因就是这个）。调用方仍可用显式配置覆盖它。
+   *
+   * ⚠️ `gateEnabled`（默认 `true`）由 harness 注入 `requireApprovalForMotion: true`。产品默认自
+   * 0.2.3 起是 `false`（运动免人工确认），若不注入，本文件里那些"门禁开启时才成立"的用例会一个
+   * 个退化成"命令照常下发"，测的就不再是它们声称要测的东西。`config` 展开在最后，调用方仍可
+   * 显式覆盖（例如那两条专门测 `false` 的用例）。
    */
-  mod.apply(ctx, { persistSimState: false, ...config })
+  mod.apply(ctx, { persistSimState: false, ...(gateEnabled ? { requireApprovalForMotion: true } : {}), ...config })
 
   return { registered, calls, approvalRequests, effects }
 }
@@ -268,7 +276,9 @@ test('fail-closed：无审批服务 / 无 agent / 审批抛异常，三种都不
         tools: { register: (t) => registered.set(t.name, t) },
       },
       // 同 helper 里的理由：测试不得写本机真实的仿真态文件。
-      { persistSimState: false },
+      // ⚠️ 门禁必须**显式**开启：产品默认自 0.2.3 起是 `false`，而"审批通道存在却什么都不返回"
+      //    这条路径只在门禁开启时才存在（与 harness 注入 `requireApprovalForMotion: true` 同理）。
+      { persistSimState: false, requireApprovalForMotion: true },
     )
     await assert.rejects(
       () => registered.get('ursim_brake_release').execute({ ip: '1.2.3.4' }, exec),
@@ -278,7 +288,7 @@ test('fail-closed：无审批服务 / 无 agent / 审批抛异常，三种都不
   }
 })
 
-test('requireApprovalForMotion=false 时才真正放行', async () => {
+test('显式 requireApprovalForMotion=false 覆盖时真正放行（不再请求确认）', async () => {
   const { registered, calls, approvalRequests } = await harness({
     config: { requireApprovalForMotion: false },
     approvalOutcome: 'denied',
@@ -567,21 +577,24 @@ test('★ 重建失败时绝不假装成功：仍然把这条指令如实交给 
   assert.equal(approvalRequests.length, 0, '仿真目标（豁免仍有效）不该弹确认；真正的安全由 worker 的保留地址守卫兜住')
 })
 
-test('门禁默认值必须落在代码里：apply() 收到未经 schema 解析的裸 config 时仍然受门禁', async () => {
-  // Config 的 `z.boolean().default(true)` 由宿主应用；但 apply() 是导出函数，任何人用裸对象
-  // 调用它（测试桩、脚本化装配）都不会经过 schema。门禁因此**不能**只靠 schema 的默认值 ——
-  // 否则一次"没解析 schema"就会静默关掉整道安全门（fail-open）。
+test('产品默认免确认：schema 默认与代码兜底一致，裸 config 既不弹确认也照常下发', async () => {
+  // 0.2.3 起产品默认 `requireApprovalForMotion: false` —— 运动免人工确认。门禁能力一行没删：
+  // `APPROVAL_OPS` 与 `requestApproval()` 的判定、报错文案、fail-closed 全部照旧，只是**默认不
+  // 启用**（显式设 `true` 的部署行为与从前逐字节一致，见本文件其余用例）。
+  //
+  // 这里用 `gateEnabled: false` + 空 config 走**真正的裸 config**（未经 schema 解析）：Config 的
+  // `z.boolean().default(false)` 与 apply() 里的 `?? false` 兜底必须给出同一个答案，否则"没解析
+  // schema"就成了一次静默的语义分叉 —— 凭空多出一次人工确认，或凭空少一道门。
+  // `scripts/check-approval-gate.py` 的第三条检查钉的正是这三处（schema / 代码兜底 /
+  // cordis.patch.yml）默认值一致。
   const { registered, calls, approvalRequests } = await harness({
+    gateEnabled: false,
     config: {}, // 显式：requireApprovalForMotion 未给
-    approvalOutcome: 'denied',
   })
-  await assert.rejects(
-    () => registered.get('ursim_power_off').execute({ ip: '1.2.3.4' }, exec),
-    /未获人工批准/,
-    'config 里没写 requireApprovalForMotion 时，门禁必须默认开启',
-  )
-  assert.equal(approvalRequests.length, 1, '必须问了人工')
-  assert.equal(calls.length, 0, '必须没有下发')
+  await registered.get('ursim_power_off').execute({ ip: '1.2.3.4' }, exec)
+  assert.equal(approvalRequests.length, 0, '缺省（未显式开启门禁）不得请求人工确认')
+  assert.equal(calls.length, 1, '免确认不等于不下发：命令必须照常到达 worker')
+  assert.equal(calls[0].op, 'power_off', '下发的必须正是被调用的那条指令')
 })
 
 test('回归守卫（H-1 的对称面）：受门禁的工具同样无法被改派成别的 op', async () => {

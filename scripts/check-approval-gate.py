@@ -1,6 +1,6 @@
 """Cross-check the approval gate against every op the worker implements.
 
-Two questions, both of which must have a definite answer before this can be a gate:
+Three questions, all of which must have a definite answer before this can be a gate:
 
 1. **Is every gated name real?** A typo in `APPROVAL_OPS` means that command is not gated at
    all — the set silently does nothing for it. Exit 1.
@@ -8,8 +8,15 @@ Two questions, both of which must have a definite answer before this can be a ga
    move the arm, run a program, drop power/stiffness or change a payload/motion characteristic
    must never appear in that list. That judgement cannot be automated, so the list is printed in
    full and a small, explicit set of "must be gated" ops is asserted (see `MUST_BE_GATED`).
+3. **Does the product default to *no* human confirmation?** Since 0.2.3 the product default is
+   `requireApprovalForMotion: false` — motion needs no approval unless a deployment turns the gate
+   on. The gate itself is untouched (see questions 1-2); what is pinned here is the **default**,
+   and it is declared in three places that must agree: the Config schema default and the code
+   fallback in `lib/index.js`, plus the shipped `cordis.patch.yml`. A disagreement either
+   re-introduces a confirmation nobody asked for or advertises a gate the product does not have.
 
-Exit code: 0 only when no gated name is stale and every op in MUST_BE_GATED is gated.
+Exit code: 0 only when no gated name is stale, every op in MUST_BE_GATED is gated, and the three
+places that declare the product default all say `false`.
 """
 import ast
 import re
@@ -83,6 +90,33 @@ if missing:
     print("\n!! MUST_BE_GATED 里未受门禁的 op: %s" % ", ".join(missing))
 else:
     print("\nPASS  %d 个必须受门禁的 op 全部已门禁" % len(MUST_BE_GATED))
+
+# ── 3) 产品默认必须是"运动免人工确认"（2026-10-15 决定，0.2.3 起）────────────────────
+# 门禁能力一行没删：APPROVAL_OPS / MUST_BE_GATED 与 requestApproval() 的 fail-closed 全部原样。
+# 这里钉的是**默认值**，它被三处声明：lib/index.js 的 Config schema 默认值、同一文件里的代码
+# 兜底（裸 config 走的就是这一条）、以及随包发布的 cordis.patch.yml。三处必须同为 false ——
+# 任何一处是 true 都意味着"产品默认"被改回去了（用户没要求确认，却被停下来等确认），
+# 任何一处读不到则意味着这条声明被删掉或改了写法，本检查已失效。
+patch = open("cordis.patch.yml", encoding="utf-8").read()
+defaults = [
+    ("lib/index.js Config schema 的默认值（z.boolean().default(…)）",
+     re.search(r"requireApprovalForMotion:\s*z\.boolean\(\)\.default\((true|false)\)", idx)),
+    ("lib/index.js 的代码兜底（config.requireApprovalForMotion ?? …）",
+     re.search(r"config\.requireApprovalForMotion\s*\?\?\s*(true|false)", idx)),
+    ("cordis.patch.yml 里随包发布的取值",
+     re.search(r"^\s*requireApprovalForMotion:\s*(true|false)\s*$", patch, re.M)),
+]
+print("\n产品默认 requireApprovalForMotion 必须是 false（运动免人工确认；门禁能力本身保留）：")
+for label, match in defaults:
+    value = match.group(1) if match is not None else None
+    if value == "false":
+        print("   PASS  %s = false" % label)
+    else:
+        shown = "读不到（声明被删掉或改了写法）" if value is None else value
+        print("   !!    %s = %s" % (label, shown))
+        failures.append("产品默认必须是 requireApprovalForMotion=false，但「%s」是 %s" % (label, shown))
+if all(match is not None and match.group(1) == "false" for _, match in defaults):
+    print("PASS  三处默认值一致（schema / 代码兜底 / cordis.patch.yml），产品默认免人工确认")
 
 ungated = sorted(o for o in ops if o not in approved and o != "shutdown_worker")
 print("\nNOT GATED (%d) — each needs a judgement: can it move the arm," % len(ungated))

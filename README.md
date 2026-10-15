@@ -8,7 +8,7 @@ This plugin shares the same ancestry as the company's `Nonead-Universal-Robots-M
 
 > ⚠️ **Safety notice**: this plugin's target is a simulation, so no physical motion can result from it. The safety warnings carried by individual tool descriptions apply to the real-robot code base this plugin was derived from.
 
-> 🛡️ **Motion approval gate**: commands that physically move the arm, run a program, **take the arm out of program control, or remove its rigidity** — `ursim_movej` / `ursim_movel` / `ursim_movep` / `ursim_movec` / `ursim_run_sequence` / `ursim_servoj` / `ursim_move_optimized` / `ursim_move_x|y|z` / `ursim_move_tool_x|y|z` / `ur_draw_*` / `ursim_load_program` / `ursim_run_program` / `ursim_send_script` / `ursim_reset_error`; `ursim_set_freedrive` / `ursim_set_teach_mode` / `ursim_power_on` / `ursim_power_off` / `ursim_brake_release` / `ursim_unlock_protective_stop` / `ursim_shutdown` / `ursim_zero_ftsensor` / `ursim_set_conveyor_tracking`; `ursim_force_mode` / `ursim_end_force_mode` / `ursim_force_mode_settings` / `ursim_speedj` / `ursim_speedl` / `ursim_stopj` / `ursim_stopl` / `ursim_set_payload_inertia`, plus `ursim_motion_version`, `ursim_set_payload` and `ursim_set_gravity` — **pause and wait for human confirmation** before being sent to the robot. In an interactive deployment (approval policy `ask`) a confirmation dialog is shown in the UI; a call made without an approval service, without an agent, or answered with anything other than `allowed-once` **fails closed** (the command is rejected) and never moves without approval. The default lives in code (`config.requireApprovalForMotion ?? true`), so it cannot be turned off by a caller that skips schema parsing. Set `requireApprovalForMotion: false` to disable this gate deliberately. `test/approval-gate.test.mjs` drives the real tool registry and proves all of the above, including that an extra `op` argument cannot re-route a call.
+> 🛡️ **Motion approval gate (opt-in; off by default)**: commands that physically move the arm, run a program, **take the arm out of program control, or remove its rigidity** — `ursim_movej` / `ursim_movel` / `ursim_movep` / `ursim_movec` / `ursim_run_sequence` / `ursim_servoj` / `ursim_move_optimized` / `ursim_move_x|y|z` / `ursim_move_tool_x|y|z` / `ur_draw_*` / `ursim_load_program` / `ursim_run_program` / `ursim_send_script` / `ursim_reset_error`; `ursim_set_freedrive` / `ursim_set_teach_mode` / `ursim_power_on` / `ursim_power_off` / `ursim_brake_release` / `ursim_unlock_protective_stop` / `ursim_shutdown` / `ursim_zero_ftsensor` / `ursim_set_conveyor_tracking`; `ursim_force_mode` / `ursim_end_force_mode` / `ursim_force_mode_settings` / `ursim_speedj` / `ursim_speedl` / `ursim_stopj` / `ursim_stopl` / `ursim_set_payload_inertia`, plus `ursim_motion_version`, `ursim_set_payload` and `ursim_set_gravity` — **need no human confirmation by default** (since 0.2.3 the product default is `requireApprovalForMotion: false`). The gate is a capability you can turn **on**: with `true`, those commands **pause and wait for human confirmation** before being sent to the robot, and a call made without an approval service, without an agent, or answered with anything other than `allowed-once` **fails closed** (the command is rejected and never dispatched). **Simulation targets** (`motionMode: 'sim'` plus the reserved loopback address) are exempt either way. The default lives in code (`config.requireApprovalForMotion ?? false`) and **matches** the schema default, so a caller that skips schema parsing behaves exactly like the product default; set `requireApprovalForMotion: true` to turn the gate on. `test/approval-gate.test.mjs` drives the real tool registry and proves all of the above, including that an extra `op` argument cannot re-route a call.
 
 ---
 
@@ -24,8 +24,8 @@ panel** that renders the same joint data those tools read.
 Out of the box it drives an **offline, kinematics-level virtual UR robot** on the reserved loopback
 address `127.0.0.1`: no hardware, no real controller, nothing to install beyond Python — start a
 simulation and issue commands. A real controller is addressed only after you ask for it explicitly
-(`motionMode: 'real'` plus a `realRobotIps` allow-list), and every command that can move the arm or
-change hardware state asks a human first.
+(`motionMode: 'real'` plus a `realRobotIps` allow-list), and the motion approval gate is **off by
+default** (since 0.2.3; set `requireApprovalForMotion: true` to turn it on).
 
 What the simulation models and what it does not is a deliberate, stated boundary: **motion is real
 kinematics**; **telemetry is estimated** and labelled as such; **I/O and registers are in-memory
@@ -117,7 +117,7 @@ Host-side routes (all fenced to loopback callers):
 | `GET /nonead-ursim/twin/asset?model=<urXX>` | GLB mesh, with a content-hash `ETag` + `immutable` and `If-None-Match` → 304 support |
 | `GET /nonead-ursim/twin/models` | The model list actually present locally |
 | `GET /nonead-ursim/twin/sim` | Current offline-simulation state (on/off, model, start pose, speed scaling, available models), the capability list, and the **configured mode** (`motion_mode` plus the `real_robots` allow-list) that the panel's mode badge displays. No side effects |
-| `POST /nonead-ursim/twin/sim` | **The plugin's only write route**: `{"enabled":true,"model":"ur10e","preset":"upright","speed_scaling":1}` starts the simulation, `{"enabled":false}` stops it. Its write guard is stricter than the read routes (beyond the loopback trust fence it **requires an `Origin`**, `content-type: application/json`, and a body of at most 4 KB). Its side effect is confined to a **kinematics virtual robot on the loopback address** — no real robot ever receives a command through it | The same route also performs **panel I/O writes** (`{"io":{"kind":"digital_out","n":3,"value":true}}` — `digital_out` with a boolean value, or `analog_out` with a finite value in engineering units plus an optional `full_scale` of 10/20), and **only while the offline simulation is running**: otherwise it answers `409 SIM_NOT_RUNNING`. Panel writes never target a real robot — real I/O still goes through the tools, where the approval gate and the declared-parameter allow-list apply. |
+| `POST /nonead-ursim/twin/sim` | **The plugin's only write route**: `{"enabled":true,"model":"ur10e","preset":"upright","speed_scaling":1}` starts the simulation, `{"enabled":false}` stops it. Its write guard is stricter than the read routes (beyond the loopback trust fence it **requires an `Origin`**, `content-type: application/json`, and a body of at most 4 KB). Its side effect is confined to a **kinematics virtual robot on the loopback address** — no real robot ever receives a command through it | The same route also performs **panel I/O writes** (`{"io":{"kind":"digital_out","n":3,"value":true}}` — `digital_out` with a boolean value, or `analog_out` with a finite value in engineering units plus an optional `full_scale` of 10/20), and **only while the offline simulation is running**: otherwise it answers `409 SIM_NOT_RUNNING`. Panel writes never target a real robot — real I/O still goes through the tools, where the approval gate (when enabled) and the declared-parameter allow-list apply. |
 
 Failure responses carry a **machine-readable `code`** (e.g. `no_robot` / `robot_not_connected` / `ambiguous_robot` / `worker_unavailable` / `robot_error`) and echo the resolved `ip`, so the UI can say which of four very different failures happened (it used to render one "not connected" line for all of them). A read that is only **temporarily** unavailable (most often: the worker is busy executing a motion command) is *not* reported as `robot_error`: the host replays the last known reading with `stale:true` (for up to 30 s), so the simulation keeps its picture and says the data is stale.
 
@@ -133,7 +133,7 @@ Failure responses carry a **machine-readable `code`** (e.g. `no_robot` / `robot_
    // C:\Users\<you>\.dsh\profiles\web\package.json
    {
      "dependencies": {
-       "dsh-nonead-ursim": "^0.2.2"
+       "dsh-nonead-ursim": "^0.2.3"
      },
      "dsh": {
        "profile": {
@@ -358,10 +358,10 @@ realRobotIps: '192.168.1.10'     # comma-separated allow-list; empty ⇒ every t
 - **The simulation stays available in both modes**, and the reserved loopback address *always* means
   the virtual robot — it is never handed to the real-robot implementation. (Otherwise forwarding a
   controller's port to loopback would be a way back in.)
-- **There is no approval exemption in `real` mode**: every gated command asks a human, including
-  commands aimed at the simulation. That also closes the audit's H-2 finding — the exemption used to
-  be host-side state that the model itself could set via `ursim_sim_start`; now it follows from a
-  configuration value a human writes.
+- **With the gate turned on there is no approval exemption in `real` mode**: every gated command asks
+  a human, including commands aimed at the simulation (with the gate off they all pass). That also
+  closes the audit's H-2 finding — the exemption used to be host-side state that the model itself
+  could set via `ursim_sim_start`; now it follows from a configuration value a human writes.
 - Read [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md) and the safety note at the top of this
   file before pointing this at hardware.
 

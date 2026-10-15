@@ -12,8 +12,10 @@
         commandTimeoutMs: 60000
         # 首次 connect 的超时（毫秒）。
         connectTimeoutMs: 30000
-        # 运动/程序类指令是否需人工确认后再下发（true=需确认，fail-closed）。
-        requireApprovalForMotion: true
+        # 运动/程序类指令是否需人工确认后再下发。默认 false＝运动免人工确认（0.2.3 起的产品默认）；
+        # 设为 true 则运动/程序类指令必须人工确认（未组合审批服务 / 无代理 / 应答非 allowed-once
+        # 一律 fail-closed：拒绝且不下发）。仿真目标在 sim 模式下任何情况都豁免。
+        requireApprovalForMotion: false
         # 运行模式：'sim'（默认）＝纯离线仿真，真机通道**结构性不可达**；
         # 'real' ＝显式开启的真机通道（见 README 的「真机通道（默认关闭）」一节）。
         motionMode: 'sim'

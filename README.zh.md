@@ -8,7 +8,7 @@
 
 > ⚠️ **安全提示**：本插件的目标是仿真，因此不会产生任何物理运动。各工具描述里沿用的安全警告，针对的是本插件所由派生的那份真机代码库。
 
-> 🛡️ **运动审批门禁**：`ursim_movej` / `ursim_movel` / `ursim_movep` / `ursim_movec` / `ursim_run_sequence` / `ursim_servoj` / `ursim_move_optimized` / `ursim_move_x|y|z` / `ursim_move_tool_x|y|z` / `ur_draw_*` / `ursim_load_program` / `ursim_run_program` / `ursim_send_script` / `ursim_reset_error`；0.5.0 新增的 `ursim_set_freedrive` / `ursim_set_teach_mode` / `ursim_power_on` / `ursim_power_off` / `ursim_brake_release` / `ursim_unlock_protective_stop` / `ursim_shutdown` / `ursim_zero_ftsensor` / `ursim_set_conveyor_tracking`；0.6.0 新增的 `ursim_force_mode` / `ursim_end_force_mode` / `ursim_force_mode_settings` / `ursim_speedj` / `ursim_speedl` / `ursim_stopj` / `ursim_stopl` / `ursim_set_payload_inertia`，以及 `ursim_motion_version`、`ursim_set_payload`、`ursim_set_gravity` —— 这些会驱动机器人运动、执行程序、**或让机械臂脱离程序控制 / 失去刚性支撑**的指令，在真正下发到机器人前会**暂停等待人工确认**。交互式部署（审批策略为 `ask`）会在界面上弹出确认框；未组合审批服务、无代理、或应答不是 `allowed-once` 的调用都会**以拒绝方式安全关闭**（fail-closed），绝不会在未获批准时运动。默认值写在**代码**里（`config.requireApprovalForMotion ?? true`），因此"调用方跳过 schema 解析"这种情形也不会把门禁关掉。可用配置 `requireApprovalForMotion: false` 显式关闭此门禁。`test/approval-gate.test.mjs` 驱动真实工具注册表逐条验证上述行为，包括"多传一个 `op` 参数无法把调用改派到别的指令"。
+> 🛡️ **运动审批门禁（可选开启；默认免确认）**：`ursim_movej` / `ursim_movel` / `ursim_movep` / `ursim_movec` / `ursim_run_sequence` / `ursim_servoj` / `ursim_move_optimized` / `ursim_move_x|y|z` / `ursim_move_tool_x|y|z` / `ur_draw_*` / `ursim_load_program` / `ursim_run_program` / `ursim_send_script` / `ursim_reset_error`；0.5.0 新增的 `ursim_set_freedrive` / `ursim_set_teach_mode` / `ursim_power_on` / `ursim_power_off` / `ursim_brake_release` / `ursim_unlock_protective_stop` / `ursim_shutdown` / `ursim_zero_ftsensor` / `ursim_set_conveyor_tracking`；0.6.0 新增的 `ursim_force_mode` / `ursim_end_force_mode` / `ursim_force_mode_settings` / `ursim_speedj` / `ursim_speedl` / `ursim_stopj` / `ursim_stopl` / `ursim_set_payload_inertia`，以及 `ursim_motion_version`、`ursim_set_payload`、`ursim_set_gravity` —— 这些会驱动机器人运动、执行程序、**或让机械臂脱离程序控制 / 失去刚性支撑**的指令，**默认免确认**（0.2.3 起产品默认 `requireApprovalForMotion: false`，运动不需要人工确认）。门禁是**可选开启**的能力：设 `true` 后，这些指令在真正下发到机器人前会**暂停等待人工确认**，且未组合审批服务 / 无代理 / 应答不是 `allowed-once` 的调用一律 **fail-closed**（拒绝且不下发）；另外**仿真目标**（`motionMode: 'sim'` + 保留回环地址）在任何情况下都豁免。默认值写在**代码**里（`config.requireApprovalForMotion ?? false`），且与 schema 的默认值**一致** —— 因此"调用方跳过 schema 解析"得到的行为与产品默认完全相同；要开启请设 `requireApprovalForMotion: true`。`test/approval-gate.test.mjs` 驱动真实工具注册表逐条验证上述行为，包括"多传一个 `op` 参数无法把调用改派到别的指令"。
 
 ---
 
@@ -21,8 +21,8 @@
 
 开箱即用的是**离线、运动学级的虚拟 UR 机器人**（保留回环地址 `127.0.0.1`）：没有硬件、没有真控制器，
 除 Python 之外不需要装任何东西 —— 开一台仿真就能直接发指令。真控制器只有在**你显式要求**之后才会被
-寻址（`motionMode: 'real'` + `realRobotIps` 白名单），而且任何可能让机械臂运动或改变硬件状态的指令都
-要先经人工确认。
+寻址（`motionMode: 'real'` + `realRobotIps` 白名单），而运动审批门禁**默认关闭**（0.2.3 起；要开启请设
+`requireApprovalForMotion: true`）。
 
 仿真"模拟了什么、没模拟什么"是一条**写明的**边界：**运动是真实运动学**；**遥测是估算值**并明确标注；
 **I/O 与寄存器是内存态**；真正需要控制器的那些（力控、安全状态位、程序加载与执行、原始脚本、传送带）
@@ -104,7 +104,7 @@ host 侧路由（均限定 loopback 调用方）：
 | `GET /nonead-ursim/twin/asset?model=<urXX>` | GLB 网格，带内容哈希 `ETag` + `immutable`，支持 `If-None-Match` → 304 |
 | `GET /nonead-ursim/twin/models` | 本地实际存在的模型清单 |
 | `GET /nonead-ursim/twin/sim` | 离线仿真的当前状态（是否开启、型号、起始姿态、倍率、可用型号）、能力清单，以及**配置里的模式**（`motion_mode` 加 `real_robots` 白名单）—— 面板的模式角标读的就是它。无副作用 |
-| `POST /nonead-ursim/twin/sim` | **本插件唯一的写路由**：`{"enabled":true,"model":"ur10e","preset":"upright","speed_scaling":1}` 开仿真、`{"enabled":false}` 关。写守卫比只读路由更严（除回环信任围栏外**必须带 `Origin`**、`content-type: application/json`、请求体 ≤4 KB）。它的副作用被限制在**回环地址上的运动学虚拟机器人**，任何真机都不会因此收到指令 | 同一条路由还承担**面板的 I/O 写**（`{"io":{"kind":"digital_out","n":3,"value":true}}` —— `digital_out` 收布尔值，`analog_out` 收工程单位下的有限数并可选 `full_scale` 10/20），且**只在离线仿真运行时**才受理：否则回 `409 SIM_NOT_RUNNING`。面板写通道不面向真机 —— 真机 I/O 仍走工具，那里有审批门与声明面白名单。 |
+| `POST /nonead-ursim/twin/sim` | **本插件唯一的写路由**：`{"enabled":true,"model":"ur10e","preset":"upright","speed_scaling":1}` 开仿真、`{"enabled":false}` 关。写守卫比只读路由更严（除回环信任围栏外**必须带 `Origin`**、`content-type: application/json`、请求体 ≤4 KB）。它的副作用被限制在**回环地址上的运动学虚拟机器人**，任何真机都不会因此收到指令 | 同一条路由还承担**面板的 I/O 写**（`{"io":{"kind":"digital_out","n":3,"value":true}}` —— `digital_out` 收布尔值，`analog_out` 收工程单位下的有限数并可选 `full_scale` 10/20），且**只在离线仿真运行时**才受理：否则回 `409 SIM_NOT_RUNNING`。面板写通道不面向真机 —— 真机 I/O 仍走工具，那里有声明面白名单与审批门（开启时）。 |
 
 失败响应带**机器可读的 `code`**（例如 `no_robot` / `robot_not_connected` / `ambiguous_robot` / `worker_unavailable` / `robot_error`）并回显本次解析到的 `ip`，界面据此给出不同的提示与处置建议（以前四种完全不同的故障都渲染成同一句「未连接机器人」）。读**暂时**拿不到（worker 正忙着执行运动指令是最常见的原因）时不会报 `robot_error`：宿主回放最后一笔已知读数并标记 `stale:true`（最多 30 s），仿真保留画面并显示停滞提示。
 
@@ -120,7 +120,7 @@ host 侧路由（均限定 loopback 调用方）：
    // C:\Users\<you>\.dsh\profiles\web\package.json
    {
      "dependencies": {
-       "dsh-nonead-ursim": "^0.2.2"
+       "dsh-nonead-ursim": "^0.2.3"
      },
      "dsh": {
        "profile": {
@@ -333,7 +333,7 @@ realRobotIps: '192.168.1.10'     # 逗号分隔的白名单；留空则任何目
   等于拒绝一切（fail-closed），而开启 `real` 却没写白名单时插件会明确 warning。
 - **两种模式下仿真都仍然可用**，且保留回环地址**永远**表示那台虚拟机器人 —— 绝不交给真机实现
   （否则"把真控制器端口转发到环回"就会变成一条绕回来的路）。
-- **`real` 模式下不存在任何审批豁免**：每一条受门禁的指令都要人确认，包括指向仿真的那些。这一条
+- **`real` 模式下若开启了门禁，则不存在任何审批豁免**：每一条受门禁的指令都要人确认，包括指向仿真的那些（默认关闭时全部放行）。这一条
   同时关掉了审计的 H-2 —— 从前"豁免"是宿主侧、模型自己能用 `ursim_sim_start` 置位的状态；现在它
   来自人写下的配置值。
 - 指向真机之前，请先读 [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md) 与本文档顶部的安全提示。
