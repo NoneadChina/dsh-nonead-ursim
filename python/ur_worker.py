@@ -4733,14 +4733,24 @@ def _twin_push_loop():
                 snapshot = _twin_push_snapshot(ip)
                 if snapshot is None:
                     continue
+                sim = SIMS.get(ip)
                 _write_protocol_line(json.dumps({
                     "push": "telemetry",
                     "ip": ip,
                     # 连接代次：宿主用它与"按 IP 记住的型号"对账，代次变了就重读型号
                     # （同一 IP 换了一台别的型号 / 仿真启停 = 代次变了）。
-                    "conn": ROBOT_CONN_SEQ.get(ip),
+                    #
+                    # ⚠️ **仿真也必须给代次**：仿真没有 RTDE 连接，`ROBOT_CONN_SEQ` 里没有
+                    # 这条记录，于是 `conn` 曾是 null ⇒ 宿主 `connectionEpoch()` 得到
+                    # `undefined` ⇒ 退回**按 10 s TTL 重读型号**（`TWIN_MODEL_TTL_MS`）。
+                    # 而那次重读要排进单线程 stdin 队列：机器人一动，读就排队到 2.5 s 预算
+                    # 耗尽，这一帧退化成"回放上一帧"（`ts` 不前进）—— 界面于是显示
+                    # 「数据已停止更新 Ns」并反复重建通道，画面一顿一顿。
+                    # 仿真的代次取**该虚拟机器人的创建时刻**：同一次仿真内恒定（稳态零多余
+                    # 往返），启停/重建即变化（型号缓存正确失效）。
+                    "conn": ROBOT_CONN_SEQ.get(ip) if sim is None else round(sim.created_at, 3),
                     # 这一帧来自离线仿真吗？（宿主/界面据此打仿真水印；真机帧不带此字段）
-                    **({"simulated": True} if ip in SIMS else {}),
+                    **({"simulated": True} if sim is not None else {}),
                     "ts": int(time.time() * 1000),
                     "data": snapshot,
                 }, ensure_ascii=False, default=_json_default, allow_nan=False))

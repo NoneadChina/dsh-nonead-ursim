@@ -1091,7 +1091,10 @@ test('★ 0.1.9：io=1 一次读回数字位与模拟输入，并带上"仿真�
   const ioWorker = {
     call: async (op, params) => {
       calls.push({ op, params });
-      if (op === 'get_digital_out_bits') {
+      // ⚠️ 名字必须与 `python/ur_worker.py` 的 HANDLERS 一致：数字输出是 `get_digital_output_bits`
+      // （output），不是 `get_digital_out_bits`（out）—— 工具名 `ursim_get_digital_out_bits` 少一个
+      // "put"，这里曾经跟着伪造，于是"面板 I/O 读不出值"在四道门全绿的情况下漏到了用户面前。
+      if (op === 'get_digital_output_bits') {
         return { data: { bits: [true, false, false, false, false, false, false, false,
                                false, false, false, false, false, false, false, true] } };
       }
@@ -1116,7 +1119,7 @@ test('★ 0.1.9：io=1 一次读回数字位与模拟输入，并带上"仿真�
   // ⚠️ 状态路由**总会**读位姿与型号，所以这里只筛 I/O 相关 op 来断言。
   assert.deepEqual(
     calls.filter((c) => /digital|analog/.test(c.op)).map((c) => c.op).sort(),
-    ['get_analog_in', 'get_analog_in', 'get_digital_input_bits', 'get_digital_out_bits'],
+    ['get_analog_in', 'get_analog_in', 'get_digital_input_bits', 'get_digital_output_bits'],
     '★ 只走 RTDE 侧的读法（不走会打断程序的 get_digital_in(which=tool)）',
   );
 });
