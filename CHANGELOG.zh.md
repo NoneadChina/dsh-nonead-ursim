@@ -6,6 +6,23 @@
 那份代码库的版本编号。此前那段历史已原样归档到 `CHANGELOG-archive.zh.md`；该文件在准备 0.1.1 时
 **已从本仓库移除**（可从导入源码的那个提交 `4c91704` 取回），并且从未进入过发布包。
 
+## [0.2.3] - 2026-10-15
+
+### 变更
+
+- **运动默认不再需要人工确认。** `requireApprovalForMotion` 默认值改为 `false`，门禁成为**显式开启**的能力
+  （设成 `true` 即恢复）。门禁本身一字未改：开启时每一条受门禁的指令（`APPROVAL_OPS`）仍然会暂停等待确认，
+  且未组合审批服务 / 无代理 / 应答不是 `allowed-once` 时依旧 **fail-closed**（拒绝且不下发）；**仿真目标**
+  （`motionMode: 'sim'` + 保留回环地址）在任何情况下都豁免。
+- 该默认值由**三处**共同声明、必须一致：Config schema 的 `z.boolean().default(false)`、代码兜底
+  `config.requireApprovalForMotion ?? false`、随包发布的 `cordis.patch.yml`。`scripts/check-approval-gate.py`
+  新增一条检查，任一处写成 `true` 即构建失败 —— 已用"临时把随包取值改成 true ⇒ exit 1 ⇒ 原样还原"验证过
+  这条守卫真的会咬，产品默认不会悄悄漂移。
+- README / README.zh / 面板对齐设计稿改述为"门禁可选开启"。0.1.0 段的 CHANGELOG 与带日期的审计存档属于
+  历史记录，刻意未动。
+
+验证：`npm run check` exit 0（87 工具 / 88 op）；`npm test` 57/57（0 失败 0 跳过）；
+`scripts/check-host-compat.mjs` 报 87/87 个工具经宿主真实值 schema DSL 注册成功。
 ## [0.2.2] - 2026-10-15
 
 ### 新增

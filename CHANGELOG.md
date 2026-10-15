@@ -8,6 +8,24 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.2.3] - 2026-10-15
+
+### Changed
+
+- **Motion no longer requires human confirmation by default.** `requireApprovalForMotion` now defaults to
+  `false`; the approval gate is a deliberate **opt-in** (set it to `true`). The gate itself is unchanged:
+  while it is on, every gated op (`APPROVAL_OPS`) still waits for confirmation and still **fails closed**
+  when no approval service or agent answers, or the answer is anything other than `allowed-once`. Simulation
+  targets (`motionMode: 'sim'` plus the reserved loopback address) stay exempt either way.
+- The default is declared in three places that must agree: the Config schema (`z.boolean().default(false)`),
+  the code fallback (`config.requireApprovalForMotion ?? false`) and the shipped `cordis.patch.yml`. A new
+  check in `scripts/check-approval-gate.py` fails the build when any of them says `true`, so the product
+  default cannot drift silently — proven by temporarily flipping the shipped value (exit 1) and restoring it.
+- README / README.zh / the panel-parity design note now describe the gate as opt-in. The 0.1.0 CHANGELOG
+  section and the dated audit are historical records and were deliberately left untouched.
+
+Verification: `npm run check` exit 0 (87 tools / 88 ops); `npm test` 57/57 (0 failed, 0 skipped);
+`scripts/check-host-compat.mjs` reports 87/87 tools registered through the host's real value-schema DSL.
 ## [0.2.2] - 2026-10-15
 
 ### Added
