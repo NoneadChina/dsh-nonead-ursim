@@ -1247,7 +1247,11 @@ test('身份行把机型与 IP 显示成可见文本（IP 以前只落在属性�
   await tick()
   ctx.clock.flush(120) // 越过 HUD 的 ~10 Hz 节流
 
-  const identity = byAttr(ctx.container, 'data-ursim-twin-identity')[0]
+  // ⚠️ 身份文字现在放在**行内的 span** 里（`data-ursim-twin-identity-text`）：行本身还带着与它
+  // 同一行的数据停滞提示，所以行的 `textContent` 不再是身份文字 —— 断言要看那个 span。
+  const row = byAttr(ctx.container, 'data-ursim-twin-identity')[0]
+  const identity = byAttr(ctx.container, 'data-ursim-twin-identity-text')[0]
+  assert.equal(identity.parentNode, row, '身份文字必须在身份行里')
   assert.ok(identity.textContent.includes('UR5E'), identity.textContent)
   assert.ok(identity.textContent.includes('192.168.2.201'), 'IP 必须是可见文本，不只是属性')
   ctx.panel.dispose()
@@ -1558,6 +1562,36 @@ test('数据停滞：面板写出提示行；停滞过久后**强制重建**通�
   ctx.clock.flush(HUD_INTERVAL_MS + 20)
   assert.equal(feed().textContent, '', '收到新采样后必须清掉停滞提示')
   assert.equal(feed().style.display, 'none')
+  ctx.panel.dispose()
+})
+
+test('★ 数据停滞提示与身份行**同一行**：是身份行的子节点、排在身份文字之后', async () => {
+  const ctx = boot({ initial: { connected: true, model: 'UR3', q: Q0, tcp: TCP0, ts: 1000 } })
+  ctx.clock.flush()
+  await tick()
+
+  const row = byAttr(ctx.container, 'data-ursim-twin-identity')[0]
+  const textEl = byAttr(ctx.container, 'data-ursim-twin-identity-text')[0]
+  const feed = () => byAttr(ctx.container, 'data-ursim-twin-feed')[0]
+
+  /*
+   * 用假 DOM 的**结构 API**（`parentNode` / `children`）断言，不依赖 `textContent` 是否聚合子节点
+   * —— 桩的 `textContent` 只是普通字段。这两个断言合起来就是这次的排版契约：
+   * 身份文字与数据停滞提示**同属身份行**，且身份文字排在前面。
+   */
+  assert.ok(textEl, '身份文字必须有自己的节点（否则 `textContent` 赋值会清掉同行的停滞提示）')
+  assert.equal(textEl.parentNode, row, '身份文字必须在身份行里')
+  assert.equal(feed().parentNode, row, '数据停滞提示必须是身份行的子节点（同一行，而不是另起一行）')
+  assert.ok(
+    row.children.indexOf(textEl) < row.children.indexOf(feed()),
+    '身份文字必须排在停滞提示之前（用户要求：提示跟在"机器人 型号 · IP"后面）',
+  )
+
+  // 停滞出现后：提示仍在这同一行里，身份文字内容不变
+  ctx.clock.flush(FEED_STALE_MS + 500)
+  assert.ok(feed().textContent.startsWith(FEED_STALE_PREFIX), feed().textContent)
+  assert.equal(feed().parentNode, row, 'HUD 刷新后提示必须仍留在身份行内')
+  assert.ok(textEl.textContent.includes('UR3'), textEl.textContent)
   ctx.panel.dispose()
 })
 

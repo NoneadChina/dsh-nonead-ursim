@@ -739,15 +739,24 @@ export function mountTwinPanel({
   /**
    * 数据通道健康度（0.6.6）。
    *
-   * 单独一行而不是塞进状态行：状态行的语义是"机器人是什么状态"，而这一行的语义是
-   * "**数据**是什么状态"（停滞 / 正在重连）。机器人运动时 worker 被占住导致读排队是
-   * 常态，此时画面停住但机器人没停 —— 这两件事必须在界面上分得开。
+   * **与身份行同一行显示**（用户要求）：状态行的语义是"机器人是什么状态"、这一行的语义是
+   * "**数据**是什么状态"（停滞 / 正在重连），两者仍是两个不同的东西，只是不再各占一行 ——
+   * 停滞提示紧跟在"机器人 <型号> · <IP>"后面（见下面 `hudIdentity.appendChild(hudFeed)`）。
+   * 没有停滞时它是 `display:none`，这一行就只剩身份。
    */
   const hudFeed = makeEl(doc, 'div', 'ursim-twin-hud-row', 'data-ursim-twin-feed')
   hudFeed.style.display = 'none'
   // 身份行放最上面：多机场景下"我在看哪一台"比任何读数都重要，而 `ip` 以前只被写进
   // `data-ursim-twin-ip` 属性、界面上一个字都看不到。
   const hudIdentity = makeEl(doc, 'div', 'ursim-twin-hud-row', 'data-ursim-twin-identity')
+  /**
+   * 身份**文字**单独一个 `span`。
+   *
+   * ⚠️ 不能把文字直接写在 `hudIdentity` 上：DOM 里给 `textContent` 赋值会**移除该元素的全部子节点** ——
+   * 那样第一帧 HUD 更新就会把并进这一行的数据停滞提示（`hudFeed`）删掉，界面上再也看不到它。
+   * 所以身份文字有自己的节点，更新只碰它。
+   */
+  const hudIdentityText = makeEl(doc, 'span', 'ursim-twin-identity-text', 'data-ursim-twin-identity-text')
   const hudJoints = makeEl(doc, 'div', 'ursim-twin-hud-row', 'data-ursim-twin-joints')
   const hudTcp = makeEl(doc, 'div', 'ursim-twin-hud-row', 'data-ursim-twin-tcp')
   // dashboard 侧状态（detail=1）：安全模式/机器人模式/程序状态/速度倍率一行，温度与母线一行。
@@ -756,9 +765,12 @@ export function mountTwinPanel({
   /** 奇异点/可操作度提示行（0.1.11，C1）。 */
   const hudRisk = makeEl(doc, 'div', 'ursim-twin-hud-row', 'data-ursim-twin-risk-row')
   hud.appendChild(hudRobots)
-  hud.appendChild(hudFeed)
   hud.appendChild(hudPending)
   hud.appendChild(hudIdentity)
+  // 数据通道健康度**并进身份行**：与"机器人 <型号> · <IP>"同一行、排在身份文字之后
+  // （用户要求）。没有停滞时它是 `display:none`，这一行就只剩身份。
+  hudIdentity.appendChild(hudIdentityText)
+  hudIdentity.appendChild(hudFeed)
   // 工程辅助图层的开关（清单第 9 条）。四个图层默认全关：一次全画出来会看不清真臂。
   //
   // 这里引用后面才定义的 `layers` 与 `invalidate` 是安全的：`layers` 只在**点击回调**里
@@ -1729,7 +1741,7 @@ export function mountTwinPanel({
         trajectory = []
         lastTrajectoryTs = 0
         trajGeometry.setDrawRange(0, 0)
-        hudIdentity.textContent = ''
+        hudIdentityText.textContent = ''
         hudPending.textContent = ''
         hudJoints.textContent = ''
         hudJoints.setAttribute('data-ursim-twin-overlimit', 'false')
@@ -2003,8 +2015,8 @@ export function mountTwinPanel({
     lastHudMs = nowMs
     // 身份行：机型 + 机器人 IP。IP 以前只落在属性上，界面上看不到。
     const identity = [snap?.model ?? loadedModelId, snap?.ip].filter(v => typeof v === 'string' && v !== '')
-    hudIdentity.textContent = identity.length === 0 ? '' : S.identity(snap?.model ?? loadedModelId, snap?.ip)
-    hudIdentity.setAttribute('title', hudIdentity.textContent)
+    hudIdentityText.textContent = identity.length === 0 ? '' : S.identity(snap?.model ?? loadedModelId, snap?.ip)
+    hudIdentity.setAttribute('title', hudIdentityText.textContent)
     // 多机器人选择（清单第 19 条）：候选或当前目标变了才重建 DOM（这不是热路径，
     // 但每帧重建按钮会让点击落空 —— 手指还没抬起来按钮就被换掉了）。
     const candidates = Array.isArray(snap?.ips)

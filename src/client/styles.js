@@ -183,8 +183,17 @@ body[data-ds-dark-theme] .ursim-twin-panel {
   background: var(--ursim-accent);
   border-color: var(--ursim-accent);
 }
-/* 身份行（机型 + IP）比读数更重要，给它正常前景色而不是注释灰。 */
-.ursim-twin-hud-row[data-ursim-twin-identity] { color: var(--ursim-text); }
+/* 身份行（机型 + IP）比读数更重要，给它正常前景色而不是注释灰。
+   身份文字是这一行自己的文本节点，**数据通道健康度作为第二个 flex 项跟在它后面、同一行显示**
+   （用户要求：停滞提示要排在"机器人 <型号> · <IP>"后面、两者同一行）。两者都不换行、超长各自省略。 */
+.ursim-twin-hud-row[data-ursim-twin-identity] {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  color: var(--ursim-text);
+}
+/* flex 项默认可收缩，但要 min-width: 0 才会真的省略，而不是把整行撑破。 */
+.ursim-twin-hud-row[data-ursim-twin-identity] > [data-ursim-twin-feed] { min-width: 0; }
 /* 数据通道健康度（0.6.6）：停滞/重连必须一眼可见 —— 画面停住时用户要能分清
    "机器人停了"与"数据停了"，所以这一行用警示色（黄=停滞/重连中，红=通道不可用）。 */
 .ursim-twin-hud-row[data-ursim-twin-feed-state='stale'] { color: var(--ursim-warn); }
