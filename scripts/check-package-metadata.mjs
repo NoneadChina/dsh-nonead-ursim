@@ -76,9 +76,9 @@ const walk = (dir) => {
   }
 };
 walk(root);
-// Two documented exceptions: the local interpreter shim (whose whole purpose is to point
+// Three documented exceptions: the local interpreter shim (whose whole purpose is to point
 // at this machine's site-packages) and the changelogs, which quote the historical
-// hardcoded path they removed. The `*-archive` files are the pre-independence changelog
+// hardcoded path they removed (the `*-archive` files are the pre-independence changelog
 // history: kept in the repo, excluded from the published tarball by the `files` whitelist.
 const ALLOWED = new Set([
   'python/sitecustomize.py',

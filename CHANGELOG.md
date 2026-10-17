@@ -8,6 +8,63 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.2.4] - 2026-10-17
+
+A hardening release driven by a full-project audit (four read-only reviewers covering the host half,
+the Python worker/simulation, the browser panel, and packaging/docs). Every item below ships with a
+test that fails on the previous code.
+
+### Fixed
+
+- **The register rows in the panel no longer disappear after ~100 ms.** `renderIo` used to assign
+  `ioBody.textContent`, which removes every child node, while `renderRegisters` appended a row — so the
+  1 Hz HUD beat wiped the registers that had just been shown. `ioBody` is now split into two fixed
+  children (bits / registers) that are updated independently.
+- **Read admissions are no longer racy, and a frame's fan-out fits the gate.** The class/total checks ran
+  before an `await`, so a same-tick burst of reads passed them all (8–16 reads could fill every slot and
+  push `stopj`/`stopl`/`stop_program` into `WORKER_BUSY`). Admission now reserves a slot synchronously, and
+  one frame's reads are issued serially, so a full register frame occupies a single read slot. `readIo`
+  also falls back to the last good reading instead of turning the whole block into an error line.
+- **Cancelling no longer kills the Python worker unless the request was already dispatched.** Slow
+  approvals and pre-dispatch aborts used to tear down an idle worker (on a real robot that loses the RTDE
+  session while the controller keeps executing). `onAbort` now respects `killOnTimeout` and only kills
+  after the payload was written; timeout messages say explicitly that the controller may still be moving.
+  Gated tools also get an approval margin on their host deadline (the worker budget is unchanged).
+- **`ursim_connect` / `ursim_disconnect` register the simulation lifecycle** they implicitly start/stop,
+  so the gate's simulation exemption, the panel's I/O write route and post-respawn self-healing all agree
+  with the worker again (and both paths report the same model).
+- **Motion failures are reported as failures.** When `_wait_robot_idle`/`_sim_settle` could not confirm
+  arrival (including "the controller never started the script"), the envelope used to be `ok: true` with
+  `data.ok: false`. It is now `ok: false` with `NOT_EXECUTED` / `NOT_CONNECTED` / `TIMEOUT`; the success
+  path is byte-identical.
+- **Inverse-kinematics fallback has a continuity gate.** A multi-seed fallback could return a solution
+  5.3–6.7 rad away from the previous waypoint, i.e. the simulation reported "arrived" along a path the
+  real arm cannot take. Fallback solutions must now stay within `MAX_IK_STEP_RAD = 0.5` of the incoming
+  seed (with one local retry), otherwise the move fails with `SIM_UNREACHABLE`.
+- **Worker stdin is UTF-8.** On Chinese Windows, `sys.stdin` is GBK, so non-ASCII parameters were silently
+  corrupted and the reply then raised `UnicodeEncodeError` *after* the side effect. The worker is spawned
+  with `PYTHONUTF8=1` and reconfigures stdin to UTF-8.
+- **`ursim_connect`/`ursim_disconnect` work in `real` mode**: the loopback address still means the
+  simulation (structural guarantee unchanged), other allow-listed addresses now establish/release a real
+  session instead of failing with a confusing `SIM_BADARG`.
+
+### Changed
+
+- Tool descriptions are **mode-aware**: in `real` mode `ip` is documented as required and allow-listed
+  (85 golden entries updated; no non-description field changed).
+- The READMEs' gated-operation list is now **derived from `APPROVAL_OPS`** by `check-doc-tools.mjs`
+  (both directions), and the seven H-1 operations that were missing are listed.
+- `engines.node` is `>=22.15` (what `verify:host` actually needs); CI uses Node 22 + `npm ci` and no longer
+  hides `verify:host` behind `continue-on-error`; `npm test` runs **11** gates (adding `tool-matrix` and
+  `check-doc-links`), and the READMEs' counts were corrected to 48 test files / 17 Python / 31 Node.
+- Added `package-lock.json` (the committed bundle is only byte-reproducible with a pinned esbuild).
+- Third-party licence **full texts** now ship: MIT (URBasic, three.js), BSD-3-Clause (UR graphical docs)
+  in `THIRD_PARTY_NOTICES.md`, and `LICENSE-AGPL-3.0.txt`.
+- Install examples no longer contain the author's local GitLab path; the absolute-path gate recognises
+  `X:/…`, `/home/…`, `/Users/…` and registers one vendored commented-out sample path as a documented
+  exception.
+
+Verification: `npm run check` exit 0; `npm test` 59/59 (48 test files + 11 gates); `verify:host` 87/87.
 ## [0.2.3] - 2026-10-15
 
 ### Changed

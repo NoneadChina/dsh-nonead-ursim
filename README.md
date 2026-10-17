@@ -133,7 +133,7 @@ Failure responses carry a **machine-readable `code`** (e.g. `no_robot` / `robot_
    // C:\Users\<you>\.dsh\profiles\web\package.json
    {
      "dependencies": {
-       "dsh-nonead-ursim": "^0.2.3"
+       "dsh-nonead-ursim": "^0.2.4"
      },
      "dsh": {
        "profile": {

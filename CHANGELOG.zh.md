@@ -6,6 +6,51 @@
 那份代码库的版本编号。此前那段历史已原样归档到 `CHANGELOG-archive.zh.md`；该文件在准备 0.1.1 时
 **已从本仓库移除**（可从导入源码的那个提交 `4c91704` 取回），并且从未进入过发布包。
 
+## [0.2.4] - 2026-10-17
+
+一次由全项目审核驱动的加固版：四个只读审查分别覆盖宿主半边、Python worker/仿真、浏览器面板、
+工程与发布面。下面每条修复都配了一个在旧代码上会失败的测试。
+
+### 修复
+
+- **面板的寄存器行不再在约 100 ms 后消失。** `renderIo` 原用 `ioBody.textContent = …`（会移除全部子节点），
+  而 `renderRegisters` 是追加一行 ⇒ 1 Hz 的 HUD 节拍把刚显示的寄存器抹掉。现在 `ioBody` 拆成两个固定
+  子节点（数字位 / 寄存器），各自独立更新。
+- **读类准入不再有竞态，且一帧的扇出不再超过闸门。** 原准入在 `await` 之前完成，同一 tick 的批量读能全部
+  通过（8~16 个读即可占满全部槽位，把 `stopj`/`stopl`/`stop_program` 挤成 `WORKER_BUSY`）。现在准入同步
+  占槽，一帧内的读串行发出（整帧只占 1 个读槽）；`readIo` 某一拍失败时回退到上一笔成功读数，不再整块
+  变成错误行。
+- **取消请求不再无差别杀掉 Python 子进程。** 慢审批与"尚未派发就取消"过去会拆掉空闲的 worker（真机上
+  等于丢掉 RTDE 会话，而控制器仍在执行）。现在 `onAbort` 尊重 `killOnTimeout`，且只在 payload 已写入后
+  才杀；超时文案明确写出"控制器侧动作可能仍在继续"。门禁类工具在宿主 deadline 上另有审批余量（下发预算
+  不变）。
+- **`ursim_connect` / `ursim_disconnect` 会登记它们隐式启动/停止的仿真生命周期** ⇒ 门禁的仿真目标豁免、
+  面板 I/O 写路由、子进程重建后的自愈三条承诺重新与 worker 一致（两条路径也不再给出不同型号）。
+- **运动失败如实上报。** 当到位确认失败（含"控制器从未开始执行脚本"）时，信封原为 `ok: true` + `data.ok: false`；
+  现在为 `ok: false` 并带 `NOT_EXECUTED` / `NOT_CONNECTED` / `TIMEOUT`；成功路径逐字节未变。
+- **逆解多起点兜底加了连续性门。** 兜底解可能距上一航点 5.3~6.7 rad，即仿真"已到达"却走了一条真机走不了的
+  路径。现在兜底解必须在 `MAX_IK_STEP_RAD = 0.5` 内（有一次局部重解机会），否则整条以 `SIM_UNREACHABLE`
+  失败。
+- **worker 的 stdin 改为 UTF-8。** 中文 Windows 下 `sys.stdin` 是 GBK，非 ASCII 参数被静默损坏，回包时才
+  抛 `UnicodeEncodeError`（**副作用已发生**）。现在 spawn 带 `PYTHONUTF8=1`，worker 侧也把 stdin 重配为 UTF-8。
+- **`real` 模式下 `ursim_connect`/`ursim_disconnect` 可用**：保留回环地址仍表示仿真（结构性保证不变），
+  白名单内其它地址现在会建立/释放真机会话，而不是报令人困惑的 `SIM_BADARG`。
+
+### 变更
+
+- 工具描述**按运行模式生成**：real 模式下 `ip` 标注为必填且需在白名单内（golden 更新 85 处，非描述字段零变化）。
+- 两份 README 的受门禁 op 清单改由 `check-doc-tools.mjs` **与 `APPROVAL_OPS` 双向对账**，并补上原先遗漏的
+  7 个 H-1 op。
+- `engines.node` 改为 `>=22.15`（`verify:host` 的真实门槛）；CI 用 Node 22 + `npm ci`，不再用
+  `continue-on-error` 掩盖 `verify:host`；`npm test` 跑 **11** 道门禁（新增 `tool-matrix` 与
+  `check-doc-links`），两份 README 的数字更正为 48 个测试文件 / 17 Python / 31 Node。
+- 新增 `package-lock.json`（提交进仓库的产物只有在 esbuild 版本被钉住时才逐字节可复现）。
+- 第三方**许可全文**随包发布：MIT（URBasic、three.js）与 BSD-3-Clause（UR 图形文档）全文进
+  `THIRD_PARTY_NOTICES.md`，另加 `LICENSE-AGPL-3.0.txt`。
+- 安装示例不再含作者本机 GitLab 路径；绝对路径门禁能识 `X:/…`、`/home/…`、`/Users/…`，并把 vendored 里
+  一条被注释掉的上游示例路径登记为有据的例外。
+
+验证：`npm run check` exit 0；`npm test` 59/59（48 测试文件 + 11 门禁）；`verify:host` 87/87。
 ## [0.2.3] - 2026-10-15
 
 ### 变更
