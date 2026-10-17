@@ -2261,7 +2261,10 @@ test('★ 0.1.9：I/O 折叠块按需读 —— 折叠着不发请求，展开�
 
   const box = byAttr(ctx.container, 'data-ursim-twin-io')[0]
   const body = byAttr(ctx.container, 'data-ursim-twin-io-body')[0]
-  assert.ok(box && body, '必须有 I/O 与寄存器折叠块（0.1.9）')
+  // 读数文字住在 `data-ursim-twin-io-bits` 分区里（body 是容器）；本文件的假 DOM 的
+  // `textContent` 只是普通字段、**不聚合子节点**，所以断言必须落在真正持有文字的那个节点上。
+  const bits = byAttr(ctx.container, 'data-ursim-twin-io-bits')[0]
+  assert.ok(box && body && bits, '必须有 I/O 与寄存器折叠块（0.1.9）')
   assert.equal(
     ctx.request.calls.filter((c) => String(c.url).includes('io=1')).length,
     0,
@@ -2275,11 +2278,78 @@ test('★ 0.1.9：I/O 折叠块按需读 —— 折叠着不发请求，展开�
   await tick()
   const ioCalls = ctx.request.calls.filter((c) => String(c.url).includes('io=1'))
   assert.equal(ioCalls.length, 1, '展开后读一次 I/O')
-  assert.match(body.textContent, /10000000 00000001/, '位串必须按 8 位一组渲染（std / config 两段）')
-  assert.match(body.textContent, /仿真没有输入信号源/, '仿真下必须说明输入恒 0 的原因')
+  assert.match(bits.textContent, /10000000 00000001/, '位串必须按 8 位一组渲染（std / config 两段）')
+  assert.match(bits.textContent, /仿真没有输入信号源/, '仿真下必须说明输入恒 0 的原因')
   const regCalls = ctx.request.calls.filter((c) => String(c.url).includes('reg='))
   assert.equal(regCalls.length, 3, '★ 寄存器只在展开那一刻读一次（int / double / bit 各一片）')
   assert.match(String(regCalls[0].url), /reg=int&from=0&count=8/)
+  ctx.panel.dispose()
+})
+
+test('★ P0-1：1 Hz HUD 刷新不得抹掉已展开的寄存器行（固定子节点各自更新）', async () => {
+  const io = {
+    digital_out: [true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true],
+    digital_in: new Array(16).fill(false),
+    analog_in: [0.5, 1.5],
+    simulated: false,
+  }
+  const registers = { set: 'int', from: 0, values: [0, 1, 2, 3, 4, 5, 6, 7] }
+  const request = makeFakeRequest({ io, registers })
+  const ctx = boot({ initial: { connected: true, model: 'UR5E', q: Q0, tcp: TCP0, ts: 1000 }, request, autoSim: false })
+  ctx.clock.flush() // t=0：首帧（此时折叠着，不应发 I/O 请求）
+  await tick()
+
+  // 走既有的展开路径（`toggle` 处理函数 = refreshIo(true) 的等价物）。
+  const box = byAttr(ctx.container, 'data-ursim-twin-io')[0]
+  box.open = true
+  box.listeners.toggle[0]()
+  await tick()
+  await tick()
+  await tick()
+
+  const body = byAttr(ctx.container, 'data-ursim-twin-io-body')[0]
+  const bits = byAttr(ctx.container, 'data-ursim-twin-io-bits')[0]
+  const regBox = byAttr(ctx.container, 'data-ursim-twin-io-regs')[0]
+  assert.ok(body && bits && regBox, '读数与寄存器必须是 body 下两个独立分区')
+  // 结构断言：假 DOM 的 `textContent` 不聚合子节点，所以判"谁在谁里面"只能用 parentNode。
+  assert.equal(bits.parentNode, body, '读数分区必须是 body 的固定子节点')
+  assert.equal(regBox.parentNode, body, '寄存器分区必须是 body 的固定子节点')
+  const rows = byAttr(ctx.container, 'data-ursim-twin-io-reg-row')
+  assert.equal(rows.length, 3, '每 set 一行（int / double / bit），既有呈现不变')
+  for (const row of rows) assert.equal(row.parentNode, regBox, '寄存器行必须挂在寄存器分区下')
+  const regRow = rows[0]
+  const regText = regRow.textContent
+  assert.ok(regText.length > 0, '寄存器行必须有内容')
+  assert.match(bits.textContent, /10000000 00000001/, '读数分区先渲染出位串')
+  const bitsBefore = bits.textContent
+  // title 由两段拼成：读数 + 寄存器。旧写法里 renderIo 每拍整体覆盖 title，寄存器段永远看不到。
+  assert.match(String(body.getAttribute('title')), /数字输出/)
+  assert.match(String(body.getAttribute('title')), /寄存器/)
+
+  /*
+   * 改读数（寄存器值也一起改）：若 1 Hz 刷新顺手重读了寄存器、或重建/追加了行，这里就会露馅。
+   */
+  io.digital_out = new Array(16).fill(false)
+  registers.values = [9, 9, 9, 9, 9, 9, 9, 9]
+
+  // 推进 1.5 s：HUD 是 10 Hz（100 ms）、I/O 是 1 Hz（1000 ms），这一帧必然触发 refreshIo(false)。
+  ctx.clock.flush(1500)
+  await tick()
+  await tick()
+
+  // ★ 关键断言：寄存器节点仍是同一个、仍挂在原位、文本未被清空。
+  assert.equal(byAttr(ctx.container, 'data-ursim-twin-io-regs')[0], regBox, '寄存器分区节点不得被替换/移除')
+  assert.equal(byAttr(ctx.container, 'data-ursim-twin-io-reg-row')[0], regRow, '寄存器行节点必须还是同一个')
+  assert.equal(regRow.parentNode, regBox, '寄存器行不得从寄存器分区里掉出去')
+  assert.equal(regRow.textContent, regText, 'HUD 刷新不得改动寄存器行文本（也不得重读寄存器）')
+  // 读数分区照常更新 —— 证明这一拍确实刷新过、只是不再波及寄存器。
+  assert.notEqual(bits.textContent, bitsBefore, '数字位必须随 1 Hz 刷新更新')
+  assert.match(bits.textContent, /00000000 00000000/, '新位串必须落到读数分区')
+  assert.equal(
+    ctx.request.calls.filter((c) => String(c.url).includes('reg=')).length,
+    3,
+    '★ 寄存器只在展开那一刻读一次：1 Hz 节拍不得再发 reg= 请求',
+  )
   ctx.panel.dispose()
 })
 

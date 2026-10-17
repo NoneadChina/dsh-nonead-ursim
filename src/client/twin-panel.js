@@ -874,6 +874,18 @@ export function mountTwinPanel({
   const ioSummary = makeEl(doc, 'summary', 'ursim-twin-io-summary', 'data-ursim-twin-io-summary')
   ioSummary.textContent = S.ioSummary
   const ioBody = makeEl(doc, 'div', 'ursim-twin-io-body', 'data-ursim-twin-io-body')
+  /*
+   * ⚠️ body 必须拆成**两个固定子节点**（与上面 `hudIdentityText` 是同一类问题的同一个正解）：
+   * DOM 里给 `textContent` 赋值会**移除该元素的全部子节点**。以前读数与寄存器行同住 `ioBody`，
+   * 而 1 Hz 的 HUD 节拍会调 `refreshIo(false)` **重新写一遍读数** ⇒ 刚展开时追加的寄存器行
+   * 被整块清掉，最多闪一帧、之后再也不回来。
+   * 现在两个分区各有自己的节点与 `data-*` 标记：`renderIo` 只写 `ioBits`，
+   * `renderRegisters` 只写 `ioRegs`，互不相干。
+   */
+  const ioBits = makeEl(doc, 'div', 'ursim-twin-io-bits', 'data-ursim-twin-io-bits')
+  const ioRegs = makeEl(doc, 'div', 'ursim-twin-io-regs', 'data-ursim-twin-io-regs')
+  ioBody.appendChild(ioBits)
+  ioBody.appendChild(ioRegs)
   ioBox.appendChild(ioSummary)
   ioBox.appendChild(ioBody)
   hud.appendChild(ioBox)
@@ -1464,7 +1476,8 @@ export function mountTwinPanel({
     const snap = state?.getSnapshot?.() ?? {}
     const ip = typeof snap.ip === 'string' ? snap.ip : ''
     const prefix = ip === '' ? '' : `ip=${encodeURIComponent(ip)}&`
-    ioBody.textContent = S.ioReading
+    // ⚠️ 只写**读数分区**：寄存器行在 `ioRegs` 里，这里碰不到它（见 ioBody 处的注释）。
+    writeIoBits([S.ioReading])
     try {
       const res = await request(`${TWIN_STATE_PATH}?${prefix}io=1`, { cache: 'no-store' })
       const body = await res.json()
@@ -1477,10 +1490,10 @@ export function mountTwinPanel({
         })
         const b2 = await r2.json()
         if (disposed) return
-        renderRegisters(b2?.registers ?? null)
+        renderRegisters(b2?.registers ?? null, set)
       }
     } catch (e) {
-      ioBody.textContent = S.ioFailed(e instanceof Error ? e.message : String(e))
+      writeIoBits([S.ioFailed(e instanceof Error ? e.message : String(e))])
     }
   }
 
@@ -1492,6 +1505,25 @@ export function mountTwinPanel({
       groups.push(bits.slice(i, i + 8).map((b) => (b === true ? '1' : '0')).join(''))
     }
     return groups.join(' ')
+  }
+
+  /*
+   * `ioBody` 的 title 由**两段**拼成：读数段 + 每 set 一段寄存器。
+   * 以前 renderIo 每次都用「只含读数」的 title 整体覆盖，寄存器信息永远进不了 title；
+   * 现在两段各记各的，任一渲染函数只更新自己那段。
+   */
+  let ioBitsTitle = ''
+  const ioRegTitles = new Map()
+  function syncIoBodyTitle() {
+    const parts = [ioBitsTitle, ...ioRegTitles.values()].filter((line) => line !== '')
+    ioBody.setAttribute('title', parts.join('\n'))
+  }
+
+  /** 只写**读数分区**；重复调用是覆盖而不是追加（不会越积越多行）。 */
+  function writeIoBits(lines) {
+    ioBits.textContent = lines.join('\n')
+    ioBitsTitle = lines.join('\n')
+    syncIoBodyTitle()
   }
 
   function renderIo(io) {
@@ -1507,21 +1539,35 @@ export function mountTwinPanel({
     } else if (io !== null && typeof io === 'object') {
       lines.push(S.ioFailed(io.error))
     }
-    ioBody.textContent = lines.join('\n')
-    ioBody.setAttribute('title', lines.join('\n'))
+    writeIoBits(lines)
   }
 
-  function renderRegisters(registers) {
+  /**
+   * 寄存器：**每个 set 一行**（既有呈现不变），但重复调用只改该行的文本、**不追加**。
+   *
+   * 行键优先用本次请求的类型 `requestedSet`：宿主正常会在响应里带上 `set`，出错时可能没有；
+   * 用请求类型兜底才能保证"每 set 一行"不随返回值缺字段而退化（旧写法每次调用都 append，
+   * 重复展开会积累出重复行）。
+   */
+  const ioRegRows = new Map()
+  function renderRegisters(registers, requestedSet) {
     if (registers === null || typeof registers !== 'object') return
+    const setKey = String(requestedSet ?? registers.set ?? '')
     const line = typeof registers.error === 'string'
       ? S.ioFailed(registers.error)
       : S.ioRegisters(String(registers.set ?? ''), String(registers.from ?? 0),
         (Array.isArray(registers.values) ? registers.values : [])
           .map((v) => (typeof v === 'boolean' ? (v ? '1' : '0') : String(v ?? '—')))
           .join(' '))
-    const row = makeEl(doc, 'div', 'ursim-twin-io-row', 'data-ursim-twin-io-reg-row')
+    let row = ioRegRows.get(setKey)
+    if (row === undefined) {
+      row = makeEl(doc, 'div', 'ursim-twin-io-row', 'data-ursim-twin-io-reg-row')
+      ioRegRows.set(setKey, row)
+      ioRegs.appendChild(row)
+    }
     row.textContent = line
-    ioBody.appendChild(row)
+    ioRegTitles.set(setKey, line)
+    syncIoBodyTitle()
   }
   /**
    * 当前模式角标（P0）：**仿真中 / 真机模式 / 未连接** 三态。
