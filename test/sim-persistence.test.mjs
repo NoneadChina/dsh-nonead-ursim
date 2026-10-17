@@ -18,11 +18,13 @@
 import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { registerHooks } from 'node:module'
+import { EventEmitter } from 'node:events'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { TWIN_SIM_PATH } from '../lib/twin-paths.js'
 import {
   SIM_STATE_VERSION,
   dshHome,
@@ -133,8 +135,12 @@ test('★ 容错：文件不存在 / 坏 JSON / 版本不认识 / 形状不对 �
  *
  * ⚠️ `simStateFile` 必须指向临时目录：落盘默认落在**开发者本机**的 `~/.dsh`，测试若用它，
  * 既会弄脏真实配置、又会让后续每次 apply() 都自动多发一条 sim_start。
+ *
+ * `mountRoutes:true` 时同步模拟 cordis 的 `ctx.inject(['webServer'], cb)` 装配（宿主侧路由是
+ * 纯 `{status, headers, body}` 逻辑，可以直接用假 req/res 驱动），用于断言面板 I/O 写路由的
+ * 409/200 —— 也就是宿主侧 `simIps` 登记到底有没有更新。
  */
-async function drive({ config = {}, replies = {} } = {}) {
+async function drive({ config = {}, replies = {}, mountRoutes = false } = {}) {
   const { UrWorker } = await import('../lib/worker.js')
   const mod = await import('../lib/index.js')
   const calls = []
@@ -147,18 +153,35 @@ async function drive({ config = {}, replies = {} } = {}) {
     return { message: `stub:${op}`, data: { op, params } }
   }
   const registered = new Map()
+  const routes = new Map()
+  const hostCtx = {
+    logger: { info() {}, warn() {}, error() {} },
+    effect: (fn) => {
+      const disposer = fn()
+      return typeof disposer === 'function' ? disposer : () => {}
+    },
+    webServer: {
+      register: (route) => {
+        routes.set(route.path, route)
+        return () => {}
+      },
+    },
+  }
   mod.apply(
     {
       logger: { info() {}, warn() {}, error() {} },
       effect: () => () => {},
       get: () => undefined,
-      inject: () => () => {},
+      inject: (_deps, callback) => {
+        if (mountRoutes) callback(hostCtx)
+        return () => {}
+      },
       tools: { register: (tool) => registered.set(tool.name, tool) },
     },
     { persistSimState: true, ...config },
   )
   await settle()
-  return { calls, registered }
+  return { calls, registered, routes }
 }
 
 const simStarted = { sim_start: () => ({ message: 'stub', data: { active: true, model: 'ur12e' } }) }
@@ -214,4 +237,110 @@ test('★ 开关仿真会把意图写进文件：开着写 enabled:true（含型
   await registered.get('ursim_sim_stop').execute({}, exec)
   assert.equal(readSimState(file), null, '★ 关掉后不得再被恢复')
   assert.equal(JSON.parse(await readFile(file, 'utf8')).enabled, false)
+})
+
+/* ───────────── P0-4：connect / disconnect 也是仿真生命周期 ─────────────
+ *
+ * python 侧 `op_connect` 会**隐式开仿真**、`op_disconnect` 会**停仿真**（见 ur_worker.py）。
+ * 宿主以前只在 sim_start/sim_stop 分支写 simIps / simConfig / 落盘，于是 connect 之后：
+ * 仿真目标被误弹审批、面板 I/O 写回 409、子进程被换后自愈没有记忆可重建；disconnect 之后
+ * 宿主以为仿真还在、python 已停。现在三条入口共用同一个登记口（`applySimLifecycle`）。
+ */
+
+/** 真实 `op_connect` 的形状：确保仿真在跑，然后返回 `sim_status` 那一份。 */
+const CONNECT_REPLY = () => ({
+  message: '已连接：离线仿真机器人（UR12E）在保留地址 127.0.0.1。',
+  data: {
+    simulated: true,
+    active: true,
+    connected: true,
+    ip: '127.0.0.1',
+    model: 'UR12E',
+    model_id: 'ur12e',
+    preset: 'upright',
+    speed_scaling: 1,
+  },
+})
+
+/** 真实 `op_disconnect` 的形状：停掉仿真。 */
+const DISCONNECT_REPLY = () => ({
+  message: '连接已断开：离线仿真已停止。',
+  data: { simulated: false, active: false, ip: '127.0.0.1' },
+})
+
+test('★ P0-4：connect 的隐式开仿真必须落盘记忆；disconnect 必须落盘 enabled:false', async () => {
+  const dir = await tempDir()
+  const file = join(dir, 'sim-state.json')
+  const { registered, calls } = await drive({
+    config: { simStateFile: file },
+    replies: { connect: CONNECT_REPLY, disconnect: DISCONNECT_REPLY },
+  })
+  assert.equal(calls.length, 0, '没有落盘记忆时不该自己开仿真')
+
+  const exec = { agent: {} }
+  await registered.get('ursim_connect').execute({}, exec)
+  assert.deepEqual(
+    readSimState(file),
+    { model: 'ur12e', preset: 'upright', speed_scaling: 1 },
+    '★ connect = 确保仿真在跑，必须与 sim_start 一样记住配置（否则子进程被换后无法按型号重建）',
+  )
+
+  await registered.get('ursim_disconnect').execute({}, exec)
+  assert.equal(readSimState(file), null, '★ disconnect = 停仿真，重启后不得把它复活')
+  assert.equal(JSON.parse(await readFile(file, 'utf8')).enabled, false)
+})
+
+test('★ P0-4：connect 之后面板 I/O 写不再 409（宿主 simIps 登记与 python 侧一致）', async () => {
+  const dir = await tempDir()
+  const file = join(dir, 'sim-state.json')
+  const { registered, calls, routes } = await drive({
+    config: { simStateFile: file },
+    replies: { connect: CONNECT_REPLY },
+    mountRoutes: true,
+  })
+  const route = routes.get(TWIN_SIM_PATH)
+  assert.ok(route, '仿真开关写路由必须被挂载')
+
+  /** 以浏览器同源写请求的形状驱动 POST 路由（信任围栏 + 4 KB 请求体 + JSON content-type 都满足）。 */
+  const postIoWrite = async () => {
+    const req = new EventEmitter()
+    req.method = 'POST'
+    req.url = TWIN_SIM_PATH
+    req.headers = {
+      host: '127.0.0.1:12460',
+      origin: 'http://127.0.0.1:12460',
+      'content-type': 'application/json',
+    }
+    let status = null
+    let raw = ''
+    const res = {
+      writeHead: (code) => { status = code },
+      end: (chunk) => { raw = chunk ?? '' },
+    }
+    const done = route.handler(req, res)
+    setImmediate(() => {
+      req.emit('data', Buffer.from(JSON.stringify({ io: { kind: 'digital_out', n: 0, value: true } })))
+      req.emit('end')
+    })
+    await done
+    return { status, body: JSON.parse(raw) }
+  }
+
+  // ① 还没 connect：仿真没在跑 ⇒ 409（既有行为，也是这条用例的对照）。
+  const before = await postIoWrite()
+  assert.equal(before.status, 409, '没有正在运行的仿真时面板 I/O 写必须被拒')
+  assert.equal(before.body.code, 'SIM_NOT_RUNNING')
+
+  // ② connect（python 会隐式开仿真）之后：宿主必须把保留地址登记成"正在运行的仿真"。
+  await registered.get('ursim_connect').execute({}, { agent: {} })
+  const after = await postIoWrite()
+  assert.notEqual(
+    after.status,
+    409,
+    '★ connect 之后面板 I/O 写不得再 409（宿主的 simIps 必须与 python 侧一致）',
+  )
+  assert.equal(after.status, 200)
+  assert.equal(after.body.ok, true)
+  assert.equal(calls.at(-1).op, 'set_digital_out', '写必须真的下发到 worker')
+  assert.deepEqual(calls.at(-1).params, { ip: '127.0.0.1', n: 0, value: true })
 })

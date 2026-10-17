@@ -421,3 +421,178 @@ test('dispose() 清空遥测缓存（不给已死会话留姿态）', async () =
     fixture.cleanup()
   }
 })
+
+// ── P0-2：准入的"先查后占"竞态 + 槽位释放 ──────────────────────────────────
+//
+// 旧写法把准入（类闸 + 总闸）放在 `await ensureStarted()` **之前**、把 `pending.set()` 放在它
+// **之后**：同一 tick 内并发的 N 个 `call()` 都在任何写入之前跑完准入 ⇒ 全部通过。实测 8 连发
+// （class=twin-read，classMaxInFlight=3）⇒ pending=8 ⇒ 此刻来的 `stop_program` 被总闸门拒成
+// WORKER_BUSY —— H-3 那句"停止指令永远有槽位"被绕开。现在准入与占槽同处一个同步段。
+
+test('★ P0-2：读类准入必须同步占槽 —— 8 连发不会全部越过闸门，stop_program 仍能拿到槽位', async () => {
+  const fixture = fakeWorkerFixture()
+  try {
+    const worker = fixture.worker()
+    // 先把子进程起好：这个用例测的是"同一 tick 的准入"，不要把 spawn 时间混进来。
+    await worker.ensureStarted()
+    const readOpts = { class: 'twin-read', classMaxInFlight: 3 }
+    const settled = new Array(8).fill(null)
+    for (let i = 0; i < 8; i += 1) {
+      worker.call('hang', {}, 30000, undefined, readOpts).then(
+        () => { settled[i] = { ok: true } },
+        (error) => { settled[i] = { error } },
+      )
+    }
+    // 关键断言：**同步段结束时**只能有 3 个占位。旧实现这里是 0（都还在 await ensureStarted），
+    // 50 ms 后变成 8 —— 两个数字都和 3 不同，所以这条断言能确定性地抓住"先查后占"。
+    assert.equal(
+      worker.stats().pending,
+      3,
+      `同一 tick 的 8 个读只能占 3 个槽，实测 ${worker.stats().pending}`,
+    )
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    const busy = settled.filter((entry) => entry?.error?.code === 'WORKER_BUSY')
+    assert.equal(busy.length, 5, '读类闸门外的 5 个必须立刻拿到 WORKER_BUSY（而不是全部放行）')
+    assert.equal(worker.stats().pending, 3)
+
+    // H-3 的原始承诺：机器人正在运动、你想让它停的那一刻，停止指令必须拿得到槽位。
+    let stopError = null
+    const stop = worker.call('stop_program', {})
+    stop.catch((error) => { stopError = error })
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    assert.equal(stopError, null, `stop_program 不得被读类占满而拒（实际 ${stopError?.message ?? '被接纳'}）`)
+    assert.equal(worker.stats().pending, 4, '3 路读 + 1 条停止指令都应被接纳')
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('★ P0-2：准入占位在取消/超时后必须释放（槽位不得永久泄漏）', async () => {
+  const fixture = fakeWorkerFixture()
+  try {
+    const worker = fixture.worker()
+    await worker.ensureStarted()
+    const readOpts = { class: 'twin-read', classMaxInFlight: 3 }
+
+    // ① 传进来就已经 aborted：占位在同一 tick 里写入又释放。
+    const controller = new AbortController()
+    controller.abort()
+    await assert.rejects(
+      () => worker.call('echo', { v: 1 }, 30000, controller.signal, readOpts),
+      (error) => {
+        assert.equal(error.code, 'WORKER_ABORTED')
+        return true
+      },
+    )
+    assert.equal(worker.stats().pending, 0, '未派发的取消不得留下占位槽位')
+
+    // ② killOnTimeout:false 的超时：调用失败、槽位释放、子进程留下（既有承诺不变）。
+    const procBefore = worker.proc
+    await assert.rejects(
+      () => worker.call('hang', {}, 300, undefined, { killOnTimeout: false, ...readOpts }),
+      /timed out after 300ms/,
+    )
+    assert.equal(worker.stats().pending, 0, '超时后必须释放读类槽位')
+    assert.equal(worker.proc, procBefore, '读类超时不得杀进程（既有承诺）')
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+// ── P0-3：abort 只在"请求已真正派发"时 kill ───────────────────────────────
+//
+// 旧 `onAbort` 无条件 `settleReject + _killFor()`：审批等待吃掉宿主 deadline 时，`exec.signal`
+// 被 abort，而这条请求一个字节都还没写进 stdin —— 子进程里根本没有它，却被牵连杀掉
+// （RTDE/Dashboard 会话也跟着没）。取消必须区分"派发前"与"派发后"。
+
+test('★ P0-3：未派发的取消绝不杀子进程（一个字节都没写）', async () => {
+  const fixture = fakeWorkerFixture()
+  try {
+    const worker = fixture.worker()
+    await worker.ensureStarted()
+    const procBefore = worker.proc
+    // 模拟"审批等太久，宿主 deadline 在请求写进 stdin 之前就到点了"。
+    const controller = new AbortController()
+    controller.abort()
+
+    const error = await worker.call('echo', { v: 1 }, 30000, controller.signal).then(
+      () => null,
+      (e) => e,
+    )
+    assert.ok(error, '取消必须 reject')
+    assert.equal(error.code, 'WORKER_ABORTED')
+    assert.match(error.message, /示教器|急停/, '错误信息必须说明控制器侧可能仍在继续')
+
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    assert.equal(worker.proc, procBefore, '★ 未派发的取消不得杀子进程（机器人会话在它里面）')
+    assert.equal(worker.stats().running, true, '子进程必须仍然活着')
+    // 会话没死 ⇒ 下一个调用立即可用。
+    assert.deepEqual(await worker.call('echo', { v: 'after-abort' }), { echo: 'after-abort' })
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+test('★ P0-3：已派发的取消仍杀进程；killOnTimeout:false 的读类取消不得杀', async () => {
+  // ① 默认（命令类）：payload 真的写进 stdin 之后取消 ⇒ 沿用"杀掉卡死的单线程 worker"语义。
+  {
+    const fixture = fakeWorkerFixture()
+    try {
+      const worker = fixture.worker()
+      await worker.ensureStarted()
+      const controller = new AbortController()
+      let error = null
+      worker.call('hang', {}, 30000, controller.signal).catch((e) => { error = e })
+      // 等一拍，让 payload 写进 stdin（`dispatched` 置位）。
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      controller.abort()
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      assert.ok(error, '已派发的取消必须 reject 调用方')
+      assert.equal(error.code, 'WORKER_ABORTED')
+      assert.equal(worker.proc, null, '已派发的取消必须杀掉卡在单线程队列里的请求')
+      assert.equal(worker.stats().running, false)
+    } finally {
+      fixture.cleanup()
+    }
+  }
+  // ② killOnTimeout:false（仿真读）：取消只让本次调用失败，进程与会话留下。
+  //    旧实现这里会把子进程杀掉 —— 注释承诺了"超时不杀"，实现却从 abort 旁路撤销了它。
+  {
+    const fixture = fakeWorkerFixture()
+    try {
+      const worker = fixture.worker()
+      await worker.ensureStarted()
+      const procBefore = worker.proc
+      const controller = new AbortController()
+      let error = null
+      worker.call('hang', {}, 30000, controller.signal, { killOnTimeout: false })
+        .catch((e) => { error = e })
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      controller.abort()
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      assert.equal(error?.code, 'WORKER_ABORTED')
+      assert.equal(worker.proc, procBefore, '★ killOnTimeout:false 的读类取消也不得杀进程')
+      assert.equal(worker.stats().running, true)
+    } finally {
+      fixture.cleanup()
+    }
+  }
+})
+
+test('★ P0-3：超时错误必须如实说明"本次失败 ≠ 控制器已停"', async () => {
+  const fixture = fakeWorkerFixture()
+  try {
+    const worker = fixture.worker()
+    const error = await worker.call('hang', {}, 300, undefined, { killOnTimeout: false }).then(
+      () => null,
+      (e) => e,
+    )
+    assert.ok(error)
+    assert.equal(error.code, 'WORKER_TIMEOUT')
+    // 真实原因（超时）不得被通用文案盖住；同时必须提醒现场确认机器人状态。
+    assert.match(error.message, /timed out after 300ms/)
+    assert.match(error.message, /示教器|急停/)
+  } finally {
+    fixture.cleanup()
+  }
+})

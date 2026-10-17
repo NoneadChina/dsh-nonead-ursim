@@ -87,8 +87,8 @@ async function harness({ config = {}, approvalOutcome = 'allowed-once', approval
     }
   }
 
-  UrWorker.prototype.call = async function call(op, params) {
-    calls.push({ op, params })
+  UrWorker.prototype.call = async function call(op, params, timeoutMs) {
+    calls.push({ op, params, timeoutMs })
     // `replies` 让个别 op 回一个**真实的信封形状**（例如 sim_start 必须回 `active:true`，
     // 宿主才会把保留地址登记成"正在运行的仿真"）。
     if (typeof replies[op] === 'function') return replies[op](params)
@@ -664,4 +664,162 @@ test('声明层守卫：APPROVAL_OPS 里每个名字都必须是真实存在的 
   ]) {
     assert.ok(gated.has(op), `${op} 会持久改变物理行为或致动外设，必须受人工审批`)
   }
+})
+
+/* ------------------------------------------------------------------ *
+ * P0-3：审批等待不得与运动共用同一份宿主 deadline
+ *
+ * 宿主把工具的 `timeoutMs` 当整个 `execute()` 的死线，而 `execute()` 里先等人点确认、再执行
+ * 运动；旧的写法两处用**同一个** `commandTimeoutMs` ⇒ "人确认 55 s + 运动 10 s" 会在第 60 s
+ * 被宿主判超时 ⇒ `exec.signal` abort ⇒ worker 杀掉 Python 子进程。修法：门禁开启时给受门禁
+ * 工具的**宿主死线**加审批余量，而 `worker.call()` 的运动预算一个字不改。
+ * ------------------------------------------------------------------ */
+
+test('★ P0-3：门禁开启时宿主死线 = 命令预算 + 审批余量；下发到 worker 的预算不变', async () => {
+  const { APPROVAL_MARGIN_MS } = await import('../lib/index.js')
+  const BASE = 60000
+  assert.ok(Number.isFinite(APPROVAL_MARGIN_MS) && APPROVAL_MARGIN_MS > 0, '审批余量必须是正数')
+
+  const gated = await harness({
+    config: { commandTimeoutMs: BASE, connectTimeoutMs: 30000 },
+    approvalOutcome: 'allowed-once',
+  })
+  const movej = gated.registered.get('ursim_movej')
+  assert.equal(
+    movej.timeoutMs,
+    BASE + APPROVAL_MARGIN_MS,
+    '★ 受门禁工具的宿主死线必须额外容纳"人点确认"的等待（不能与运动共用同一份 60 s）',
+  )
+  await movej.execute({ ip: '1.2.3.4', q: [0, 0, 0, 0, 0, 0] }, exec)
+  assert.equal(
+    gated.calls.at(-1).timeoutMs,
+    BASE,
+    '★ 控制器侧的运动预算仍是命令预算 —— 审批余量只属于宿主 deadline',
+  )
+
+  // 不受门禁的工具不加余量：connect 声明了 connectTimeoutMs（非门禁 op），宿主死线保持原值。
+  assert.equal(
+    gated.registered.get('ursim_connect').timeoutMs,
+    30000,
+    '不受门禁的工具不等人审批，不得凭空加余量',
+  )
+  // 没有声明 timeoutMs 的只读工具保持 undefined（= 走宿主默认），同样不加余量。
+  assert.equal(gated.registered.get('ursim_get_tcp_pose').timeoutMs, undefined,
+    '未声明 timeoutMs 的只读工具必须保持 undefined（走宿主默认）')
+
+  // 产品默认（门禁关闭）时，运动工具的宿主死线与从前一致（不加余量）。
+  const off = await harness({ gateEnabled: false, config: { commandTimeoutMs: BASE } })
+  assert.equal(off.registered.get('ursim_movej').timeoutMs, BASE,
+    '门禁关闭时不得凭空加余量（行为与改动前逐字节一致）')
+})
+
+/* ------------------------------------------------------------------ *
+ * P0-4：connect / disconnect 必须登记仿真生命周期
+ *
+ * python 侧 `op_connect` 就是"确保仿真在跑然后返回 sim_status"、`op_disconnect` 就是"停掉
+ * 仿真"。宿主以前只在 sim_start/sim_stop 分支登记 `simIps` / `simConfig` / 落盘，于是
+ * connect 之后：仿真目标被误当"真机目标"弹审批、面板 I/O 写回 409、子进程被换后自愈不重建；
+ * disconnect 之后宿主以为仿真还在，两条路径各按不同型号重建。现在三条入口共用同一份登记口。
+ * ------------------------------------------------------------------ */
+
+test('★ P0-4：connect/disconnect 与 sim_start/sim_stop 共用同一份仿真登记（豁免 / 自愈 / 注销）', async () => {
+  const simState = { active: false, starts: [] }
+  const stats = { respawn: 0 }
+  const replies = {
+    // python op_connect：仿真没开就按默认型号开一台，然后返回 sim_status 那一份。
+    connect: () => {
+      if (!simState.active) {
+        simState.active = true
+        simState.starts.push({ model: 'ur12e', preset: 'upright', speed_scaling: 1 })
+      }
+      return {
+        message: '已连接：离线仿真机器人（UR12E）在保留地址 127.0.0.1。',
+        data: {
+          simulated: true,
+          active: true,
+          connected: true,
+          ip: '127.0.0.1',
+          model: 'UR12E',
+          model_id: 'ur12e',
+          preset: 'upright',
+          speed_scaling: 1,
+          robot_model: 'UR12E',
+        },
+      }
+    },
+    disconnect: () => {
+      simState.active = false
+      return {
+        message: '连接已断开：离线仿真已停止。',
+        data: { simulated: false, active: false, ip: '127.0.0.1' },
+      }
+    },
+    sim_start: (p) => {
+      simState.starts.push({ model: p.model, preset: p.preset, speed_scaling: p.speed_scaling })
+      simState.active = true
+      return {
+        message: 'ok',
+        data: { simulated: true, active: true, ip: '127.0.0.1', model_id: p.model },
+      }
+    },
+    sim_status: () => ({
+      message: 'st',
+      data: { simulated: simState.active, active: simState.active, ip: '127.0.0.1' },
+    }),
+  }
+  const { registered, calls, approvalRequests } = await harness({
+    replies,
+    stats,
+    approvalOutcome: 'denied', // 仿真目标不该弹确认；一旦弹了就会因"拒绝"而失败
+  })
+  const Q = [0, 0, 0, 0, 0, 0]
+
+  // ① connect：python 侧隐式开仿真。宿主必须把它登记成"正在运行的仿真"。
+  await registered.get('ursim_connect').execute({}, exec)
+  assert.deepEqual(calls.map((c) => c.op), ['connect'], 'connect 本身只该下发一条 worker 调用')
+
+  // ② 登记生效的最直接证据：仿真目标不再弹人工确认（isOfflineSimTarget 为真）。
+  //    旧写法 connect 只写 connectedIps，simIps 仍为空 ⇒ 这里会被当成真机目标去审批 ⇒ 失败。
+  await registered.get('ursim_movej').execute({ ip: '127.0.0.1', q: Q }, exec)
+  assert.equal(
+    approvalRequests.length,
+    0,
+    '★ connect 之后仿真目标必须豁免人工确认（宿主必须把它登记进 simIps）',
+  )
+  assert.equal(calls.at(-1).op, 'movej')
+
+  // ③ 子进程被换：虚拟机器人只活在 Python 内存里，现在没了。宿主必须按 connect 记住的型号重建。
+  stats.respawn = 1
+  simState.active = false
+  await registered.get('ursim_get_tcp_pose').execute({ ip: '127.0.0.1' }, exec)
+  const ops = calls.map((c) => c.op)
+  assert.ok(ops.includes('sim_status'), `必须先探测仿真是否还在；实际调用序列：${ops.join(' → ')}`)
+  const rebuild = calls.filter((c) => c.op === 'sim_start').at(-1)
+  assert.ok(rebuild, `★ 子进程被换后必须按记忆重建仿真；实际调用序列：${ops.join(' → ')}`)
+  assert.deepEqual(
+    rebuild.params,
+    { model: 'ur12e', preset: 'upright', speed_scaling: 1 },
+    '★ 重建必须沿用 connect 记住的型号/起始姿态/倍率（simConfig 不得为空）',
+  )
+
+  // ④ disconnect = 停仿真：宿主必须注销豁免并清掉记忆，与 python 侧认知一致。
+  await registered.get('ursim_disconnect').execute({}, exec)
+  assert.equal(simState.active, false, 'python 侧仿真已停')
+  const approvalsBefore = approvalRequests.length
+  await assert.rejects(
+    () => registered.get('ursim_movej').execute({ ip: '127.0.0.1', q: Q }, exec),
+    /未获人工批准/,
+    '★ disconnect 之后仿真目标必须重新受门禁（宿主不得以为仿真还在）',
+  )
+  assert.equal(approvalRequests.length, approvalsBefore + 1, '注销后必须真的再问一次')
+
+  // ⑤ 关掉仿真后不得再被自愈复活（simConfig 已清空）。
+  stats.respawn = 2
+  const startsBefore = simState.starts.length
+  await registered.get('ursim_get_tcp_pose').execute({ ip: '127.0.0.1' }, exec)
+  assert.equal(
+    simState.starts.length,
+    startsBefore,
+    '★ 用户断开的仿真不得被自愈重建',
+  )
 })

@@ -1187,3 +1187,128 @@ test('★ 0.1.9：I/O 读失败只写进自己的字段，位姿通道照常', a
   assert.equal(res.body.connected, true, '★ 位姿通道不受影响');
   assert.match(String(res.body.io.error), /I\/O 读不到/);
 });
+
+// ── P0-2：I/O 与寄存器的扇出必须收进读类闸门 ────────────────────────────────
+//
+// 读类闸门（`TWIN_READ_MAX_IN_FLIGHT = 3`）按**单次调用**计数。一帧 `/state?io=1` 自己就发 4 个
+// 读（寄存器最多 16 个）—— 用 `Promise.all` 并发扇出会在宿主侧被自己的闸门拒成 WORKER_BUSY，
+// 而 `Promise.all` 首个 reject 就把整块 I/O / 寄存器变成 `{error}`（面板显示"读取失败"）。
+// 所以扇出必须串行执行：同一帧任何时刻只占 1 个读槽。
+
+/**
+ * 假 worker：**模拟读类闸门**（任一时刻最多 `cap` 个在飞，超出立刻 WORKER_BUSY）。
+ *
+ * 形状对齐 `lib/worker.js` 的准入语义（H-3）。每个读故意跨一个宏任务再完成 —— 如果实现又退回
+ * `Promise.all`，第 4 个并发读一定会撞上闸门。
+ */
+function gatedTwinWorker(cap = 3) {
+  const inFlight = new Set();
+  let seq = 0;
+  let maxSeen = 0;
+  const reply = (op, params) => {
+    if (op === 'get_joint_pose') return { message: 'q', data: { joint_positions: [0, 0, 0, 0, 0, 0] } };
+    if (op === 'get_tcp_pose') return { message: 'tcp', data: { tcp_pose: [0, 0, 0.5, 0, 0, 0] } };
+    if (op === 'get_robot_model') return { message: 'UR3', data: { robot_model: 'UR3', remote_control: false } };
+    if (op === 'get_digital_output_bits') return { message: 'o', data: { bits: new Array(16).fill(true) } };
+    if (op === 'get_digital_input_bits') return { message: 'i', data: { bits: new Array(16).fill(false) } };
+    if (op === 'get_analog_in') return { message: 'a', data: { value: 0 } };
+    if (op === 'get_int_register') return { message: 'r', data: { value: params.index } };
+    return { message: 'stub', data: {} };
+  };
+  return {
+    maxSeen: () => maxSeen,
+    inFlight: () => inFlight.size,
+    call: async (op, params) => {
+      if (inFlight.size >= cap) {
+        const error = new Error(`UR worker 的 twin-read 类请求已达上限（${cap}）：读类请求不得挤占命令槽位。`);
+        error.code = 'WORKER_BUSY';
+        throw error;
+      }
+      const token = (seq += 1);
+      inFlight.add(token);
+      maxSeen = Math.max(maxSeen, inFlight.size);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        return reply(op, params);
+      } finally {
+        inFlight.delete(token);
+      }
+    },
+  };
+}
+
+test('★ P0-2：一帧 io=1 的 4 个扇出读不得撞上读类闸门（不出现 WORKER_BUSY）', async () => {
+  const worker = gatedTwinWorker(3);
+  const res = await createTwinStateHandler({ worker, connectedIps: () => new Set(['9.9.9.9']) })(
+    { ip: '9.9.9.9', io: '1' },
+  );
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.connected, true);
+  assert.equal(
+    res.body.io.error,
+    undefined,
+    `一帧 4 个 I/O 读必须全部成功（旧 Promise.all 扇出会让第 4 个拿到 WORKER_BUSY）：${res.body.io.error ?? ''}`,
+  );
+  assert.equal(res.body.io.digital_out.length, 16);
+  assert.deepEqual(res.body.io.analog_in, [0, 0]);
+  assert.ok(worker.maxSeen() <= 3, `并发读最多只能占 3 个槽，实测 ${worker.maxSeen()}`);
+  assert.equal(worker.inFlight(), 0, '全部读完必须释放槽位');
+});
+
+test('★ P0-2：一帧 16 个寄存器读（count 上限）不得出现 WORKER_BUSY', async () => {
+  const worker = gatedTwinWorker(3);
+  const res = await createTwinStateHandler({ worker, connectedIps: () => new Set(['9.9.9.9']) })(
+    { ip: '9.9.9.9', reg: 'int', from: '0', count: '16' },
+  );
+
+  assert.equal(res.status, 200);
+  assert.equal(
+    res.body.registers.error,
+    undefined,
+    `16 个寄存器读必须全部成功：${res.body.registers.error ?? ''}`,
+  );
+  assert.equal(res.body.registers.values.length, 16, '★ count 必须被夹到 16 且全部读回');
+  assert.equal(res.body.registers.values.at(-1), 15);
+  assert.ok(worker.maxSeen() <= 3, `并发读最多只能占 3 个槽，实测 ${worker.maxSeen()}`);
+  assert.equal(worker.inFlight(), 0, '全部读完必须释放槽位');
+});
+
+test('★ P0-2：I/O 某一拍读失败时用上一笔成功读数降级，而不是整块变成错误行', async () => {
+  const state = { fail: false };
+  const worker = {
+    call: async (op) => {
+      if (/digital|analog/.test(op)) {
+        // 模拟"这一拍撞上读类闸门 / worker 正被运动命令占住"。
+        if (state.fail) {
+          const error = new Error('读类闸门忙，这一拍读不到');
+          error.code = 'WORKER_BUSY';
+          throw error;
+        }
+        if (op === 'get_digital_output_bits') {
+          return { message: 'o', data: { bits: [true, ...new Array(15).fill(false)] } };
+        }
+        if (op === 'get_digital_input_bits') {
+          return { message: 'i', data: { bits: new Array(16).fill(false) } };
+        }
+        return { message: 'a', data: { value: 0 } };
+      }
+      if (op === 'get_joint_pose') return { message: 'q', data: { joint_positions: [0, 0, 0, 0, 0, 0] } };
+      if (op === 'get_tcp_pose') return { message: 'tcp', data: { tcp_pose: [0, 0, 0.5, 0, 0, 0] } };
+      if (op === 'get_robot_model') return { message: 'UR3', data: { robot_model: 'UR3' } };
+      return { message: 'stub', data: {} };
+    },
+  };
+  const handler = createTwinStateHandler({ worker, connectedIps: () => new Set(['9.9.9.9']) });
+
+  const first = await handler({ ip: '9.9.9.9', io: '1' });
+  assert.equal(first.body.io.error, undefined, '第一拍是好的（下面断言缓存来自它）');
+  assert.equal(first.body.io.digital_out[0], true);
+
+  state.fail = true;
+  const second = await handler({ ip: '9.9.9.9', io: '1' });
+  assert.equal(second.body.connected, true, '★ 失败的一拍不得毁掉位姿通道');
+  assert.match(String(second.body.io.error), /读类闸门忙/, '必须如实说明这一拍为什么读不到');
+  assert.equal(second.body.io.digital_out.length, 16, '★ 失败的一拍必须带上上一笔成功读数');
+  assert.equal(second.body.io.digital_out[0], true, '缓存里的值必须原样保留');
+});
