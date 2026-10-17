@@ -120,6 +120,8 @@ const CHECKS = [
   { name: 'python scripts/check-tool-params.py', needsPython: true },
   { name: 'python scripts/check-rtde-recipe.py', needsPython: true },
   { name: 'python scripts/check-approval-gate.py', needsPython: true },
+  { name: 'node scripts/tool-matrix.mjs', bin: process.execPath, args: ['scripts/tool-matrix.mjs'] },
+  { name: 'node scripts/check-doc-links.mjs', bin: process.execPath, args: ['scripts/check-doc-links.mjs'] },
   // Needs numpy/paramiko (it imports the worker), unlike the four static gates above.
   { name: 'python scripts/check-new-ops.py', needsPython: true, needsDeps: true },
 ];

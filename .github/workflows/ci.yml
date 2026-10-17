@@ -31,7 +31,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - uses: actions/setup-python@v5
         with:
@@ -41,7 +41,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Install Node dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       # `npm test` = 全部 node 测试 + 门禁（含 python 侧五个门禁）。
       # 其中 check-client-bundle.mjs 会逐字节比对 lib/client.js 与 src/client/**，所以
@@ -57,5 +57,5 @@ jobs:
           git diff --exit-code -- lib/client.js lib/client.js.map
 
       - name: Host compatibility (report only — needs the DSH host packages)
-        continue-on-error: true
+        continue-on-error: false   # verify:host 必须真的通过：它才是"87 个工具能被宿主 DSL 注册"的唯一证据
         run: npm run verify:host

@@ -54,7 +54,7 @@ if (pkg.files.some((f) => /sitecustomize/.test(f))) bad('files 含 sitecustomize
 else ok('files 不含 sitecustomize.py');
 
 // Absolute paths from the author's machine must never reach shipped code.
-const ABS = /[A-Za-z]:\\\\?Users\\\\?[A-Za-z0-9._-]+/;
+const ABS = /(?:[A-Za-z]:[\/](?:Users|Documents and Settings)[\/][^\/\s"']+|[A-Za-z]:[\/](?:MyProgram|Projects|repos|src|work)[\/]|\/(?:home|Users|root)\/[^\s"']+)/;
 const offenders = [];
 const SKIP_DIRS = new Set([
   'node_modules', '.git', '__pycache__',
@@ -86,6 +86,8 @@ const ALLOWED = new Set([
   'CHANGELOG.zh.md',
   'CHANGELOG-archive.md',
   'CHANGELOG-archive.zh.md',
+  // vendored 原文，唯一命中是第 138 行一条被注释掉的上游作者示例路径（不改 vendored 文本）。
+  'python/URBasic/urScriptExt.py',
 ]);
 const real = offenders.filter((f) => !ALLOWED.has(f));
 if (real.length === 0) ok(`没有源文件硬编码作者机器的绝对路径（允许的例外：${[...ALLOWED].join(', ')}）`);

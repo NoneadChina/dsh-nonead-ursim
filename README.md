@@ -161,7 +161,7 @@ Add the repository path to the profile dependency (pnpm supports `file:`) to ite
 
 ```jsonc
 "dependencies": {
-  "dsh-nonead-ursim": "file:D:/MyProgram/GitLab/dsh-nonead-ursim"
+  "dsh-nonead-ursim": "file:<your-checkout>/dsh-nonead-ursim"
 }
 ```
 
@@ -196,7 +196,7 @@ Verify the plugin and Python runtime without touching a real robot:
 
 ```sh
 npm run test:python   # python ur_worker.py --selfcheck: verify Python/numpy/paramiko/URBasic/RTDE config
-npm test              # run all 45 test files AND every check gate (see below), then summarise
+npm test              # run all 48 test files AND every check gate (see below), then summarise
 npm run test:node     # Node-side only: skips the test files *and* the gates that need Python
 npm run check         # all static + cross-language gates without running the test files
 npm run verify:host   # validate every tool schema through the host's real value-schema DSL, plus peer ranges
@@ -205,9 +205,9 @@ npm run verify:models # validate the structural contract of the 14 GLBs
 
 `npm test` runs two kinds of thing, and both must pass:
 
-- **45 test files** under `test/` (e2e protocol self-check, approval gate, simulation routes, client
+- **48 test files** under `test/` (e2e protocol self-check, approval gate, simulation routes, client
   state machine, FK, vendored-library regressions) — enumerated from `test/test-manifest.json`
-  (Python-dependent 17 / Node-only 28), which `check:manifest` keeps honest so a Python-using file can
+  (Python-dependent 17 / Node-only 31), which `check:manifest` keeps honest so a Python-using file can
   never be silently unlisted.
 - **11 check gates**: `check-test-manifest` / `check-package-metadata` / `check-client-bundle` /
   `check-doc-tools` / `tool-matrix` / `check-doc-links` (Node) and `check-worker-ops` /

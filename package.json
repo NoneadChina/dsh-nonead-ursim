@@ -93,7 +93,7 @@
     "@deepseek-ai/schemastery": "^3.18.2"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.15"
   },
   "devDependencies": {
     "esbuild": "^0.25.0",
