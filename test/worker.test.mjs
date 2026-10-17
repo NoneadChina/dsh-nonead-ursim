@@ -26,7 +26,7 @@ const PYTHON = process.env.PYTHON ?? 'python'
 
 /** 假 worker：`echo` 正常回包；`die` 直接退出（模拟崩溃）；`hang` 永不回包。 */
 const FAKE_WORKER = `
-import json, sys, time
+import json, os, sys, time
 
 for line in sys.stdin:
     line = line.strip()
@@ -36,6 +36,14 @@ for line in sys.stdin:
     op = req.get("op")
     if op == "echo":
         sys.stdout.write(json.dumps({"id": req["id"], "ok": True, "data": {"echo": req.get("v")}}) + "\\n")
+        sys.stdout.flush()
+    elif op == "env":
+        # 用于 P1-3：子进程真的拿到了什么环境、stdin 用什么编码解、中文能否原样往返。
+        sys.stdout.write(json.dumps({"id": req["id"], "ok": True, "data": {
+            "pythonutf8": os.environ.get("PYTHONUTF8"),
+            "stdin_encoding": getattr(sys.stdin, "encoding", None),
+            "echo": req.get("v"),
+        }}) + "\\n")
         sys.stdout.flush()
     elif op == "fail":
         sys.stdout.write(json.dumps({"id": req["id"], "ok": False, "error": "bad op"}) + "\\n")
@@ -346,6 +354,30 @@ test('结构化错误码：ok:false 响应里的 code 必须挂到 Error 上', a
       assert.match(error.message, /bad op with code/)
       return true
     })
+  } finally {
+    fixture.cleanup()
+  }
+})
+
+// ── P1-3：stdin/stdout 是 UTF-8 协议，子进程不得按 locale 编码解 ──────────────
+//
+// 中文 Windows 上 Python 的 stdin 默认是 GBK + surrogateescape：Node 写 UTF-8、worker 按
+// GBK 解 ⇒ 非 ASCII 参数被静默损坏，回包 `.encode('utf-8')` 时抛 UnicodeEncodeError（此时
+// 副作用往往已经发生）。修法是在 spawn env 里强制 `PYTHONUTF8=1`（Python 侧还有一层
+// `sys.stdin.reconfigure` 兜底，见 selftest.test.mjs 的绕过 env 用例）。
+
+test('★ P1-3：spawn env 必须带 PYTHONUTF8=1，且中文参数原样往返', async () => {
+  const fixture = fakeWorkerFixture()
+  try {
+    const worker = fixture.worker()
+    const data = await worker.call('env', { v: '中文参数' })
+    assert.equal(data.pythonutf8, '1', '★ 必须显式传 PYTHONUTF8=1（中文 Windows 上默认是 GBK）')
+    assert.match(
+      String(data.stdin_encoding ?? '').toLowerCase(),
+      /utf-?8/,
+      `子进程 stdin 必须按 UTF-8 解码（实测 ${data.stdin_encoding}）`,
+    )
+    assert.equal(data.echo, '中文参数', '中文参数必须原样往返，不能被 locale 编码损坏')
   } finally {
     fixture.cleanup()
   }

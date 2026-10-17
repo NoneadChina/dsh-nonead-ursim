@@ -220,6 +220,54 @@ for label, segments in (
     bad_codes[label] = dispatch("run_sequence", params).get("code")
 out["seq_badargs"] = bad_codes
 
+# ── 5c. 逆解连续性门（P1-2）：多起点能解出，但解与上一航点跳变过大 ⇒ 必须拒绝 ──
+# 样例是**确定性构造**的：目标 = 远构型 q_far 的正解矩阵；以 upright 作种子做局部逆解
+# 不收敛，而多起点兜底会返回与 upright 差 1.757 rad 的解（腕部/构型分支跳变）。对 1 cm
+# 的相邻航点来说，那是真机绝对走不出来的折线 —— 仿真必须报 SIM_UNREACHABLE，而不是把它
+# 画成一条平滑轨迹再回"已到达目标"。
+_GATE_MODEL = "ur12e"
+_GATE_SEED = ur_sim.preset_joints("upright", _GATE_MODEL)
+_GATE_LIMITS = ur_sim.joint_limits(_GATE_MODEL)
+_Q_FAR = [-0.9160696228675558, -1.81558429559259, 0.7848592598072397,
+          -2.2233313093287776, 0.18658642239478374, -0.6984176320545552]
+_GATE_TARGET = ur_sim.fk(_GATE_MODEL, _Q_FAR)
+
+_local_sol = ur_sim.ik(_GATE_MODEL, _GATE_TARGET, _GATE_SEED, limits=_GATE_LIMITS)
+_ungated = ur_sim.ik_reachable(_GATE_MODEL, _GATE_TARGET, [_GATE_SEED], limits=_GATE_LIMITS)
+_gated = ur_sim.ik_reachable(_GATE_MODEL, _GATE_TARGET, [_GATE_SEED], limits=_GATE_LIMITS,
+                             max_step=ur_sim.MAX_IK_STEP_RAD)
+
+# 同一条约束也要落实在 movel 上：目标位姿经 pose 往返再交给 move_cartesian。
+_gate_vr = ur_sim.VirtualRobot("127.0.0.1", _GATE_MODEL, preset="upright")
+_gate_pose = ur_sim.tcp_pose(_GATE_MODEL, _Q_FAR)
+_gate_code, _gate_msg = None, ""
+try:
+    # step_m 远大于位移 ⇒ 只产生一个细分点（= 目标点本身），精确复现"局部不收敛/跳变大"。
+    _gate_vr.move_cartesian([_gate_pose], 0.25, 1.2, step_m=10.0)
+except Exception as _exc:
+    _gate_code, _gate_msg = getattr(_exc, "code", None), str(_exc)
+
+# 对照：正常的 1 cm 直线运动仍必须可解（连续性门不得把正常轨迹染红）。
+_ok_vr = ur_sim.VirtualRobot("127.0.0.1", _GATE_MODEL, preset="upright")
+_ok_start = ur_sim.tcp_pose(_GATE_MODEL, _ok_vr.advance())
+_ok_code = None
+try:
+    _ok_vr.move_cartesian([[_ok_start[0] + 0.01, _ok_start[1], _ok_start[2],
+                            _ok_start[3], _ok_start[4], _ok_start[5]]], 0.25, 1.2)
+except Exception as _exc2:
+    _ok_code = getattr(_exc2, "code", None)
+
+out["ik_gate"] = {
+    "local_ik_solved": _local_sol is not None,
+    "ungated_solved": _ungated is not None,
+    "ungated_jump": round(ur_sim._max_joint_step(_ungated, _GATE_SEED), 6) if _ungated else None,
+    "gated_solved": _gated is not None,
+    "move_code": _gate_code,
+    "message_mentions_discontinuous": ("不连续" in _gate_msg),
+    "message_mentions_max_step": ("0.5" in _gate_msg),
+    "normal_move_code": _ok_code,
+}
+
 # draw 的 v/a/t：不传时必须与**加参数之前写死的 a=1.0 / v=0.25** 完全一致
 sq_origin = list(tcp())
 
@@ -427,6 +475,30 @@ test('★ draw_* 的 v/a/t：不传时与从前写死的 a=1.0 / v=0.25 完全�
 test('★ run_sequence 在仿真的能力清单里（面板据此显示"能做"）', () => {
   assert.ok(out.caps_motion.includes('ursim_run_sequence'),
     `仿真能力清单必须包含 ursim_run_sequence：${out.caps_motion.join(', ')}`)
+})
+
+// ── P1-2：逆解连续性门 ─────────────────────────────────────────────────────
+//
+// 多起点兜底能解出"离上一航点很远"的解（腕部翻半圈 / 换一只"手"）。对 movel 的 1 cm
+// 细分点来说，那就是真机绝对走不出来的折线，而旧实现画出来还回"已到达目标"。
+// 这里钉住：① 局部不收敛、多起点能解出，但跳变 > 0.5 rad ⇒ 拒绝（SIM_UNREACHABLE）；
+// ② 错误文案必须说清"多起点解与上一航点不连续"并给出阈值；③ 正常 1 cm 轨迹不受影响。
+
+test('★ P1-2：多起点解出但与上一航点跳变过大 ⇒ SIM_UNREACHABLE（不再画出真机走不了的折线）', () => {
+  const g = out.ik_gate
+  assert.equal(g.local_ik_solved, false,
+    '样例的前提：以 upright 为种子做局部逆解必须不收敛（否则这条用例测不到兜底路径）')
+  assert.equal(g.ungated_solved, true,
+    '样例的前提：多起点（不带门）确实能解出 —— 证明拒绝的原因是"不连续"而不是"解不出"')
+  assert.ok(g.ungated_jump > 0.5,
+    `多起点解与上一航点的跳变必须远大于门限 0.5 rad（实测 ${g.ungated_jump} rad）`)
+  assert.equal(g.gated_solved, false, '★ 连续门必须拒绝这个跳变解')
+  assert.equal(g.move_code, 'SIM_UNREACHABLE', 'movel 必须报 SIM_UNREACHABLE')
+  assert.equal(g.message_mentions_discontinuous, true,
+    '★ 错误文案必须说清"多起点解与上一航点不连续"（否则用户以为目标真的不可达）')
+  assert.equal(g.message_mentions_max_step, true, '错误文案应给出跳变阈值（0.5 rad）')
+  assert.equal(g.normal_move_code, null,
+    '★ 正常的 1 cm 直线运动不得被连续性门误伤（可达轨迹仍必须能走）')
 })
 
 test('★ 仿真帧走的是与真机同一条推送通道，并自带 simulated / conn 标记', () => {

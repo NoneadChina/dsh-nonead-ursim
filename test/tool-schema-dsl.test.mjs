@@ -289,6 +289,114 @@ test('自检：本测试确实能抓到不受支持的关键字（防止测试�
 })
 
 /* ------------------------------------------------------------------ *
+ * 声明面随运行模式变化（P1 #4）：工具描述是模型唯一的契约
+ * ------------------------------------------------------------------ */
+
+/**
+ * 这 3 个是**仿真生命周期**工具：它们的 `ip` 永远是保留回环地址，与 `motionMode` 无关
+ * （real 模式下仿真照样可用）。因此它们的 `ip` 描述在两种模式下**必须一致**。
+ */
+const SIM_LIFECYCLE_TOOLS = new Set(['ursim_sim_start', 'ursim_sim_stop', 'ursim_sim_status']);
+
+/** 工具声明中除"允许按模式变化"的描述外，全部字段的规范化形态。 */
+function declarationShape(tool) {
+  const parameters = {};
+  for (const [key, value] of Object.entries(tool.parameters ?? {})) {
+    parameters[key] = key === 'ip' ? { ...value, description: '<mode-dependent>' } : value;
+  }
+  const modeDependentDescription = tool.toolName === 'ursim_connect' || tool.toolName === 'ursim_disconnect';
+  return {
+    op: tool.op,
+    toolName: tool.toolName,
+    timeoutMs: tool.timeoutMs ?? null,
+    description: modeDependentDescription ? '<mode-dependent>' : tool.description,
+    parameters,
+  };
+}
+
+test('ip 参数描述按运行模式生成（real 模式必须显式给出白名单内的目标 IP）', async () => {
+  const { buildTools } = await import('../lib/tool-defs.js');
+  const simTools = buildTools({});
+  const realTools = buildTools({ motionMode: 'real' });
+  assert.equal(realTools.length, simTools.length, '运行模式不得改变工具数量');
+
+  const simByName = new Map(simTools.map((tool) => [tool.toolName, tool]));
+  const realByName = new Map(realTools.map((tool) => [tool.toolName, tool]));
+  const ipTools = simTools.filter(
+    (tool) => tool.parameters !== undefined && Object.prototype.hasOwnProperty.call(tool.parameters, 'ip'),
+  );
+  assert.ok(ipTools.length >= 80, `带 ip 参数的工具只有 ${ipTools.length} 个，抽取规则与声明面脱节了`);
+
+  let modeDependent = 0;
+  for (const simTool of ipTools) {
+    const realTool = realByName.get(simTool.toolName);
+    assert.ok(realTool, `real 模式缺少工具 ${simTool.toolName}`);
+    const simIp = simTool.parameters.ip;
+    const realIp = realTool.parameters.ip;
+
+    // #4 只允许改 description：类型与必填性必须与 sim 模式完全一致。
+    assert.equal(simIp.type, 'string', `${simTool.toolName}.ip 的类型被改动了`);
+    assert.equal(realIp.type, 'string', `${simTool.toolName}.ip 的类型被改动了`);
+    assert.equal('required' in simIp, false,
+      `${simTool.toolName}.ip 不得变成必填（DSL 里 required:false 会让整个工具静默消失）`);
+    assert.equal('required' in realIp, false, `${simTool.toolName}.ip 不得变成必填`);
+
+    if (SIM_LIFECYCLE_TOOLS.has(simTool.toolName)) {
+      assert.equal(realIp.description, simIp.description,
+        `${simTool.toolName}.ip 是仿真生命周期工具，两种模式下的描述必须一致（始终是保留回环地址）`);
+      continue;
+    }
+
+    modeDependent += 1;
+    assert.notEqual(simIp.description, realIp.description, `${simTool.toolName}.ip 的描述没有按模式变化`);
+    assert.match(realIp.description, /必须显式给出/,
+      `${simTool.toolName}.ip 的 real 描述必须要求显式给出目标 IP`);
+    assert.match(realIp.description, /realRobotIps/,
+      `${simTool.toolName}.ip 的 real 描述必须写明白名单`);
+    assert.doesNotMatch(realIp.description, /本插件不连真机/,
+      `${simTool.toolName}.ip 的 real 描述不得再说"本插件不连真机"`);
+    assert.match(simIp.description, /127\.0\.0\.1/,
+      `${simTool.toolName}.ip 的 sim 描述必须保留保留回环地址`);
+    assert.doesNotMatch(simIp.description, /必须显式给出/,
+      `${simTool.toolName}.ip 的 sim 描述不得要求显式给 ip`);
+  }
+  assert.ok(modeDependent >= 80, `只有 ${modeDependent} 个工具的 ip 描述随模式变化，少于预期`);
+});
+
+test('ursim_connect / ursim_disconnect 的描述按运行模式生成（real 模式说明真机会话）', async () => {
+  const { buildTools } = await import('../lib/tool-defs.js');
+  const byName = (mode) => new Map(buildTools({ motionMode: mode }).map((tool) => [tool.toolName, tool]));
+  const sim = byName('sim');
+  const real = byName('real');
+
+  assert.match(sim.get('ursim_connect').description, /离线仿真/, 'sim 模式的 connect 应说明离线仿真');
+  assert.match(real.get('ursim_connect').description, /真机会话/, 'real 模式的 connect 必须说明会建立真机会话');
+  assert.match(real.get('ursim_connect').description, /realRobotIps/, 'real 模式的 connect 必须写明白名单');
+  assert.match(real.get('ursim_connect').description, /缺 ip 会被拒绝/, 'real 模式的 connect 必须说明缺 ip 会被拒绝');
+  assert.doesNotMatch(real.get('ursim_connect').description, /不存在真机/, 'real 模式的 connect 不得再说"不存在真机"');
+
+  assert.match(sim.get('ursim_disconnect').description, /离线仿真/, 'sim 模式的 disconnect 应说明离线仿真');
+  assert.match(real.get('ursim_disconnect').description, /真机会话/, 'real 模式的 disconnect 必须说明释放真机会话');
+  assert.match(real.get('ursim_disconnect').description, /缺 ip 会被拒绝/, 'real 模式的 disconnect 必须说明缺 ip 会被拒绝');
+
+  assert.notEqual(sim.get('ursim_connect').description, real.get('ursim_connect').description,
+    'connect 的描述必须随模式变化');
+  assert.notEqual(sim.get('ursim_disconnect').description, real.get('ursim_disconnect').description,
+    'disconnect 的描述必须随模式变化');
+});
+
+test('模式只改变 ip / connect / disconnect 的描述，其余声明逐字段不变', async () => {
+  const { buildTools } = await import('../lib/tool-defs.js');
+  const simTools = buildTools({});
+  const realTools = buildTools({ motionMode: 'real' });
+  assert.deepEqual(
+    realTools.map(declarationShape),
+    simTools.map(declarationShape),
+    '除 ip 与 connect/disconnect 的描述之外，两种模式下的声明必须完全一致（不得改类型、必填性、超时或其它文案）',
+  );
+});
+
+/* ------------------------------------------------------------------ *
  * 跨语言契约：host 侧的 op 名必须在 Python 里真实存在
  * ------------------------------------------------------------------ */
 

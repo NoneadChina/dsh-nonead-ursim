@@ -411,6 +411,16 @@ def _within_limits(model_id, q, limits=None):
     return True
 
 
+# 逆解连续性门（相邻航点允许的最大单关节跳变，弧度）。
+#
+# 为什么是 0.5 rad：movel 沿直线每 1 cm 取一个细分点，正常连续跟踪时相邻细分点的关节变化
+# 在 0.01 rad 量级（1 m 处 1 cm ≈ 0.01 rad）；近奇异位形会大一些，但仍远小于"换构型 /
+# 换分支"的跳变。多起点兜底实测会返回与上一航点差 3.14 / 5.30 / 6.71 rad 的解（腕部翻半圈、
+# 换一只"手"），那是真机在 1 cm 内绝对走不出来的折线 —— 仿真却会把它画成一条平滑轨迹并回报
+# "已到达目标"。0.5 rad（≈28.6°）给正常轨迹留了约 50 倍余量，同时能拦下所有分支级跳变。
+MAX_IK_STEP_RAD = 0.5
+
+
 # 多起点逆解的**兜底起点**：均匀铺在关节空间里的固定点（确定性，便于复现）。
 #
 # 为什么需要：单起点的数值逆解对"离起点很远的可达位姿"会不收敛，而**"不可达"是一个
@@ -445,15 +455,49 @@ def _pseudo_random_seeds(count=12):
     return out
 
 
-def ik_reachable(model_id, target_matrix, seeds, limits=None, iterations=120):
+def _local_retry_seeds(seeds, spread=0.05):
+    """连续性门拒绝兜底解之后的**局部重解**种子：调用方种子 + 每个关节 ±spread 的小扰动。
+
+    为什么需要这一步：兜底解被判定"与上一航点不连续"**不等于**这个位姿不可达 —— 也可能
+    只是从上一航点出发、120 次迭代没能收敛。此时只从上一航点附近（含小扰动）多迭代几步，
+    仍失败才判不可达；绝不能拿一个跳变很大的兜底解冒充"到达"。
+    """
+    out = []
+    for seed in seeds or []:
+        if not isinstance(seed, (list, tuple)):
+            continue
+        base = [float(seed[i]) if i < len(seed) else 0.0 for i in range(6)]
+        out.append(base)
+        for joint in range(6):
+            for sign in (-1.0, 1.0):
+                bumped = list(base)
+                bumped[joint] += sign * spread
+                out.append(bumped)
+    return out
+
+
+def ik_reachable(model_id, target_matrix, seeds, limits=None, iterations=120, max_step=None):
     """多起点逆解：**先按给定顺序试（第一个通常是当前/上一个途经点，最省事）**，
     再试手挑的兜底起点，最后试一组确定性伪随机起点。
 
     返回 `q` 或 `None`。`None` 的语义是"这些起点都收敛不到该位姿" —— 调用方据此报
     「逆解失败（可能不可达/越限/近奇异）」，而不是静默糊一个近似姿态。
 
+    `max_step`（弧度；`None` 表示不设门）是**连续性门**：非 `None` 时，任何收敛解除了
+    要解出来，还必须与调用方的**第一个种子**（= 上一个航点）满足 `max|Δq| <= max_step`，
+    比较按**最短关节路径**（关节角是模 2π 的）。为什么必须有：多起点兜底会解出属于另一个
+    构型分支的解 —— 对"1 cm 的相邻航点"来说，那就是一条真机绝对走不出来的折线，而回包
+    仍会说"已到达目标"。
+
+    连续性门拒掉兜底解之后，会**只用局部种子再重解一次**（含小扰动、更多迭代）；仍失败
+    才返回 `None`。这样真正需要多起点的合法位姿不会因为这道门本身被误判成不可达。
+
     ⚠️ 这条路径**只在失败时才贵**：正常情况第一个起点（上一个途经点）几步就收敛。
     """
+    given = [s for s in (seeds or []) if isinstance(s, (list, tuple))]
+    anchor = None
+    if max_step is not None and given:
+        anchor = [float(given[0][i]) if i < len(given[0]) else 0.0 for i in range(6)]
     tried = []
     candidates = list(seeds or []) + list(_FALLBACK_SEEDS) + _pseudo_random_seeds()
     for seed in candidates:
@@ -462,8 +506,20 @@ def ik_reachable(model_id, target_matrix, seeds, limits=None, iterations=120):
             continue
         tried.append(key)
         got = ik(model_id, target_matrix, seed, limits=limits, iterations=iterations)
-        if got is not None:
-            return got
+        if got is None:
+            continue
+        if anchor is not None and _max_joint_step(got, anchor) > float(max_step):
+            continue
+        return got
+    if anchor is not None:
+        # 只从局部种子重解一次：多给一倍迭代，仍不连续/不收敛才判不可达。
+        retry_iterations = max(int(iterations), 120) * 2
+        for seed in _local_retry_seeds(given):
+            got = ik(model_id, target_matrix, seed, limits=limits, iterations=retry_iterations)
+            if got is None:
+                continue
+            if _max_joint_step(got, anchor) <= float(max_step):
+                return got
     return None
 
 
@@ -478,6 +534,15 @@ def _shortest_joint_delta(start, goal):
             delta += 2.0 * math.pi
         out.append(delta)
     return out
+
+
+def _max_joint_step(a, b):
+    """两个关节配置之间**按最短路径**的最大单关节变化（弧度）。
+
+    必须按最短路径算：`q5=5.58` 与 `q5=-0.70` 是同一个姿态（差 2π，真机也只走最短路径），
+    直接相减会把它误判成 6.28 rad 的跳变。
+    """
+    return max(abs(v) for v in _shortest_joint_delta(a, b))
 
 
 # ---------------------------------------------------------------------------
@@ -663,12 +728,15 @@ class VirtualRobot:
         seed = list(current)
         waypoints = [list(current)]
         for index, pose in enumerate(chain_poses[1:], start=1):
-            ok = ik_reachable(self.model, pose_to_matrix_axis_angle(pose), [seed], limits=self.limits)
+            ok = ik_reachable(self.model, pose_to_matrix_axis_angle(pose), [seed],
+                              limits=self.limits, max_step=MAX_IK_STEP_RAD)
             if ok is None:
                 raise SimError(
-                    "第 %d 个途经点在运动学上不可达（多个起点逆解均未收敛）：%s。"
-                    "movel 的每个细分点都要求可解；请拆成多段、改目标或改起始姿态。"
-                    % (index, _format_pose(pose)), "SIM_UNREACHABLE")
+                    "第 %d 个途经点在运动学上不可达：局部逆解不收敛，或收敛到与上一航点**不连续**的"
+                    "另一个构型分支（跳变超过 %.1f rad）。多起点兜底解不连续时本仿真**拒绝**它 ——"
+                    "那种跳变会让仿真画出一条真机在相邻航点之间走不出来的折线。%s。"
+                    "movel 的每个细分点都要求可解且连续；请拆成多段、改目标或改起始姿态。"
+                    % (index, MAX_IK_STEP_RAD, _format_pose(pose)), "SIM_UNREACHABLE")
             waypoints.append(list(ok))
             seed = list(ok)
         self._plan(waypoints, v, a, now=now, total_s=total_s)
@@ -725,13 +793,16 @@ class VirtualRobot:
                 chain = _interpolate_poses(last_pose, target, step_m)
                 for point_index, pose in enumerate(chain, start=1):
                     got = ik_reachable(self.model, pose_to_matrix_axis_angle(pose),
-                                       [seed], limits=self.limits)
+                                       [seed], limits=self.limits, max_step=MAX_IK_STEP_RAD)
                     if got is None:
                         raise SimError(
-                            "第 %d 段（cartesian）的第 %d 个细分点在运动学上不可达（多个起点逆解均未"
-                            "收敛）：%s。整条序列已失败：每个细分点都要求可解，序列**不会**跳过这一段"
-                            "继续走（请拆成多段、改目标或改起始姿态）。"
-                            % (index, point_index, _format_pose(pose)), "SIM_UNREACHABLE")
+                            "第 %d 段（cartesian）的第 %d 个细分点在运动学上不可达：局部逆解不收敛，"
+                            "或收敛到与上一航点**不连续**的另一个构型分支（跳变超过 %.1f rad）。"
+                            "多起点兜底解不连续时本仿真**拒绝**它 —— 那种跳变会让仿真画出一条真机在"
+                            "相邻航点之间走不出来的折线。%s。整条序列已失败：每个细分点都要求可解且"
+                            "连续，序列**不会**跳过这一段继续走（请拆成多段、改目标或改起始姿态）。"
+                            % (index, point_index, MAX_IK_STEP_RAD, _format_pose(pose)),
+                            "SIM_UNREACHABLE")
                     waypoints.append(list(got))
                     seed = list(got)
                 last_pose = tcp_pose(self.model, seed)

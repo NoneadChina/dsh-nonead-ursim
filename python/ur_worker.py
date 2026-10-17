@@ -63,6 +63,7 @@ ERROR_CODES = {
     "TIMEOUT": "等待机器人响应超时",
     "SAFETY": "机器人处于安全停止状态，指令被拒绝",
     "NOT_REMOTE": "控制器不在远程控制模式，URScript 会被静默丢弃",
+    "NOT_EXECUTED": "控制器没有执行脚本（URScript 被静默丢弃/固件不接受该指令组合）",
     "SEND_FAILED": "脚本未能送达控制器",
     "UNSUPPORTED": "当前控制器/固件不支持该操作",
     "HUGE": "未实现的内部错误",
@@ -571,6 +572,37 @@ def _budget_ms(p, reserve_ms=1000):
     return max(1000, total - reserve_ms)
 
 
+def _motion_error_code(message):
+    """运动/执行类指令"没做到"时用的稳定错误码。
+
+    三类失败必须分开（它们的处置完全不同）：
+      · 控制器**没执行**脚本（URScript 被静默丢弃 / 固件不收该指令组合）⇒ `NOT_EXECUTED`；
+      · 读不到当前位姿、无法完成确认（会话可能已断）⇒ `NOT_CONNECTED`；
+      · 执行了，但预算内没确认到位（超时/位置偏差）⇒ `TIMEOUT`。
+    """
+    text = str(message)
+    if "未观察到脚本开始执行" in text or "没有执行" in text:
+        return "NOT_EXECUTED"
+    if "读取" in text and "失败" in text:
+        return "NOT_CONNECTED"
+    return "TIMEOUT"
+
+
+def _motion_failure(what, message, data):
+    """运动/执行类指令**没做到**时的统一失败回包（信封 `ok:false`）。
+
+    旧写法无论确认结果如何都 `return ok({... "ok": ok_flag ...})` ⇒ 信封 `ok` 恒为 true，
+    把 `ok_flag=False`（"59 s 内没走完" / "从未观察到脚本开始执行"）埋在 `data.ok` 里：
+    调用方与模型读到的是一句"命令已发送，移动未确认到位"，看起来就是成功。这里把"没做到"
+    升级成信封失败（`main()` 据此回 `ok:false` + 稳定 `code`），同时**原样保留 data**
+    （含 `ok: False` 与 command/ip 等既有字段），既有的"读 data.ok"读取方不受影响。
+    """
+    payload = dict(data or {})
+    payload["ok"] = False
+    return err("指令 %s 没有完成：%s" % (what, message),
+               _motion_error_code(message), payload)
+
+
 def _assert_remote_control(ip, what):
     """发送 URScript 之前的预检查：不在远程控制模式时**提前**给出可读原因。
 
@@ -997,6 +1029,23 @@ def _wait_robot_idle(ip, timeout_ms=60000):
 # ---------------------------------------------------------------------------
 
 def op_connect(p):
+    """连接 = 让**目标**就绪。
+
+    - `sim` 模式（默认）：确保离线仿真在跑（见 `_sim_connect`，行为与从前逐字节相同）；
+    - `real` 模式（`DSH_URSIM_MODE=real`，显式开启）：连真机 —— 复用 `ensure_connected()`
+      建立 RTDE/Dashboard/RealTime 会话（见 `_real_connect`）。旧实现在 real 模式下仍走仿真
+      分支，于是 `connect(ip=<真机>)` 被 `_sim_requested_ip` 拒成 SIM_BADARG，文案却说
+      "要连真机请填它的实际 IP" —— 与实际分支矛盾。
+
+    ⚠️ 保留回环地址在**两种模式**下都表示离线仿真：real 模式下也不会被当成本机真机去连
+    （否则"把真控制器端口转发到环回"那条绕过路径就被重新打开了）。
+    """
+    if REAL_MODE:
+        return _real_connect(p)
+    return _sim_connect(p)
+
+
+def _sim_connect(p):
     """连接 = **确保离线仿真在跑**（本插件不存在真机，所以"连接"就是这台虚拟机器人）。
 
     用户裁定：`ursim_connect` 改成仿真语义 —— 没开就按默认型号（UR12e / 全零位 / 倍率 1）
@@ -1019,7 +1068,70 @@ def op_connect(p):
     return result
 
 
+def _real_requested_ip(p):
+    """真机模式下解析 `ip`：**必须显式给出**，且保留回环地址仍表示仿真目标。
+
+    返回 `(ip, 错误结果或 None)`。与 `_pin_sim_ip` 的约定一致：缺省地址只属于仿真模式，
+    真机模式下不该有"不写 ip 就连某台机器人"的便利。
+    """
+    raw = p.get("ip")
+    if raw is None or str(raw).strip() == "":
+        return None, err(
+            "真机模式（DSH_URSIM_MODE=real）必须显式提供 ip —— 缺省地址只属于仿真模式"
+            "（那台虚拟机器人）；要操作仿真请显式传 %s。" % SIM_IP, "BADARG")
+    return str(raw).strip(), None
+
+
+def _real_connect(p):
+    """真机模式下的 `ursim_connect`：确保到该 IP 的 RTDE/Dashboard/RealTime 会话就绪。
+
+    复用既有 `ensure_connected()`（保留地址守卫 / 陈旧句柄替换 / 连接硬预算都在它里面），
+    并如实回报远程控制模式的三态探测 —— 不在远程模式时 URScript 会被静默丢弃，这条提示
+    必须在"连接成功"的同一份回包里给出，而不是等第一条运动指令失败。
+    """
+    ip, problem = _real_requested_ip(p)
+    if problem is not None:
+        return problem
+    if ip == SIM_IP:
+        # 保留回环地址在两种模式都表示离线仿真，绝不交给真机实现。
+        return _sim_connect(p)
+    robot, _model = ensure_connected(ip)
+    remote, raw = _remote_control(dashboard(ip))
+    data = {"ip": ip, "connected": True,
+            "remote_control": remote, "remote_control_raw": raw}
+    try:
+        data["joint_positions"] = [float(x) for x in robot.get_actual_joint_positions()]
+        data["tcp_pose"] = [float(x) for x in robot.get_actual_tcp_pose()]
+    except Exception:
+        # 读不到姿态不影响"会话已建立"这个结论；不把它升级成连接失败。
+        pass
+    ok_model, name = _dashboard_cmd(ip, "ur_get_robot_model")
+    if ok_model:
+        data["robot_model"] = str(name).strip()
+    if remote is False:
+        hint = ("⚠️ 控制器报告**不在远程控制模式**：URScript 与运动指令会被静默丢弃，"
+                "请在示教器上切到远程控制后再发运动指令。")
+    elif remote is None:
+        hint = "（未能确认远程控制模式：dashboard 没有回答。）"
+    else:
+        hint = "（远程控制模式已确认。）"
+    return ok({"message": "已连接（真机）：%s。%s" % (ip, hint), "data": data})
+
+
 def op_disconnect(p):
+    """断开 = 释放**目标**。
+
+    - `sim` 模式（默认）：停掉离线仿真（见 `_sim_disconnect`，行为与从前逐字节相同）；
+    - `real` 模式：关闭真机的 RTDE/Dashboard/RealTime 会话并丢掉句柄（见
+      `_real_disconnect`）—— 真机部署下原先**没有任何工具**能主动释放 RTDE 会话，
+      只能等进程退出，控制器会一直看着那一条未回收的会话。
+    """
+    if REAL_MODE:
+        return _real_disconnect(p)
+    return _sim_disconnect(p)
+
+
+def _sim_disconnect(p):
     """断开 = **停掉离线仿真**（幂等）。
 
     旧实现是 `robot.robotConnector.close()` —— 关真机的 RTDE/Dashboard/RealTime 连接；
@@ -1034,6 +1146,32 @@ def op_disconnect(p):
     if isinstance(result, dict) and "error" not in result:
         result["message"] = "连接已断开：离线仿真已停止。"
     return result
+
+
+def _real_disconnect(p):
+    """真机模式下的 `ursim_disconnect`：关闭会话并丢掉句柄（幂等）。
+
+    与 `ensure_connected()` 的"陈旧句柄替换"同一套动作：`robotConnector.close()` 会关掉
+    RTDE / Dashboard / RealTime 三路连接；然后从 `ROBOTS`/`ROBOT_MODELS` 里摘掉。
+    ⚠️ **不动 `ROBOT_CONN_SEQ`**：连接代次只增不减（见其定义处的说明）。
+    """
+    ip, problem = _real_requested_ip(p)
+    if problem is not None:
+        return problem
+    if ip == SIM_IP:
+        return _sim_disconnect(p)
+    robot = ROBOTS.pop(ip, None)
+    ROBOT_MODELS.pop(ip, None)
+    if robot is None:
+        return ok({"message": "连接不存在（%s 上没有已建立的会话）" % ip,
+                   "data": {"ip": ip, "connected": False}})
+    try:
+        robot.robotConnector.close()
+    except Exception as exc:
+        return err("关闭 %s 的连接失败：%s" % (ip, exc), "NOT_CONNECTED",
+                   {"ip": ip, "connected": False})
+    return ok({"message": "连接已断开（真机）：%s 的 RTDE/Dashboard/RealTime 会话已关闭。" % ip,
+               "data": {"ip": ip, "connected": False}})
 
 
 def op_status(p):
@@ -1713,8 +1851,11 @@ def op_movej(p):
     robot.movej(q, a, v, t, r, wait=False)
     ok_flag, msg = _movej_confirm(ip, q, _budget_ms(p))
     cmd = "movej(%s,%s,%s,%s,%s)" % (q, a, v, t, r)
+    data = {"ok": ok_flag, "command": cmd, "ip": ip}
+    if not ok_flag:
+        return _motion_failure("movej", msg, data)
     return ok({"message": "命令 %s 已发送，%s" % (cmd, msg),
-               "data": {"ok": ok_flag, "command": cmd, "ip": ip}})
+               "data": data})
 
 
 def op_movel(p):
@@ -1732,8 +1873,11 @@ def op_movel(p):
     robot.movel(pose, a, v, t, r, wait=False)
     ok_flag, msg = _movel_confirm(ip, pose, _budget_ms(p))
     cmd = "movel(p%s,%s,%s,%s,%s)" % (pose, a, v, t, r)
+    data = {"ok": ok_flag, "command": cmd, "ip": ip}
+    if not ok_flag:
+        return _motion_failure("movel", msg, data)
     return ok({"message": "命令 %s 已发送，%s" % (cmd, msg),
-               "data": {"ok": ok_flag, "command": cmd, "ip": ip}})
+               "data": data})
 
 
 def _axis_move(p, axis):
@@ -1748,8 +1892,11 @@ def _axis_move(p, axis):
     robot.movel(pose, wait=False)
     ok_flag, msg = _movel_confirm(ip, pose, _budget_ms(p))
     cmd = "movel(p[%.4f,%.4f,%.4f,%.4f,%.4f,%.4f],0.5,0.25,0,0)" % tuple(pose)
+    data = {"ok": ok_flag, "command": cmd, "ip": ip}
+    if not ok_flag:
+        return _motion_failure("沿 %s 轴移动" % "xyz"[axis], msg, data)
     return ok({"message": "命令 %s 已发送，%s" % (cmd, msg),
-               "data": {"ok": ok_flag, "command": cmd, "ip": ip}})
+               "data": data})
 
 
 def op_move_x(p):
@@ -1803,12 +1950,15 @@ def _tool_axis_move(p, axis):
     robot.movel(target, wait=False)
     ok_flag, msg = _movel_confirm(ip, target, _budget_ms(p))
     cmd = "movel(p[%.4f,%.4f,%.4f,%.4f,%.4f,%.4f],0.5,0.25,0,0)" % tuple(target)
+    data = {"ok": ok_flag, "command": cmd, "ip": ip,
+            "tool_delta": delta_tool,
+            "base_delta": [float(x) for x in delta_base]}
+    if not ok_flag:
+        return _motion_failure("沿工具 %s 轴移动" % "xyz"[axis], msg, data)
     return ok({"message": "命令 %s 已发送（工具系 %s 轴 %.4f m ⇒ 基座系位移 [%.4f, %.4f, %.4f]），%s"
                           % (cmd, "xyz"[axis], distance, float(delta_base[0]),
                              float(delta_base[1]), float(delta_base[2]), msg),
-               "data": {"ok": ok_flag, "command": cmd, "ip": ip,
-                        "tool_delta": delta_tool,
-                        "base_delta": [float(x) for x in delta_base]}})
+               "data": data})
 
 
 def op_move_tool_x(p):
@@ -1957,9 +2107,12 @@ def op_draw_circle(p):
                    {"command": cmd, "register": index, "token": token, "ip": ip})
 
     ok_flag, confirm = _wait_robot_idle(ip, _budget_ms(p))
+    data = {"ok": ok_flag, "command": cmd, "register": index, "ip": ip,
+            "t_ignored": t > 0}
+    if not ok_flag:
+        return _motion_failure("draw_circle", confirm, data)
     return ok({"message": "命令已发送（控制器已开始执行），%s：%s%s" % (confirm, cmd, _ignored_t_note(t)),
-               "data": {"ok": ok_flag, "command": cmd, "register": index, "ip": ip,
-                        "t_ignored": t > 0}})
+               "data": data})
 
 
 def op_draw_square(p):
@@ -1993,8 +2146,11 @@ def op_draw_square(p):
     if not _send_program(robot, cmd):
         return err("draw_square 脚本未能送达控制器：%s" % _last_send_failure(robot), "SEND_FAILED")
     ok_flag, confirm = _wait_robot_idle(ip, _budget_ms(p))
+    data = {"ok": ok_flag, "command": cmd, "ip": ip, "t_ignored": t > 0}
+    if not ok_flag:
+        return _motion_failure("draw_square", confirm, data)
     return ok({"message": "命令已发送，%s：%s%s" % (confirm, cmd, _ignored_t_note(t)),
-               "data": {"ok": ok_flag, "command": cmd, "ip": ip, "t_ignored": t > 0}})
+               "data": data})
 
 
 def op_draw_rectangle(p):
@@ -2023,8 +2179,11 @@ def op_draw_rectangle(p):
     if not _send_program(robot, cmd):
         return err("draw_rectangle 脚本未能送达控制器：%s" % _last_send_failure(robot), "SEND_FAILED")
     ok_flag, confirm = _wait_robot_idle(ip, _budget_ms(p))
+    data = {"ok": ok_flag, "command": cmd, "ip": ip, "t_ignored": t > 0}
+    if not ok_flag:
+        return _motion_failure("draw_rectangle", confirm, data)
     return ok({"message": "命令已发送，%s：%s%s" % (confirm, cmd, _ignored_t_note(t)),
-               "data": {"ok": ok_flag, "command": cmd, "ip": ip, "t_ignored": t > 0}})
+               "data": data})
 
 
 def op_draw_star(p):
@@ -2056,10 +2215,13 @@ def op_draw_star(p):
     if not _send_program(robot, cmd):
         return err("draw_star 脚本未能送达控制器：%s" % _last_send_failure(robot), "SEND_FAILED")
     ok_flag, confirm = _wait_robot_idle(ip, _budget_ms(p))
+    data = {"ok": ok_flag, "command": cmd, "vertices": verts, "radius": R, "ip": ip,
+            "t_ignored": t > 0}
+    if not ok_flag:
+        return _motion_failure("draw_star", confirm, data)
     return ok({"message": "命令已发送（五角星，边长 %sm，外接半径 %.4fm），%s：%s%s"
                           % (side, R, confirm, cmd, _ignored_t_note(t)),
-               "data": {"ok": ok_flag, "command": cmd, "vertices": verts, "radius": R, "ip": ip,
-                        "t_ignored": t > 0}})
+               "data": data})
 
 
 def _build_program_target(p):
@@ -2381,8 +2543,11 @@ def op_movep(p):
         return err("movep 脚本未能送达控制器：%s" % _last_send_failure(robot), "SEND_FAILED")
     cmd = "movep(p%s, a=%s, v=%s, r=%s)" % (pose, a, v, r)
     ok_flag, msg = _movel_confirm(ip, pose, _budget_ms(p))
+    data = {"ok": ok_flag, "command": cmd, "ip": ip}
+    if not ok_flag:
+        return _motion_failure("movep", msg, data)
     return ok({"message": "命令 %s 已发送，%s" % (cmd, msg),
-               "data": {"ok": ok_flag, "command": cmd, "ip": ip}})
+               "data": data})
 
 
 def op_movec(p):
@@ -2414,8 +2579,11 @@ def op_movec(p):
     if not _send_program(robot, cmd):
         return err("movec 脚本未能送达控制器：%s" % _last_send_failure(robot), "SEND_FAILED")
     ok_flag, msg = _movel_confirm(ip, to, _budget_ms(p))
+    data = {"ok": ok_flag, "command": cmd, "ip": ip}
+    if not ok_flag:
+        return _motion_failure("movec", msg, data)
     return ok({"message": "命令 %s 已发送，%s" % (cmd, msg),
-               "data": {"ok": ok_flag, "command": cmd, "ip": ip}})
+               "data": data})
 
 
 # ---------------------------------------------------------------------------
@@ -2536,10 +2704,13 @@ def op_run_sequence(p):
                    {"command": cmd, "register": index, "token": token, "ip": ip})
 
     ok_flag, confirm = _wait_robot_idle(ip, _budget_ms(p))
+    data = {"ok": ok_flag, "command": cmd, "register": index, "ip": ip,
+            "segment_count": len(segments), "t_ignored": t > 0}
+    if not ok_flag:
+        return _motion_failure("run_sequence", confirm, data)
     return ok({"message": "连续 %d 段已发送（控制器已开始执行），%s：%s%s"
                           % (len(segments), confirm, cmd, _ignored_t_note(t)),
-               "data": {"ok": ok_flag, "command": cmd, "register": index, "ip": ip,
-                        "segment_count": len(segments), "t_ignored": t > 0}})
+               "data": data})
 
 
 def op_servoj(p):
@@ -3032,6 +3203,8 @@ def op_move_optimized(p):
     ok_flag, msg = confirm()
     data = {"ok": ok_flag, "command": call, "a": a, "v": v, "r": r, "ip": ip}
     data.update(goal_desc)
+    if not ok_flag:
+        return _motion_failure("optimove（%s）" % goal_desc["goal_type"], msg, data)
     return ok({"message": "命令 %s 已发送（a/v 是能力比例，不是物理单位），%s" % (call, msg),
                "data": data})
 
@@ -3830,7 +4003,12 @@ def _sim_settle(sim, p):
 
 
 def _sim_move_reply(sim, p, what, target_pose=None, extra=None):
-    """运动类指令的统一回包：等到位 + 回 `{ok, command, ip, simulated}`。"""
+    """运动类指令的统一回包：等到位 + 回 `{ok, command, ip, simulated}`。
+
+    ⚠️ `_sim_settle` 的 `ok_flag=False`（"预算内没走完"）**必须**升级成信封失败：旧写法
+    无条件 `return ok({...})`，调用方看到的是一句"…（运动在 60000ms 内没有走完）"却带着
+    `ok:true`，与"已到达目标"无法区分。成功路径的结构与字段**保持原样**（见 data）。
+    """
     ok_flag, confirm = _sim_settle(sim, p)
     data = _sim_data(sim, {
         "ok": ok_flag,
@@ -3839,6 +4017,8 @@ def _sim_move_reply(sim, p, what, target_pose=None, extra=None):
     })
     if extra:
         data.update(extra)
+    if not ok_flag:
+        return _motion_failure(what, confirm, data)
     return ok({"message": "%s（%s）" % (what, confirm), "data": data})
 
 
@@ -4610,9 +4790,14 @@ def sim_dispatch(op, params):
 
 
 def _sim_requested_ip(p):
-    """解析仿真工具的 `ip` 参数：缺省即保留地址；给了别的地址说明调用方搞错了对象。
+    """解析**仿真类** op 的 `ip` 参数：缺省即保留地址；给了别的地址说明调用方搞错了对象。
 
     返回 `(ip, 错误结果或 None)`。**只认保留地址**：仿真永远不能指向一台真机。
+
+    ⚠️ 真机模式（`REAL_MODE`）的分流**不在这里**：`connect`/`disconnect` 在进入仿真分支
+    之前就按模式分给了 `_real_connect`/`_real_disconnect`（见各自的实现）。本函数只服务
+    `sim_start`/`sim_stop`/`sim_status` 与 `_sim_connect`/`_sim_disconnect` —— 它们的目标
+    永远是那台虚拟机器人，所以"只认保留地址"在这里仍然成立。
     """
     raw = p.get("ip")
     if raw is None or str(raw).strip() == "":
@@ -5082,6 +5267,17 @@ def route_op(op_name, params):
 
 def main():
     global _CURRENT_REQUEST_ID, _CURRENT_TIMEOUT_MS
+    # 协议是 UTF-8（见 `respond` / `_write_protocol_line`），但 Python 的 stdin **默认跟
+    # locale**：中文 Windows 上是 GBK + `errors='surrogateescape'`。宿主按 UTF-8 写、这边按
+    # GBK 解 ⇒ 非 ASCII 参数被静默损坏成代理字符；回包时 `.encode('utf-8')` 抛
+    # UnicodeEncodeError —— **而那时副作用（运动/I/O）已经发生**。
+    # `lib/worker.js` 的 spawn env 已设 `PYTHONUTF8=1`；这里再做一层显式收口，保证任何启动
+    # 方式（包括手工 `python ur_worker.py` 接管道）都按 UTF-8 读。旧解释器没有 reconfigure
+    # 时忽略此步（PYTHONUTF8 那条仍然生效）。
+    try:
+        sys.stdin.reconfigure(encoding="utf-8", errors="strict")
+    except Exception:
+        pass
     # 仿真遥测的推送线程：与运动命令**并行**（RTDE 缓存由 URBasic 自己的接收线程更新），
     # 所以机器人运动期间仿真照样有数据。daemon=True：主线程退出即随之结束。
     if not TWIN_PUSH_DISABLED:

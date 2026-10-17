@@ -205,3 +205,110 @@ test('register 参数可换哨兵寄存器', () => {
   assert.match(linesOf(c.sent)[0], /^write_output_integer_register\(7, \d+\)$/)
   assert.equal(c.verified, true)
 })
+
+// ── P1-1：运动/执行类指令"没做到"必须体现在**信封** ok 上 ──────────────────
+//
+// 旧写法无条件 `return ok({... "ok": ok_flag ...})`：确认失败（ok_flag=False）只埋在
+// `data.ok` 里，信封 `ok` 恒为 true —— 调用方/模型读到的是一句"命令已发送，移动未确认
+// 到位"，看起来就是成功。这里走 `main()` 的**真实派发 + 信封逻辑**（REAL 模式 + 桩控制器），
+// 断言：① 信封 ok 与 data.ok 一致；② "控制器根本没执行" 与 "执行了但超时" 用不同错误码；
+// ③ 成功路径的字段结构不受影响（仿真路径由 selftest.test.mjs 的用例覆盖）。
+
+const ENVELOPE_HARNESS = `
+import io, json, os, sys, tempfile, ur_worker
+
+REAL_OUT = ur_worker._PROTOCOL_OUT
+ur_worker._LOG = ur_worker._CappedLog(os.path.join(tempfile.mkdtemp(prefix="ur-env-"), "t.log"), 4096)
+sys.stdout = ur_worker._LOG
+ur_worker.TWIN_PUSH_DISABLED = True
+
+IP = "192.168.1.10"
+
+class _Model:
+    def OutputIntRegister(self, index):
+        return 12345
+
+class _Connector:
+    def close(self):
+        pass
+
+class _Robot:
+    def __init__(self):
+        self.robotConnector = _Connector()
+    def movej(self, *args, **kwargs):
+        pass
+    def movel(self, *args, **kwargs):
+        pass
+
+# 桩掉真机路径的全部网络动作；确认函数一律返回 False（"没做到"）。
+ur_worker.ensure_connected = lambda ip: (_Robot(), _Model())
+ur_worker._assert_remote_control = lambda ip, what: None
+ur_worker._send_program = lambda robot, script: True
+ur_worker._last_send_failure = lambda robot: "stub"
+ur_worker.ROBOT_MODELS[IP] = _Model()
+ur_worker._sentinel_token = lambda value: 12345
+ur_worker._read_int_register = lambda model, index: 12345
+ur_worker._wait_robot_idle = lambda ip, ms: (
+    False,
+    "未观察到脚本开始执行（超时 1000ms）—— 控制器很可能没有执行这段 URScript，"
+    "最常见原因是机器人不在远程控制模式（本地/示教器模式下脚本会被静默丢弃）")
+ur_worker._movej_confirm = lambda ip, q, ms: (False, "移动未确认到位（超时 1000ms）")
+
+REQS = [
+    {"id": 1, "op": "movej", "ip": IP, "q": [0.1, 0.0, 0.0, 0.0, 0.0, 0.0], "_timeout_ms": 60000},
+    {"id": 2, "op": "draw_circle", "ip": IP,
+     "center": [0.3, 0.0, 0.4, 0.0, 0.0, 0.0], "r": 0.05, "_timeout_ms": 60000},
+]
+
+captured = io.StringIO()
+ur_worker._PROTOCOL_OUT = captured
+old_stdin = sys.stdin
+sys.stdin = io.StringIO("\\n".join(json.dumps(r) for r in REQS) + "\\n")
+try:
+    ur_worker.main()
+finally:
+    sys.stdin = old_stdin
+    ur_worker._PROTOCOL_OUT = REAL_OUT
+
+envelopes = [json.loads(line) for line in captured.getvalue().splitlines() if line.strip()]
+REAL_OUT.write(json.dumps({"envelopes": envelopes}, ensure_ascii=False) + "\\n")
+REAL_OUT.flush()
+`
+
+const envelopeChild = spawnSync(process.env.PYTHON ?? 'python', ['-u', '-c', ENVELOPE_HARNESS], {
+  encoding: 'utf8',
+  timeout: 60000,
+  env: {
+    ...process.env,
+    PYTHONPATH: pythonDir,
+    PYTHONUNBUFFERED: '1',
+    PYTHONIOENCODING: 'utf-8',
+    // 真机模式：让请求落到 HANDLERS 的真机实现（桩已替换掉所有网络动作）
+    DSH_URSIM_MODE: 'real',
+  },
+})
+assert.equal(envelopeChild.status, 0, `信封探针失败：${envelopeChild.stderr}`)
+const envelopeLine = envelopeChild.stdout.split('\n').map((l) => l.trim()).find((l) => l.startsWith('{'))
+assert.ok(envelopeLine, `未拿到信封 JSON：${JSON.stringify(envelopeChild.stdout)}`)
+const envelopes = JSON.parse(envelopeLine).envelopes
+
+test('★ P1-1：真机运动 op 确认失败必须返回信封 ok:false，且信封 ok === data.ok', () => {
+  assert.equal(envelopes.length, 2, `应拿到两条信封，实际 ${envelopes.length}`)
+  const [movej, draw] = envelopes
+
+  // movej：_movej_confirm 返回 False（执行了但没确认到位）⇒ TIMEOUT，且 data.ok 同步为 false。
+  assert.equal(movej.ok, false, 'Movej 未确认到位时信封 ok 必须是 false（旧实现是 true）')
+  assert.equal(movej.code, 'TIMEOUT', '超时类失败必须带 TIMEOUT')
+  assert.equal(movej.data?.ok, false, '★ 信封 ok 必须等于 data.ok —— 不能一个 true 一个 false')
+  assert.equal(typeof movej.data?.command, 'string', '失败时仍必须保留 data.command（既有读取方依赖）')
+  assert.match(movej.data.command, /^movej\(/)
+  assert.match(String(movej.error), /没有完成/, '失败文案必须说清"没有完成"，不能沿用"已发送"')
+
+  // draw_circle：_wait_robot_idle 返回"从未观察到脚本开始执行" ⇒ NOT_EXECUTED（不是 TIMEOUT）。
+  assert.equal(draw.ok, false, 'Draw_circle 没被执行时信封 ok 必须是 false')
+  assert.equal(draw.code, 'NOT_EXECUTED', '★ "控制器没执行"必须与"超时"分开，否则处置方式完全不同')
+  assert.equal(draw.data?.ok, false, '★ 信封 ok 必须等于 data.ok')
+  assert.equal(typeof draw.data?.command, 'string')
+  assert.match(draw.data.command, /movec\(/)
+  assert.match(String(draw.error), /没有完成/)
+})

@@ -45,6 +45,69 @@ out["sim_not_started"] = ur_worker.SIMS.get(ur_worker.SIM_IP) is None
 out["sim_ip_goes_to_sim"] = ur_worker.route_op("get_joint_pose", {"ip": ur_worker.SIM_IP}) is not None
 out["sim_started_for_sim_ip"] = ur_worker.SIMS.get(ur_worker.SIM_IP) is not None
 
+# ⑤ connect/disconnect 的分支选择（P1-4）：real 模式走真机语义，sim 模式逐字节不变。
+#    ⚠️ 全程用桩：测试绝不真连机器人（ensure_connected / dashboard / 远程控制探测全替换）。
+class _Connector:
+    def __init__(self):
+        self.closed = 0
+    def close(self):
+        self.closed += 1
+
+class _Robot:
+    def __init__(self):
+        self.robotConnector = _Connector()
+
+_real_robot = _Robot()
+_ensure_calls = []
+
+def _fake_ensure(ip):
+    _ensure_calls.append(ip)
+    return _real_robot, object()
+
+ur_worker.ensure_connected = _fake_ensure
+ur_worker.dashboard = lambda ip: object()
+ur_worker._remote_control = lambda d: (True, "true")
+ur_worker._dashboard_cmd = lambda ip, cmd: (True, "UR12e")
+
+REAL_IP = "192.168.1.10"
+ur_worker.SIMS.clear()          # 从干净状态观察"connect 会不会顺手开仿真"
+
+# 真实地址的 connect：sim 模式下必须仍是 SIM_BADARG；real 模式下必须走真机语义。
+_conn_real = ur_worker.HANDLERS["connect"]({"ip": REAL_IP})
+out["connect_real_ip"] = {
+    "code": _conn_real.get("code"),
+    "ensure_called": len(_ensure_calls),
+    "data_ip": (_conn_real.get("data") or {}).get("ip"),
+    "connected": (_conn_real.get("data") or {}).get("connected"),
+    "remote_control": (_conn_real.get("data") or {}).get("remote_control"),
+    "sim_created": ur_worker.SIMS.get(ur_worker.SIM_IP) is not None,
+}
+
+# 缺省 ip：sim 模式 = 那台虚拟机器人；real 模式必须非法（缺省地址只属于仿真模式）。
+_conn_default = ur_worker.HANDLERS["connect"]({})
+out["connect_default"] = {
+    "code": _conn_default.get("code"),
+    "simulated": (_conn_default.get("data") or {}).get("simulated"),
+}
+
+# 保留回环地址在两种模式下都走仿真（绝不交给真机实现）。
+_loop = ur_worker.HANDLERS["connect"]({"ip": ur_worker.SIM_IP})
+out["connect_loopback"] = {
+    "simulated": (_loop.get("data") or {}).get("simulated"),
+    "ensure_calls": len(_ensure_calls),
+}
+
+# disconnect：real 模式下必须关真机会话并摘句柄；sim 模式下仍是仿真语义（拒绝真机地址）。
+ur_worker.ROBOTS[REAL_IP] = _real_robot
+ur_worker.ROBOT_MODELS[REAL_IP] = object()
+_disc = ur_worker.HANDLERS["disconnect"]({"ip": REAL_IP})
+out["disconnect_real_ip"] = {
+    "code": _disc.get("code"),
+    "closed": _real_robot.robotConnector.closed,
+    "removed": REAL_IP not in ur_worker.ROBOTS,
+    "sim_still_active": ur_worker.SIMS.get(ur_worker.SIM_IP) is not None,
+}
+
 ur_worker._PROTOCOL_OUT.write(json.dumps(out) + "\\n")
 ur_worker._PROTOCOL_OUT.flush()
 `;
@@ -74,6 +137,18 @@ test('默认（不设 DSH_URSIM_MODE）＝ sim：真机地址在派发前被拒�
   assert.equal(got.real_mode, false);
   assert.equal(got.real_ip_code, 'SIM_BADARG', '仿真模式下真实地址必须以 SIM_BADARG 拒绝');
   assert.equal(got.no_ip_error, false, '仿真模式下缺省 ip 是合法的（指向那台虚拟机器人）');
+
+  // ── P1-4：sim 模式下 connect/disconnect 必须是**仿真语义**（逐字节保持原行为） ──
+  assert.equal(got.connect_real_ip.code, 'SIM_BADARG',
+    'sim 模式下 connect(真机地址) 仍必须报 SIM_BADARG');
+  assert.equal(got.connect_real_ip.ensure_called, 0,
+    'sim 模式绝不允许触碰真机连接器');
+  assert.equal(got.connect_default.code, null, 'sim 模式下缺省 ip 的 connect 必须成功');
+  assert.equal(got.connect_default.simulated, true, 'sim 模式下 connect 必须走仿真');
+  assert.equal(got.connect_loopback.simulated, true, 'sim 模式下保留地址仍然走仿真');
+  assert.equal(got.disconnect_real_ip.code, 'SIM_BADARG',
+    'sim 模式下 disconnect(真机地址) 仍必须被拒');
+  assert.equal(got.disconnect_real_ip.closed, 0, 'sim 模式绝不允许关闭真机会话');
 });
 
 test('★ real 模式：真实地址不再被拒、缺省 ip 变成非法、且绝不自动开仿真', () => {
@@ -91,4 +166,28 @@ test('★ real 模式：真实地址不再被拒、缺省 ip 变成非法、且�
     '★ 保留回环地址在真机模式下仍必须走仿真（否则 127.0.0.1 会去连真控制器）',
   );
   assert.equal(got.sim_started_for_sim_ip, true, '保留地址的调用照旧自动就绪仿真');
+
+  // ── P1-4：real 模式下 connect/disconnect 必须走**真机语义**（桩，不真连） ──
+  assert.equal(got.connect_real_ip.code, null,
+    '★ real 模式下 connect(真机地址) 不能再被 SIM_BADARG 拒绝（旧实现与实际分支矛盾）');
+  assert.equal(got.connect_real_ip.ensure_called, 1,
+    '★ 必须复用 ensure_connected 建立真机会话');
+  assert.equal(got.connect_real_ip.data_ip, '192.168.1.10', '回包必须带真实 IP');
+  assert.equal(got.connect_real_ip.connected, true);
+  assert.equal(got.connect_real_ip.remote_control, true,
+    '必须回报远程控制模式的三态探测结果（不在远程模式时运动指令会被静默丢弃）');
+  assert.equal(got.connect_real_ip.sim_created, false, '真机 connect 不得顺手开仿真');
+  assert.equal(got.connect_default.code, 'BADARG',
+    '★ real 模式下缺省 ip 必须非法（缺省地址只属于仿真模式）');
+  assert.equal(got.connect_loopback.simulated, true,
+    '★ 保留回环地址在 real 模式下仍必须走仿真（绝不交给真机实现）');
+  assert.equal(got.connect_loopback.ensure_calls, 1,
+    '保留地址走仿真时不得再多调一次真机连接器');
+  assert.equal(got.disconnect_real_ip.code, null,
+    '★ real 模式下 disconnect 必须走真机语义（真机部署原先没有主动释放 RTDE 的入口）');
+  assert.equal(got.disconnect_real_ip.closed, 1,
+    '★ 必须关闭 robotConnector（RTDE/Dashboard/RealTime 三路会话）');
+  assert.equal(got.disconnect_real_ip.removed, true, '必须摘掉 ROBOTS 里的句柄');
+  assert.equal(got.disconnect_real_ip.sim_still_active, true,
+    '真机 disconnect 不得动离线仿真');
 });
