@@ -2575,13 +2575,15 @@ test('★ 控制轨尺寸：左轨 180 / 右轨 350，按钮 52×52、位姿 3 �
   assert.match(stage.style.gridTemplateColumns, /^180px minmax\(280px, 1fr\) 350px$/,
     '★ 展开态列宽必须是 180 / 350（RAIL_W_LEFT / RAIL_W_RIGHT）')
 
-  /* ---- 左轨：3×3 盘 52×52 + gap 6（3×52 + 2×6 = 168 = 180 − 2×6）---- */
+  /* ---- 左轨：3×3 盘 52×52 + gap 5 ----
+     宽度算术：180（列宽）− 1（右轨边框）− 12（body 左右各 6）= 167 可用；
+     3×52 + 2×5 = 166 ≤ 167。gap 用 6 就是 168，会溢出 1 px 被 overflow-x 裁掉。 */
   assert.match(TWIN_CSS, /\.ursim-twin-rail-body\[data-ursim-twin-rail-body='left'\]\s*\{\s*padding:\s*6px/,
     '★ 左轨 body 上下左右内边距各 6 px')
   assert.match(TWIN_CSS, /\.ursim-twin-ctl-pad\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*52px\)/,
     '★ 3×3 盘必须是 3 列 52 px')
-  assert.match(TWIN_CSS, /\.ursim-twin-ctl-pad\s*\{[^}]*gap:\s*6px/,
-    '★ 盘内 gap 必须是 6 px')
+  assert.match(TWIN_CSS, /\.ursim-twin-ctl-pad\s*\{[^}]*gap:\s*5px/,
+    '★ 盘内 gap 必须是 5 px（6 px 会溢出 1 px）')
   assert.match(TWIN_CSS, /\.ursim-twin-ctl-button\s*\{[^}]*width:\s*52px[^}]*height:\s*52px/,
     '★ 点动按钮必须 52×52')
 

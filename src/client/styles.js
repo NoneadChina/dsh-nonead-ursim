@@ -375,9 +375,11 @@ body[data-ds-dark-theme] .ursim-twin-panel {
 }
 .ursim-twin-ctl-pad {
   display: grid;
+  /* 宽度算术：180（列宽）− 1（右轨边框）− 12（body 左右各 6）= 167 可用。
+     3×52 + 2×5 = 166 ≤ 167；用 gap 6 就是 168，会溢出 1 px 被 overflow-x 裁掉。 */
   grid-template-columns: repeat(3, 52px);
   grid-template-rows: repeat(3, 52px);
-  gap: 6px;
+  gap: 5px;
   justify-content: center;
 }
 .ursim-twin-ctl-cell { display: block; }
