@@ -312,6 +312,8 @@ def sim_capabilities():
                    "ursim_move_tool_x", "ursim_move_tool_y", "ursim_move_tool_z",
                    "ursim_draw_circle", "ursim_draw_square", "ursim_draw_rectangle", "ursim_draw_star",
                    "ursim_wait_steady", "ursim_stopj", "ursim_stopl",
+                   # 速度流：连续点动（面板按住不放）。`speedj` 仍不在仿真语义里。
+                   "ursim_speedl",
                    "ursim_jog_rotate", "ursim_set_speed_scaling"],
         "io": ["ursim_set_digital_out", "ursim_get_digital_out_bits", "ursim_get_digital_in",
                "ursim_get_digital_in_bits", "ursim_set_analog_out", "ursim_get_analog_in",
@@ -4660,9 +4662,60 @@ def _sim_wait_steady(sim, p):
 
 
 def _sim_stop(sim, p, what):
+    # 速度流也要一起停：`stopl` 是"让 TCP 速度归零"，而速度流正是 TCP 速度的唯一来源。
+    # 少了这一行，`stopl` 之后 push 线程的下一帧 `advance()` 会继续按 twist 积分。
+    sim.stop_twist()
     sim.stop()
     return ok({"message": "%s：仿真已在当前姿态冻结（没有减速模型，是瞬时停）" % what,
                "data": _sim_data(sim, {"stopped": True})})
+
+
+def _sim_speedl(sim, p):
+    """仿真侧的**速度流**（`speedl` 语义）：立即返回，**不等到位**。
+
+    连续运动的全部意义就在这里：面板按住点动键时前端每 ~100 ms 发一条 velocity，
+    后端只更新 twist，真正的逐帧积分发生在 `VirtualRobot.advance()` 里（推送线程 20 Hz
+    读它，所以画面连续）。若这里 `_sim_settle`，每条 speedl 会等到"走完"才返回 ——
+    而速度流永远走不完（它是速度、不是位置），那就不是连续运动了。
+
+    参数：
+    - `xd`：六元 `[vx,vy,vz,ωx,ωy,ωz]`（m/s 与 rad/s）；
+    - `frame`：`'tool'` / `'base'`，缺省 `base`；
+    - `ttl_ms`：**看门狗**（缺省 400，钳 100–2000）。到点没收到新指令就自动归零 ——
+      浏览器崩溃 / 标签页被杀时，机械臂必须自己停下来。
+    """
+    xd = _vec(p, "xd", 6, "speedl 的 xd")
+    raw_frame = p.get("frame", "base")
+    frame = str(raw_frame).strip().lower() if raw_frame is not None else "base"
+    if frame not in ("tool", "base"):
+        raise ValueError("speedl 的 frame 必须是 'tool' 或 'base'，收到 %r" % (raw_frame,))
+    raw_ttl = p.get("ttl_ms", 400)
+    try:
+        ttl_ms = float(raw_ttl)
+    except (TypeError, ValueError):
+        raise ValueError("speedl 的 ttl_ms 必须是数值，收到 %r" % (raw_ttl,))
+    if not math.isfinite(ttl_ms):
+        raise ValueError("speedl 的 ttl_ms 必须是有穷数值，收到 %s" % ttl_ms)
+    # **钳位**而不是拒绝：看门狗是安全底线，调用方给个 0 或 99999 时宁可钳到合法区间，
+    # 也不该让"停下来"这件事因为参数越界而整条指令失败。
+    ttl_ms = min(2000.0, max(100.0, ttl_ms))
+    sim.set_twist(xd, frame=frame, ttl_s=ttl_ms / 1000.0)
+    state = sim.twist_state()
+    return ok({
+        "message": ("速度流已启动（仿真）：twist=%s，frame=%s；看门狗 %dms 内没有新指令就自动归零。"
+                    "停止请调用 ursim_stopl（立即停）或再发一条全零 twist。"
+                    % (_round_pose(xd), frame, int(ttl_ms))),
+        "data": _sim_data(sim, {
+            "ok": True,
+            "command": "sim:speedl",
+            "twist": [float(x) for x in xd],
+            "frame": frame,
+            "ttl_ms": ttl_ms,
+            "stop_deadline": state["deadline"],
+            "sim_note": ("仿真按 twist·Δt 逐帧积分位姿再逆解（运动学级）；"
+                         "没有加减速模型，也没有伺服带宽。"),
+        }),
+    })
 
 
 def _arc_poses(start, via, to, max_steps=240):
@@ -5045,6 +5098,10 @@ SIM_OPS = {
     "draw_rectangle": _sim_draw_rectangle,
     "draw_star": _sim_draw_star,
     "wait_steady": _sim_wait_steady,
+    # 速度流（面板按住点动键）：立即返回，由 advance() 逐帧积分；stopl/stopj 清掉它。
+    # ⚠️ 刻意**不**做 `speedj`：关节速度流没有对应的面板交互，且现有测试把 speedj 钉在
+    # "无仿真语义"（SIM_UNSUPPORTED）上 —— 没有需求就不该改那条边界。
+    "speedl": _sim_speedl,
     "stopj": lambda sim, p: _sim_stop(sim, p, "ur_stopj"),
     "stopl": lambda sim, p: _sim_stop(sim, p, "ur_stopl"),
     # B3：I/O 与寄存器的内存态 —— 输出可写可读回，输入没有生产者（一律 0），寄存器只有读口。

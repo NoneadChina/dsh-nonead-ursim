@@ -301,6 +301,16 @@ def pose_to_matrix_axis_angle(pose):
     return matrix_from_axis_angle(*values)
 
 
+def _rotate_vector(m, v):
+    """用列主序 4×4 矩阵的左上 3×3 部分旋转三维向量（速度流换系用）。
+
+    `m[col*4 + row]` 是第 `row` 行第 `col` 列，所以 `out[row] = Σ_col m[col*4+row]·v[col]`。
+    """
+    return [m[0] * v[0] + m[4] * v[1] + m[8] * v[2],
+            m[1] * v[0] + m[5] * v[1] + m[9] * v[2],
+            m[2] * v[0] + m[6] * v[1] + m[10] * v[2]]
+
+
 # ---------------------------------------------------------------------------
 # 逆运动学（数值阻尼最小二乘）
 # ---------------------------------------------------------------------------
@@ -578,6 +588,14 @@ def preset_joints(name, model_id=None):
 # 单段运动的最短时长（秒）：太短会让 20 Hz 的仿真丢帧（看不清动作）
 _MIN_SEGMENT_S = 0.05
 
+# 速度流**单帧**最大积分步长（秒）。
+#
+# 速度流（`speedl` 语义）是"每来一帧就按 Δt 积分"的：浏览器卡一下、推送线程被占住几秒
+# 都是常态。若直接按墙上时钟差积分，一次 3 秒的停顿会在下一帧把机械臂**瞬移** 3·v 米
+# （然后是必然的逆解失败、twist 被清 —— 用户看到的就是"按了一下就卡死"）。钳到 0.1 s
+# 后，最坏情况是"少走了一点"，而不是"跳过去"。
+_MAX_TWIST_DT = 0.1
+
 
 class VirtualRobot:
     """一台**虚拟 UR**：只有运动学状态，没有控制器、没有网络。
@@ -609,6 +627,17 @@ class VirtualRobot:
         self.started_at = self._started_at
         self.move_count = 0
         self.created_at = time.time()
+        # ── 速度流（`speedl` 语义）────────────────────────────────────────────
+        # `twist` = [vx,vy,vz,ωx,ωy,ωz]（m/s、rad/s），`frame` 决定它表达在哪个坐标系；
+        # `_twist_deadline` 是**看门狗**截止时刻：到点没收到新指令就自动归零。
+        self._twist = [0.0] * 6
+        self._twist_frame = "base"
+        self._twist_deadline = 0.0
+        # 上一次 `advance()` 的时刻（速度流用它算 Δt）。None ⇒ 还没有过推进。
+        self._last_advance_at = None
+        # 速度流被逆解拒绝过没有（供 `status()` / `twist_state()` 如实回报）。
+        self._twist_rejected = False
+        self._twist_reject_reason = ""
         self.serial = "SIM-%s-%04d" % (canonical_model_name(self.model).upper(),
                                        int(self.created_at) % 10000)
 
@@ -653,12 +682,188 @@ class VirtualRobot:
         return list(self._waypoints[-1])
 
     def advance(self, now=None):
-        """把内部 `q` 推到"现在"；返回当前 q。幂等、无副作用。"""
+        """把内部 `q` 推到"现在"；返回当前 q。
+
+        这里有**两条互斥的推进通道**：
+
+        1. **速度流**（`speedl` 语义）：`twist` 非零且没到看门狗截止时间 ⇒ 按 Δt 积一帧；
+        2. **轨迹段**（既有 `_plan` 折线）：没有有效速度流时按 elapsed 采样。
+
+        为什么必须互斥：两条通道都写同一个 `q`，同时推进等于"轨迹走一点、速度再叠一点"，
+        而且用的是两条不同的时间基准（`_started_at` vs 上一帧 `advance` 的时刻）。互斥之后
+        任一时刻只有一个来源在决定位姿，"这一帧到底走了多少"才可解释。
+
+        看门狗过期（或全零 twist）时也要**把当前姿态锚成新轨迹**：否则回到轨迹段会按
+        `elapsed` 采样到速度流开始之前的旧航点，机械臂会"弹回去"。
+        """
+        now = self._t_now(now)
+        if self._twist_live(now):
+            self._integrate_twist(now)
+            return self.q
+        if any(abs(v) > 1e-12 for v in self._twist):
+            # 到点自动归零（看门狗）。这是最后的安全底线：浏览器崩溃/标签页被杀时，
+            # 不会再有新的 velocity 指令来续命。
+            self._twist = [0.0] * 6
+            self._freeze_current(now)
         self.q = self._sample(self.elapsed(now))
+        self._last_advance_at = now
         return self.q
 
     def is_steady(self, now=None):
+        """速度流有效期间**永远不算"稳态"**（它会一直走下去，直到停或看门狗到点）。"""
+        now = self._t_now(now)
+        if self._twist_live(now):
+            return False
         return self.elapsed(now) >= self._total_s - 1e-9
+
+    # ── 速度流（`speedl` / `stopl` 语义）─────────────────────────────────────
+    def _twist_live(self, now):
+        """这一时刻速度流是否仍在生效（非零 + 未过看门狗截止时间）。"""
+        return now <= self._twist_deadline and any(abs(v) > 1e-12 for v in self._twist)
+
+    def _freeze_current(self, now):
+        """把当前 `q` 变成一条**零长度轨迹**：之后 `_sample` 恒回当前姿态。
+
+        速度流是逐帧改 `q` 的，而 `_sample` 只会沿 `_waypoints` 插值。不同步这两者，
+        速度流一结束（stopl / 看门狗到点）机械臂就会跳回上一段轨迹的航点。
+        """
+        self._waypoints = [list(self.q)]
+        self._segment_s = [_MIN_SEGMENT_S]
+        self._total_s = 0.0
+        self._started_at = now
+
+    def set_twist(self, twist, frame="base", ttl_s=0.4, now=None):
+        """写入一条**速度流**（`speedl` 语义）并武装看门狗。
+
+        - `twist` 六元有限数，`[vx,vy,vz,ωx,ωy,ωz]`（m/s、rad/s）；
+        - `frame`：`'base'`（缺省）或 `'tool'` —— 线速度与角速度都表达在那个坐标系里；
+        - `ttl_s`：看门狗时长（秒）。到点没有新指令 ⇒ 自动归零（见 `advance()`）；
+        - **全零 twist 等价于 stop**（协议里明确允许），按停止处理。
+
+        速度流从**当前姿态**起步：先把剩下的轨迹段清掉（等价于"新的运动指令接管"）。
+        否则 `advance()` 里的互斥规则会让"段"和"速度流"互相僵住 —— 段不推进、速度也不
+        推进，机械臂原地不动直到看门狗过期。
+        """
+        if not isinstance(twist, (list, tuple)) or len(twist) != 6:
+            raise SimError("速度流需要 6 维 twist（vx,vy,vz,ωx,ωy,ωz），收到 %r" % (twist,),
+                           "SIM_BADARG")
+        values = []
+        for value in twist:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise SimError("速度流 twist 含非数值元素：%r" % (value,), "SIM_BADARG")
+            number = float(value)
+            if not math.isfinite(number):
+                raise SimError("速度流 twist 含非有限数值（NaN/Infinity），已拒绝", "SIM_BADARG")
+            values.append(number)
+        if frame not in ("tool", "base"):
+            raise SimError("速度流的 frame 必须是 'tool' 或 'base'，收到 %r" % (frame,),
+                           "SIM_BADARG")
+        now = self._t_now(now)
+        # 续命之前先把**旧 twist** 从「上一次 advance」积到"现在"。
+        #
+        # 为什么必须补这一段：面板按住时每 ~100ms 发一条 velocity，而推送线程 20Hz 调
+        # advance()。若这里直接改锚点，两条指令之间那段时间就被丢掉了 —— 实测 1 秒的
+        # 连续点动只走了请求速度的 **64%**，而且比例随推送节奏抖动（按住不放却越走越慢）。
+        # 先积分再接管，运动总位移才只取决于墙上时钟。
+        if self._twist_live(now) and any(abs(v) > 1e-12 for v in values):
+            self._integrate_twist(now)
+        # 接管当前姿态：清掉残留轨迹段（与 `stop()` 同一手法，但不把 move_count 当运动）。
+        current = self._sample(self.elapsed(now))
+        self._waypoints = [list(current)]
+        self._segment_s = [_MIN_SEGMENT_S]
+        self._total_s = 0.0
+        self._started_at = now
+        self.q = list(current)
+        self._twist_rejected = False
+        self._twist_reject_reason = ""
+        # 首帧不跳：下一次 advance 的 Δt 从"收到这条指令的时刻"算起。
+        self._last_advance_at = now
+        if all(abs(v) <= 1e-12 for v in values):
+            # 全零 = stop：不保留一个"零速度的武装状态"。
+            self._twist = [0.0] * 6
+            self._twist_frame = frame
+            self._twist_deadline = now
+            return
+        try:
+            ttl = float(ttl_s)
+        except (TypeError, ValueError):
+            ttl = 0.4
+        if not math.isfinite(ttl) or ttl <= 0.0:
+            ttl = 0.4
+        self._twist = values
+        self._twist_frame = frame
+        self._twist_deadline = now + ttl
+
+    def stop_twist(self, now=None):
+        """立即清掉速度流（`stopl` / 全零 twist 语义）。位姿保持不动。"""
+        now = self._t_now(now)
+        self.q = list(self._sample(self.elapsed(now)))
+        self._twist = [0.0] * 6
+        self._twist_deadline = now
+        self._last_advance_at = now
+        # 冻结当前姿态：之后不会再有任何通道把它推回去。
+        self._freeze_current(now)
+
+    def twist_state(self, now=None):
+        """速度流的只读快照（供 `status()` 与测试核对"到底停了没有/为什么停"）。"""
+        now = self._t_now(now)
+        return {
+            "twist": list(self._twist),
+            "frame": self._twist_frame,
+            "deadline": self._twist_deadline,
+            "active": self._twist_live(now),
+            "rejected": bool(self._twist_rejected),
+            "reject_reason": self._twist_reject_reason,
+        }
+
+    def _integrate_twist(self, now):
+        """按 Δt 把 twist 积一帧：位姿 → 逆解 → 关节角。
+
+        线速度直接加在 TCP 位置上；角速度用 `R_axis(ω·Δt)` 做**严格旋转合成**：
+        基座系左乘 `R_δ·R`，工具系右乘 `R·R_δ`（与 `jog_rotate` 同一套约定）。
+
+        逆解失败（不可达 / 与上一帧不连续）时**保持当前关节角并清掉 twist**：
+        不抛错、不卡死 —— 面板会一直按着点动键，抛错只会把 worker 主线程变成一条
+        错误流；而"停在原地 + 如实记录被拒"才是安全且可解释的行为。
+        """
+        dt = 0.0 if self._last_advance_at is None else now - self._last_advance_at
+        if not math.isfinite(dt) or dt <= 0.0:
+            # 首帧（Δt=0）不能跳：必须从收到指令的位置起步。
+            self._last_advance_at = now
+            return
+        dt = min(dt, _MAX_TWIST_DT)
+        pose = tcp_pose(self.model, self.q)
+        rotation = matrix_from_axis_angle(0.0, 0.0, 0.0, pose[3], pose[4], pose[5])
+        linear = self._twist[0:3]
+        angular = self._twist[3:6]
+        delta = matrix_from_axis_angle(0.0, 0.0, 0.0,
+                                       angular[0] * dt, angular[1] * dt, angular[2] * dt)
+        if self._twist_frame == "tool":
+            # 工具系：线速度先旋到基座系；姿态右乘（绕工具自己的轴）。
+            linear_base = _rotate_vector(rotation, linear)
+            target_rotation = multiply4(rotation, delta)
+        else:
+            linear_base = list(linear)
+            target_rotation = multiply4(delta, rotation)
+        target = list(target_rotation)
+        target[12] = pose[0] + linear_base[0] * dt
+        target[13] = pose[1] + linear_base[1] * dt
+        target[14] = pose[2] + linear_base[2] * dt
+        solved = ik_reachable(self.model, target, [self.q], limits=self.limits,
+                              max_step=MAX_IK_STEP_RAD)
+        if solved is None:
+            self._twist = [0.0] * 6
+            self._twist_rejected = True
+            self._twist_reject_reason = (
+                "速度流的目标位姿在运动学上不可达：局部逆解不收敛，或解与上一帧**不连续**"
+                "（跳变超过 %.1f rad）。速度流已自动清零，关节角保持在拒绝时的位置。"
+                % MAX_IK_STEP_RAD)
+            self._freeze_current(now)
+            self._last_advance_at = now
+            return
+        self.q = [float(v) for v in solved]
+        self._freeze_current(now)
+        self._last_advance_at = now
 
     def target_q(self):
         return list(self._waypoints[-1])
@@ -681,6 +886,10 @@ class VirtualRobot:
         **总时长**的下限；不再逐段压地板（逐段地板会把细分点重新变成一次启停）。
         """
         current = self._sample(self.elapsed(now))
+        # 任何**离散**运动指令都接管速度流：否则一条 movel 走完、看门狗又还没到点时，
+        # 之前那条 speedl 会"复活"，机械臂自己又走起来 —— 那不是任何一方的本意。
+        self._twist = [0.0] * 6
+        self._twist_deadline = 0.0
         chain = [current] + [[float(x) for x in w[:6]] for w in waypoints]
         # 每段的关节位移（取该段里动得最多的那个关节），用来按"同一关节速度"分配时间。
         weights = [max(abs(chain[i + 1][j] - chain[i][j]) for j in range(6))
@@ -824,13 +1033,18 @@ class VirtualRobot:
         self._plan([goal], 1.05, 1.4, now=now)
 
     def stop(self, now=None):
-        """stopj/stopl：在当前姿态冻结（清掉剩余轨迹）。"""
+        """stopj/stopl：在当前姿态冻结（清掉剩余轨迹**与速度流**）。"""
+        now = self._t_now(now)
         current = self._sample(self.elapsed(now))
         self._waypoints = [list(current)]
         self._segment_s = [_MIN_SEGMENT_S]
         self._total_s = _MIN_SEGMENT_S
-        self._started_at = self._t_now(now)
+        self._started_at = now
         self.q = list(current)
+        # 速度流同样是"还在动"的一种：stop 之后必须一起清掉，否则下一帧 advance 会继续积分。
+        self._twist = [0.0] * 6
+        self._twist_deadline = now
+        self._last_advance_at = now
 
     def speedj_probe(self):
         """当前最大关节速度（rad/s）—— 只读、用于 `ursim_wait_steady` 之外的诊断。"""
@@ -876,6 +1090,9 @@ class VirtualRobot:
             "speed_scaling": self.speed_scaling,
             "up_time_seconds": self._t_now(now) - self.created_at,
             "joint_limits_deg": _limits_deg(self.limits),
+            # 速度流的实时状态（active / 看门狗截止时刻 / 是否被逆解拒绝过）：
+            # 面板与排障脚本据此区分"已停"与"还在按着"。
+            "twist": self.twist_state(now),
         }
 
 

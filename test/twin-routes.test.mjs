@@ -1357,7 +1357,7 @@ test('★ P0-2：I/O 某一拍读失败时用上一笔成功读数降级，而�
 
 // ── 面板控制（jog）路由的请求校验 ───────────────────────────────────────────
 
-test('★ jog 路由：只接受 cartesian / rotate / joint / pose / home / speed 六种 mode', () => {
+test('★ jog 路由：只接受 cartesian / rotate / joint / pose / home / speed / velocity / stop 八种 mode', () => {
   /*
    * ⚠️ 这条负例必须是「**其余字段全部合法、只有 mode 非法**」。
    *
@@ -1377,7 +1377,7 @@ test('★ jog 路由：只接受 cartesian / rotate / joint / pose / home / spee
 });
 
 /*
- * 六种 mode 各一条**正向**用例，用 `deepEqual` 钉住整形结果。
+ * 八种 mode 各一条**正向**用例，用 `deepEqual` 钉住整形结果。
  *
  * 为什么不能用 `assert.ok(x !== null)`：那只证明"没被拒"，证明不了白名单里真的有这一项 ——
  * 把 `TWIN_JOG_MODES` 里任意一个成员删掉，对应的这一条会立刻变红。返回对象的形状
@@ -1410,6 +1410,18 @@ const JOG_MODE_POSITIVES = [
     body: { mode: 'speed', fraction: 0.5 },
     expected: { mode: 'speed', fraction: 0.5, requested: 0.5 },
   },
+  {
+    mode: 'velocity',
+    body: { mode: 'velocity', twist: [0.05, 0, 0, 0, 0, 0] },
+    // 缺省 frame 必须是 **base**（与 cartesian/rotate 的 tool 不同），ttlMs 缺省 400。
+    expected: { mode: 'velocity', twist: [0.05, 0, 0, 0, 0, 0], frame: 'base', ttlMs: 400 },
+  },
+  {
+    mode: 'velocity(tool)',
+    body: { mode: 'velocity', twist: [0, 0, 0, 0, 0, 0.2], frame: 'tool', ttlMs: 250 },
+    expected: { mode: 'velocity', twist: [0, 0, 0, 0, 0, 0.2], frame: 'tool', ttlMs: 250 },
+  },
+  { mode: 'stop', body: { mode: 'stop' }, expected: { mode: 'stop' } },
 ];
 
 for (const { mode, body, expected } of JOG_MODE_POSITIVES) {
@@ -1429,6 +1441,68 @@ test('★ jog 路由：speed 模式把倍率钳到 0.01–1.0，并回显原始�
 test('★ jog 路由：cartesian / rotate 的 frame 只接受 tool / base', () => {
   assert.equal(parseJogRequest({ mode: 'cartesian', axis: 'x', distance: 0.005, frame: 'moon' }), null);
   assert.ok(parseJogRequest({ mode: 'rotate', axis: 'rx', deltaRad: 0.02, frame: 'base' }));
+});
+
+/*
+ * 速度流（长按连续点动）的校验。
+ *
+ * `twist` 是六元有限数（m/s / rad/s）：少一维、含 NaN、字符串数字都必须拒绝 ——
+ * 放过去就是一条语义未定义的速度指令，而它会让机械臂**持续**运动（不是走一步）。
+ * 全零 twist 是合法的（等价于 stop，协议明确允许），所以这里**不**把它当非法值。
+ */
+test('★ jog 路由：velocity 的 twist 必须是 6 个有限数（5 元 / NaN / 字符串一律拒绝）', () => {
+  assert.equal(parseJogRequest({ mode: 'velocity' }), null, '缺 twist 必须拒绝');
+  assert.equal(parseJogRequest({ mode: 'velocity', twist: [0, 0, 0, 0, 0] }), null, '5 元必须拒绝');
+  assert.equal(
+    parseJogRequest({ mode: 'velocity', twist: [0, 0, 0, 0, 0, NaN] }),
+    null,
+    'NaN 不能靠"是 number"混过去',
+  );
+  assert.equal(
+    parseJogRequest({ mode: 'velocity', twist: ['0.05', 0, 0, 0, 0, 0] }),
+    null,
+    '字符串数字必须拒绝（不做隐式转换）',
+  );
+  assert.equal(
+    parseJogRequest({ mode: 'velocity', twist: [0, 0, 0, 0, 0, Infinity] }),
+    null,
+    'Infinity 必须拒绝',
+  );
+  // 全零合法：协议规定它等价于 stop。
+  assert.deepEqual(
+    parseJogRequest({ mode: 'velocity', twist: [0, 0, 0, 0, 0, 0] }),
+    { mode: 'velocity', twist: [0, 0, 0, 0, 0, 0], frame: 'base', ttlMs: 400 },
+    '全零 twist 必须被接受（等价于 stop）',
+  );
+});
+
+test('★ jog 路由：velocity 的 frame 只接受 tool / base，缺省 base', () => {
+  assert.equal(parseJogRequest({ mode: 'velocity', twist: [0, 0, 0, 0, 0, 0], frame: 'world' }), null);
+  assert.equal(parseJogRequest({ mode: 'velocity', twist: [0, 0, 0, 0, 0, 0] }).frame, 'base');
+  assert.equal(
+    parseJogRequest({ mode: 'velocity', twist: [0, 0, 0, 0, 0, 0], frame: 'tool' }).frame,
+    'tool',
+  );
+});
+
+test('★ jog 路由：velocity 的 ttlMs 缺省 400，越界钳到 100 / 2000（不是报错）', () => {
+  const base = { mode: 'velocity', twist: [0.05, 0, 0, 0, 0, 0] };
+  assert.equal(parseJogRequest(base).ttlMs, 400, '缺省必须是 400ms');
+  assert.equal(parseJogRequest({ ...base, ttlMs: 0 }).ttlMs, 100, '0 必须钳到下限 100');
+  assert.equal(parseJogRequest({ ...base, ttlMs: 99999 }).ttlMs, 2000, '99999 必须钳到上限 2000');
+  assert.equal(parseJogRequest({ ...base, ttlMs: 250 }).ttlMs, 250, '区间内原样保留');
+  // 非数值/NaN 不能钳（钳 NaN 仍是 NaN）—— 必须拒绝。
+  assert.equal(parseJogRequest({ ...base, ttlMs: NaN }), null);
+  assert.equal(parseJogRequest({ ...base, ttlMs: '400' }), null);
+  assert.equal(parseJogRequest({ ...base, ttlMs: Infinity }), null);
+});
+
+test('★ jog 路由：stop 无额外字段（多传的一律忽略，停止不该被参数卡住）', () => {
+  assert.deepEqual(parseJogRequest({ mode: 'stop' }), { mode: 'stop' });
+  assert.deepEqual(
+    parseJogRequest({ mode: 'stop', twist: [1, 2, 3, 4, 5, 6], ttlMs: 'nope', junk: true }),
+    { mode: 'stop' },
+  );
 });
 
 test('★ jog 路由：joint 必须是 6 个有限数，pose 必须是 6 个有限数', () => {
@@ -1783,7 +1857,7 @@ test('★ jog 路由（路由级）：成功响应透出 worker 的 message，�
   );
 });
 
-test('★ jog 路由（路由级）：六种 mode 的 body → worker op 与参数（含 deltaRad 改名、home 常量）', async () => {
+test('★ jog 路由（路由级）：八种 mode 的 body → worker op 与参数（含 deltaRad 改名、home 常量、速度流）', async () => {
   // 用户 2026-10-17 裁定的回零位形；与型号无关的关节角。
   const HOME_Q = [0, -Math.PI / 2, 0, -Math.PI / 2, -Math.PI, 0];
 
@@ -1845,6 +1919,36 @@ test('★ jog 路由（路由级）：六种 mode 的 body → worker op 与参�
       body: { mode: 'speed', fraction: 0.5 },
       op: 'set_speed_scaling',
       params: { ip: '127.0.0.1', fraction: 0.5 },
+    },
+    {
+      // 长按连续点动：twist → 真机 op 的 `xd`；frame / ttl_ms 一并转发（仿真侧用它们
+      // 决定坐标系与看门狗，真机侧 op_speedl 忽略这两个键）。
+      name: 'velocity（基座系 + 缺省 ttl）',
+      body: { mode: 'velocity', twist: [0.05, 0, 0, 0, 0, 0] },
+      op: 'speedl',
+      params: {
+        ip: '127.0.0.1',
+        xd: [0.05, 0, 0, 0, 0, 0],
+        frame: 'base',
+        ttl_ms: 400,
+      },
+    },
+    {
+      name: 'velocity（工具系 + 指定 ttl）',
+      body: { mode: 'velocity', twist: [0, 0, 0, 0, 0, 0.2], frame: 'tool', ttlMs: 250 },
+      op: 'speedl',
+      params: {
+        ip: '127.0.0.1',
+        xd: [0, 0, 0, 0, 0, 0.2],
+        frame: 'tool',
+        ttl_ms: 250,
+      },
+    },
+    {
+      name: 'stop（松手立即停）',
+      body: { mode: 'stop' },
+      op: 'stopl',
+      params: { ip: '127.0.0.1' },
     },
   ];
 

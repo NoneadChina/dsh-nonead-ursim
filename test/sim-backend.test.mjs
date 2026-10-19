@@ -498,6 +498,175 @@ out["set_scaling_badargs"] = {
     "text": set_scaling("fast").get("code"),
 }
 
+# ── 5f. 速度流（speedl / stopl / 看门狗）：长按连续点动的后端 ─────────────────
+#
+# 时间一律**显式传入**（不 sleep）：speedl 用真实时钟锚定（它没有 now 参数），随后用
+# anchor + Δ 推进 vr.advance(now=...)，于是位移可以按 v·Δt 精确断言。
+# 这里直接驱动 SIMS[IP] 这个 VirtualRobot —— 与推送线程 / 读回走的是**同一个**
+# advance()，而测试要的"连续两帧"正是它。
+VX = 0.08
+vr = ur_worker.SIMS[IP]
+speedl = dispatch("speedl", {"ip": IP, "xd": [VX, 0.0, 0.0, 0.0, 0.0, 0.0],
+                             "frame": "base", "ttl_ms": 1000})
+anchor = vr._last_advance_at
+p0 = ur_sim.tcp_pose(vr.model, list(vr.q))
+vr.advance(now=anchor)            # 首帧：Δt=0，绝不能跳
+p_first = ur_sim.tcp_pose(vr.model, vr.q)
+vr.advance(now=anchor + 0.05)     # Δt=0.05
+p_mid = ur_sim.tcp_pose(vr.model, vr.q)
+vr.advance(now=anchor + 0.10)     # Δt=0.05
+p_end = ur_sim.tcp_pose(vr.model, vr.q)
+out["speedl"] = {
+    "code": speedl.get("code"),
+    "ok": (speedl.get("data") or {}).get("ok"),
+    "twist": (speedl.get("data") or {}).get("twist"),
+    "frame": (speedl.get("data") or {}).get("frame"),
+    "ttl_ms": (speedl.get("data") or {}).get("ttl_ms"),
+    "first_step": math.dist(p_first[:3], p0[:3]),
+    "dx": p_end[0] - p0[0],
+    "dyz": max(abs(p_end[1] - p0[1]), abs(p_end[2] - p0[2])),
+    "expected": VX * 0.10,
+    "monotonic": (p_first[0] >= p0[0] - 1e-12
+                  and p_mid[0] > p_first[0] and p_end[0] > p_mid[0]),
+    "q_len": len(vr.q),
+}
+
+# 停止：stopl 之后继续推进，位置必须**完全不再变化**
+stopl = dispatch("stopl", {"ip": IP})
+p_stop = ur_sim.tcp_pose(vr.model, list(vr.q))
+vr.advance(now=anchor + 0.20)
+p_after_stop = ur_sim.tcp_pose(vr.model, vr.q)
+vr.advance(now=anchor + 0.40)
+p_after_stop2 = ur_sim.tcp_pose(vr.model, vr.q)
+out["stopl"] = {
+    "code": stopl.get("code"),
+    "stopped": (stopl.get("data") or {}).get("stopped"),
+    "drift": math.dist(p_after_stop[:3], p_stop[:3]),
+    "drift_later": math.dist(p_after_stop2[:3], p_after_stop[:3]),
+    "twist": list(vr._twist),
+    "active": vr.twist_state(now=anchor + 0.40)["active"],
+}
+
+# 看门狗：ttl_ms=200 → 截止时刻之后没有任何新指令，速度必须自己归零。
+VY = 0.06
+watch = dispatch("speedl", {"ip": IP, "xd": [0.0, VY, 0.0, 0.0, 0.0, 0.0],
+                            "ttl_ms": 200})
+anchor2 = vr._last_advance_at
+p_w0 = ur_sim.tcp_pose(vr.model, list(vr.q))
+vr.advance(now=anchor2 + 0.10)    # 仍在看门狗内 → 走
+p_w1 = ur_sim.tcp_pose(vr.model, vr.q)
+vr.advance(now=anchor2 + 0.30)    # 已过截止（0.2s）→ 自动归零
+p_w2 = ur_sim.tcp_pose(vr.model, vr.q)
+vr.advance(now=anchor2 + 0.50)    # 继续推进也不能再动
+p_w3 = ur_sim.tcp_pose(vr.model, vr.q)
+out["watchdog"] = {
+    "ttl_ms": (watch.get("data") or {}).get("ttl_ms"),
+    "moved_inside": math.dist(p_w1[:3], p_w0[:3]),
+    "moved_after": math.dist(p_w2[:3], p_w1[:3]),
+    "moved_later": math.dist(p_w3[:3], p_w2[:3]),
+    "twist": list(vr._twist),
+    "active": vr.twist_state(now=anchor2 + 0.50)["active"],
+}
+
+# 不可达方向：目标位姿跳出去 100 m ⇒ 逆解必失败。要求**不抛异常**、关节角保持、
+# twist 清零，并留下"被拒"证据（status / twist_state 里能看出来）。
+vr.set_twist([1000.0, 0.0, 0.0, 0.0, 0.0, 0.0], frame="base", ttl_s=1.0,
+             now=anchor2 + 1.0)
+q_before = list(vr.q)
+pose_before = ur_sim.tcp_pose(vr.model, q_before)
+raised = None
+try:
+    vr.advance(now=anchor2 + 1.1)
+except Exception as _exc:  # noqa: BLE001 —— 这里就是要证明它不抛
+    raised = repr(_exc)
+pose_after = ur_sim.tcp_pose(vr.model, vr.q)
+state = vr.twist_state(now=anchor2 + 1.2)
+_status = ur_worker.sim_dispatch("status", {"ip": IP}) or {}
+status_twist = (_status.get("data") or {}).get("twist") or {}
+out["twist_unreachable"] = {
+    "raised": raised,
+    "moved": math.dist(pose_after[:3], pose_before[:3]),
+    "joints_same": max(abs(vr.q[i] - q_before[i]) for i in range(6)),
+    "twist": list(vr._twist),
+    "rejected": state["rejected"],
+    "active": state["active"],
+    "status_rejected": status_twist.get("rejected"),
+    "status_reason": status_twist.get("reject_reason"),
+}
+
+# 工具系：速度沿**工具 x 轴**。upright 位姿下工具 x = 基座 +y，所以"误把 frame 当
+# base"会得到 +x 位移 —— 两种坐标系的位移方向正交，这条用例能真正分辨它们。
+vr.set_twist([0.04, 0.0, 0.0, 0.0, 0.0, 0.0], frame="tool", ttl_s=1.0,
+             now=anchor2 + 2.0)
+p_t0 = ur_sim.tcp_pose(vr.model, list(vr.q))
+vr.advance(now=anchor2 + 2.1)
+p_t1 = ur_sim.tcp_pose(vr.model, vr.q)
+_R = ur_sim.matrix_from_axis_angle(0.0, 0.0, 0.0, p_t0[3], p_t0[4], p_t0[5])
+_tool_x = [_R[0], _R[1], _R[2]]
+_actual = [p_t1[i] - p_t0[i] for i in range(3)]
+_expected = [0.04 * 0.1 * _tool_x[i] for i in range(3)]
+# 若 frame 被误当成 base，位移会是 [0.004, 0, 0]；把它与工具系期望的差当成"分辨力"。
+_base_expected = [0.04 * 0.1, 0.0, 0.0]
+out["twist_tool_frame"] = {
+    "actual": _actual,
+    "expected": _expected,
+    "base_expected": _base_expected,
+    "err": math.dist(_actual, _expected),
+    "discrimination": math.dist(_expected, _base_expected),
+    "tool_x": _tool_x,
+}
+vr.stop_twist()
+
+# 全零 twist 等价于 stop（协议允许全零，但必须按停止处理）
+_zero = ur_sim.VirtualRobot("127.0.0.1", "ur5e", preset="upright")
+p_z_start = ur_sim.tcp_pose(_zero.model, _zero.q)
+_zero.set_twist([0.1, 0.0, 0.0, 0.0, 0.0, 0.0], frame="base", ttl_s=1.0, now=3000.0)
+_zero.advance(now=3000.1)
+p_z0 = ur_sim.tcp_pose(_zero.model, _zero.q)
+_zero.set_twist([0.0, 0.0, 0.0, 0.0, 0.0, 0.0], frame="base", ttl_s=1.0, now=3000.2)
+_zero.advance(now=3000.3)
+p_z1 = ur_sim.tcp_pose(_zero.model, _zero.q)
+out["twist_zero"] = {
+    "moved_before": math.dist(p_z0[:3], p_z_start[:3]),
+    "moved_after": math.dist(p_z1[:3], p_z0[:3]),
+    "twist": list(_zero._twist),
+    "active": _zero.twist_state(now=3000.3)["active"],
+}
+
+# 续命语义：面板每 ~100ms 发一条 velocity，而推送线程 20Hz 调 advance()。若"续命"时
+# 直接改锚点，两条指令之间那段时间就会丢 —— 按住不放会**越走越慢**（修前实测 1s 只走了
+# 请求速度的 64%）。这里用显式 now 构造一次续命，断言那段时间被补上。
+_cont = ur_sim.VirtualRobot("127.0.0.1", "ur5e", preset="upright")
+_cont.set_twist([0.05, 0.0, 0.0, 0.0, 0.0, 0.0], frame="base", ttl_s=0.4, now=4000.0)
+_cont.advance(now=4000.05)
+_p_c0 = ur_sim.tcp_pose(_cont.model, _cont.q)
+_cont.set_twist([0.05, 0.0, 0.0, 0.0, 0.0, 0.0], frame="base", ttl_s=0.4, now=4000.10)
+_p_c1 = ur_sim.tcp_pose(_cont.model, _cont.q)
+_cont.stop_twist()
+out["twist_renew"] = {
+    "dx": _p_c1[0] - _p_c0[0],
+    "expected": 0.05 * 0.05,
+}
+
+# op 层的 ttl_ms：缺省 400、越界钳到 100 / 2000（**钳位**而不是报错）
+def speedl_ttl(extra):
+    params = {"ip": IP, "xd": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]}
+    params.update(extra)
+    return (dispatch("speedl", params).get("data") or {}).get("ttl_ms")
+
+out["speedl_ttl"] = {
+    "default": speedl_ttl({}),
+    "low": speedl_ttl({"ttl_ms": 0}),
+    "high": speedl_ttl({"ttl_ms": 99999}),
+}
+out["speedl_badargs"] = {
+    "bad_frame": dispatch("speedl", {"ip": IP, "xd": [0.0] * 6,
+                                     "frame": "world"}).get("code"),
+    "short": dispatch("speedl", {"ip": IP, "xd": [0.0] * 5}).get("code"),
+    "nan": dispatch("speedl", {"ip": IP,
+                               "xd": [float("nan")] + [0.0] * 5}).get("code"),
+}
+
 # ── 6. 仿真推送：仿真帧必须带 simulated 与 conn ───────────────────────────────
 captured = []
 ur_worker._write_protocol_line = lambda body: captured.append(body)
@@ -841,5 +1010,105 @@ test('★ set_speed_scaling：越界钳到 0.01–1.0，requested 回显原始�
 test('★ set_speed_scaling：缺失 / NaN / Infinity / 非数值一律 BADARG（绝不猜一个倍率）', () => {
   for (const [label, code] of Object.entries(out.set_scaling_badargs)) {
     assert.equal(code, 'BADARG', `fraction=${label} 必须报 BADARG，实际 ${code}`)
+  }
+})
+
+// ── 速度流（speedl / stopl / 看门狗）──────────────────────────────────────
+//
+// 面板「按住点动键」的连续运动走的是**速度流**（speedl 语义）：前端每 ~100 ms 发一条
+// velocity，后端只更新 twist，逐帧积分发生在 `advance()` 里（推送线程 20 Hz 读它）。
+// 所以这里钉住四件事：
+//   ① 位移 ≈ v·Δt，且沿给定方向单调前进（首帧 Δt=0，不许跳）；
+//   ② stopl 之后位置完全不再变化；
+//   ③ 看门狗：到截止时间没有新指令 ⇒ 速度自动归零（浏览器崩溃时的安全底线）；
+//   ④ 不可达方向不抛错：保持关节角、清掉 twist，并在返回信息里留下"被拒"证据。
+
+test('★ speedl：连续两次 advance 沿给定方向单调前进，位移 ≈ v·Δt（显式 now，不 sleep）', () => {
+  const s = out.speedl
+  assert.ok(!s.code, `speedl 不该报错：${s.code}`)
+  assert.equal(s.ok, true)
+  // 回包必须如实给出速度流三件套（面板据此画状态、调试据此核对）
+  assert.deepEqual(s.twist, [0.08, 0, 0, 0, 0, 0])
+  assert.equal(s.frame, 'base')
+  assert.equal(s.ttl_ms, 1000)
+  // ★ 首帧 Δt=0：收到指令的瞬间不能跳一步（否则按住的第一下会"闪"一下）
+  assert.equal(s.first_step, 0, '★ 首次 advance 的 dt 必须是 0（速度流不能一上来就跳）')
+  assert.equal(s.monotonic, true, '沿 +x 的连续两次推进必须单调前进')
+  assert.ok(Math.abs(s.dx - s.expected) <= s.expected * 0.2,
+    `位移必须 ≈ v·Δt=0.008 m（容差 20%），实测 ${s.dx}`)
+  // 纯基座 x 平移：y/z 不得有明显漂移（逆解舍入允许 ~1e-4）
+  assert.ok(s.dyz < 1e-3, `沿 +x 的速度流不得带来 y/z 漂移，实测 ${s.dyz}`)
+  assert.equal(s.q_len, 6)
+})
+
+test('★ stopl：停掉速度流后继续 advance，位置不再变化', () => {
+  const s = out.stopl
+  assert.ok(!s.code, `stopl 不该报错：${s.code}`)
+  assert.equal(s.stopped, true)
+  assert.equal(s.drift, 0, '★ stopl 之后推进一帧，位置必须完全不动')
+  assert.equal(s.drift_later, 0, '★ 再推进一帧也不能动（没有"残余速度"）')
+  assert.deepEqual(s.twist, [0, 0, 0, 0, 0, 0], 'stopl 必须把 twist 清零')
+  assert.equal(s.active, false)
+})
+
+test('★ 看门狗：ttl 到点没有新指令 ⇒ 速度自动归零（浏览器崩溃时必须自己停）', () => {
+  const w = out.watchdog
+  assert.equal(w.ttl_ms, 200, 'ttl_ms 必须原样回显')
+  // 截止前：Δt=0.1、v=0.06 ⇒ 0.006 m
+  assert.ok(Math.abs(w.moved_inside - 0.006) <= 0.006 * 0.2,
+    `看门狗内必须照常运动（≈0.006 m），实测 ${w.moved_inside}`)
+  // 截止后：时间和位置都不许再动
+  assert.equal(w.moved_after, 0, '★ 过了看门狗截止时间必须自动归零（不再位移）')
+  assert.equal(w.moved_later, 0, '★ 之后继续推进也不能动')
+  assert.deepEqual(w.twist, [0, 0, 0, 0, 0, 0], '看门狗到点必须把 twist 清零')
+  assert.equal(w.active, false)
+})
+
+test('★ 速度流不可达：不抛异常、关节角保持、twist 清零，且 status 能看出被拒', () => {
+  const u = out.twist_unreachable
+  assert.equal(u.raised, null, '★ 不可达速度不得抛异常（面板会一直按住不放）')
+  assert.equal(u.moved, 0, '被拒时 TCP 必须停在原地')
+  assert.ok(u.joints_same < 1e-12, `被拒时关节角必须逐值保持，实测最大变化 ${u.joints_same}`)
+  assert.deepEqual(u.twist, [0, 0, 0, 0, 0, 0], '被拒后 twist 必须清零（不能反复重试到卡死）')
+  assert.equal(u.active, false)
+  assert.equal(u.rejected, true, 'twist_state 必须记录"被逆解拒绝过"')
+  assert.equal(u.status_rejected, true, '★ status 也要带出来（否则调用方只看得到"不动了"）')
+  assert.match(String(u.status_reason), /不可达|不连续/, '被拒原因必须说清楚')
+})
+
+test('★ 工具系速度流：位移沿工具轴，而不是基座轴', () => {
+  const t = out.twist_tool_frame
+  assert.ok(t.err < 1e-3, `位移必须 ≈ 0.04·0.1·工具 x 轴，实测误差 ${t.err}`)
+  // 前提校验：当前位姿下"工具 x"与"基座 x"必须明显不同，否则这条用例分辨不出两个坐标系。
+  assert.ok(t.discrimination > 1e-3,
+    `前提：工具系与基座系的期望位移必须可区分（实测差 ${t.discrimination}）`)
+  // 实际位移必须贴近工具系期望，而不是基座系期望。
+  assert.ok(t.err < t.discrimination / 2,
+    '工具系 +x 位移必须更接近工具轴而不是基座 +x（frame 若被当成 base 就会落在基座 +x）')
+})
+
+test('★ 全零 twist 等价于 stop：之后的 advance 不再位移', () => {
+  const z = out.twist_zero
+  assert.ok(z.moved_before > 1e-4, '前提：先发一条非零速度流，它必须真的走了一点')
+  assert.equal(z.moved_after, 0, '★ 全零 twist 必须按 stop 处理')
+  assert.deepEqual(z.twist, [0, 0, 0, 0, 0, 0])
+  assert.equal(z.active, false)
+})
+
+test('★ 续命的 velocity：两条指令之间那段时间必须补上（否则按住不放会越走越慢）', () => {
+  const r = out.twist_renew
+  assert.ok(Math.abs(r.dx - r.expected) <= r.expected * 0.2,
+    `续命时应把上一条 twist 的 0.05s 补上（≈0.0025 m），实测 ${r.dx}`)
+})
+
+test('★ speedl 的 ttl_ms：缺省 400，越界钳到 100 / 2000（钳位而不是拒绝）', () => {
+  assert.equal(out.speedl_ttl.default, 400)
+  assert.equal(out.speedl_ttl.low, 100, 'ttl_ms=0 必须钳到下限 100（看门狗是安全底线，不能因此失败）')
+  assert.equal(out.speedl_ttl.high, 2000, 'ttl_ms=99999 必须钳到上限 2000')
+})
+
+test('★ speedl 的非法参数（frame / 维度 / NaN）一律 BADARG', () => {
+  for (const [label, code] of Object.entries(out.speedl_badargs)) {
+    assert.equal(code, 'BADARG', `speedl ${label} 必须报 BADARG，实际 ${code}`)
   }
 })
