@@ -126,7 +126,7 @@ export const zh = {
   simUses: '开启后由 AI 直接驱动这里的模型：运动类工具会动这台虚拟机器人，真机不受影响。',
   simModelLabel: '型号',
   simPresetLabel: '起始姿态',
-  simSpeedLabel: '速度倍率',
+  simSpeedLabel: '起始倍率',
   simPresetZero: '全零位',
   simPresetUpright: '竖直收拢',
   simPresetReach: '侧伸',
@@ -174,6 +174,25 @@ export const zh = {
   simUnsupported: '仿真只实现运动学（运动类工具 + 位姿读回）；其余指令会明确回报「无仿真语义」。',
   simActiveStatus: (model) => `离线仿真 · ${model}`,
   simWatermark: '离线仿真（非真机）',
+  /* ---- 左轨点动控件（feat/twin-control-panel）----
+     面板层的速度倍率与「离线仿真」区那个下拉不是一回事：那个是**创建时**的初始倍率
+     （改了会重建仿真），这里的滑块改的是**运行中**实例。所以两处文案必须能区分开。 */
+  controlsTcpPosition: 'TCP 位置',
+  controlsTcpOrientation: 'TCP 方向',
+  controlsSpeed: '速度倍率（运行中）',
+  controlsHome: '回零',
+  controlsHomeTitle: '回零：六关节到 [0°, -90°, 0°, -90°, -180°, 0°]',
+  controlsStepMm: '步长 (mm)',
+  controlsStepDeg: '步长 (°)',
+  controlsFrame: '参考系',
+  controlsFrameTool: '工具系',
+  controlsFrameBase: '基座系',
+  controlsSpeedTitle: '拖动后松手才生效；从下一段运动开始起作用，不会重建仿真',
+  controlsSpeedValue: (percent) => `${percent}%`,
+  controlsDisabledDisconnected: '未连接机器人：点动控件不可用',
+  controlsDisabledSimOnly: '仅离线仿真可点动：真机请用工具调用（受审批门禁保护）',
+  controlsDisabledStale: '数据通道停滞：控件已暂停，恢复后自动解禁',
+  controlsCommandFailed: (reason) => `点动失败：${reason}`,
 }
 
 /** 英文文案。键集合必须与 `zh` 完全一致（有测试钉住）。 */
@@ -276,7 +295,7 @@ export const en = {
   simUses: 'While on, the AI drives the model right here: motion tools move this virtual robot and no real robot is affected.',
   simModelLabel: 'Model',
   simPresetLabel: 'Start pose',
-  simSpeedLabel: 'Speed scaling',
+  simSpeedLabel: 'Start speed scaling',
   simPresetZero: 'Zero pose',
   simPresetUpright: 'Upright',
   simPresetReach: 'Reach',
@@ -326,6 +345,25 @@ export const en = {
   simUnsupported: 'The simulation implements kinematics only (motion tools + pose readback); every other command reports "no simulation semantics".',
   simActiveStatus: (model) => `Offline simulation · ${model}`,
   simWatermark: 'Offline simulation (not a real robot)',
+  /* ---- left-rail jog controls (feat/twin-control-panel) ---- */
+  controlsTcpPosition: 'TCP position',
+  controlsTcpOrientation: 'TCP orientation',
+  controlsSpeed: 'Speed scaling (live)',
+  controlsHome: 'Home',
+  controlsHomeTitle: 'Home: all six joints to [0°, -90°, 0°, -90°, -180°, 0°]',
+  controlsStepMm: 'Step (mm)',
+  controlsStepDeg: 'Step (°)',
+  controlsFrame: 'Frame',
+  controlsFrameTool: 'Tool',
+  controlsFrameBase: 'Base',
+  controlsSpeedTitle:
+    'Takes effect when you release the slider, from the next motion segment on; the simulation is not rebuilt',
+  controlsSpeedValue: (percent) => `${percent}%`,
+  controlsDisabledDisconnected: 'Robot not connected: jog controls are unavailable',
+  controlsDisabledSimOnly:
+    'Jogging works in the offline simulation only: use the tools for a real robot (guarded by approval)',
+  controlsDisabledStale: 'The data feed stalled: controls are paused and re-enable automatically',
+  controlsCommandFailed: (reason) => `Jog failed: ${reason}`,
 }
 
 /** 支持的语言。 */

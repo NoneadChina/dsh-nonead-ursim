@@ -53,6 +53,8 @@ import { reachRadiusFromKinematics } from '../src/client/robot/overlays.js'
 import { lerpJoints } from '../src/client/robot/interpolate.js'
 import { Group } from 'three'
 import { TWIN_CSS, TWIN_STYLE_ID, injectStyles } from '../src/client/styles.js'
+import { mountLeftRail } from '../src/client/twin-controls.js'
+import { TWIN_JOG_PATH } from '../lib/twin-paths.js'
 
 /* ------------------------------------------------------------------ *
  * 最小假 DOM
@@ -2537,3 +2539,289 @@ test('★ 控制面板骨架：localStorage 不可用（隐私模式）时静默
     '收起后列宽仍必须是 24px（由 grid 模板表达）')
   ctx.panel.dispose()
 })
+
+/* ================================================================== *
+ * 左轨控件（feat/twin-control-panel · 点动 / 步长 / 回零 / 速度倍率）
+ * ================================================================== */
+
+/** 处于"可点动"状态的快照：连接 + 仿真 + 数据在流动。 */
+const LIVE = { connected: true, simulated: true, model: 'ur12e', q: Q0, tcp: TCP0, ts: 1000 }
+
+const jogButton = (ctx, key) => byAttrValue(ctx.container, 'data-ursim-jog', key)
+const allJogButtons = (ctx) => byAttr(ctx.container, 'data-ursim-jog')
+const speedSlider = (ctx) => byAttr(ctx.container, 'data-ursim-speed')[0]
+const sectionNote = (ctx) => byAttr(ctx.container, 'data-ursim-ctl-note')[0]
+const postedBodies = (ctx) => ctx.request.posts().map((p) => JSON.parse(p.body))
+
+/** 点一下（按下 + 松开）：按下立即发一步，松开取消长按计时。 */
+function tapJog(ctx, key) {
+  const button = jogButton(ctx, key)
+  assert.ok(button, `必须有点动按钮 ${key}`)
+  button.listeners.pointerdown[0]()
+  button.listeners.pointerup[0]()
+}
+
+test('★ 左轨：点一次 X+ 只发一条 cartesian 命令，body 形状正确', async () => {
+  const ctx = boot({ initial: LIVE, autoSim: false })
+  ctx.clock.flush()
+  await tick()
+
+  tapJog(ctx, 'cartesian-x-plus')
+
+  const posts = ctx.request.posts()
+  assert.equal(posts.length, 1, '★ 点一次只允许发一条命令（按下立即发一步）')
+  assert.equal(posts[0].url, TWIN_JOG_PATH, '命令必须发往 /twin/jog 的路径真源')
+  assert.match(String(posts[0].headers['content-type']), /application\/json/)
+  assert.deepEqual(JSON.parse(posts[0].body), {
+    mode: 'cartesian',
+    axis: 'x',
+    distance: 0.005,
+    frame: 'tool',
+  }, '默认 5 mm 步长 + 工具系')
+
+  ctx.panel.dispose()
+})
+
+test('★ 左轨：速度滑块 10%–100%，input 不下发、change 才发一条 speed', async () => {
+  const ctx = boot({ initial: LIVE, autoSim: false })
+  ctx.clock.flush()
+  await tick()
+
+  const slider = speedSlider(ctx)
+  assert.ok(slider, '必须有速度倍率滑块（data-ursim-speed）')
+  assert.equal(slider.min, '10', '面板层下限是 10%（产品约束，不是 op 的 0.01）')
+  assert.equal(slider.max, '100')
+  assert.equal(slider.step, '1')
+  assert.equal(slider.value, '100', '默认 100%')
+
+  slider.value = '50'
+  slider.listeners.input[0]()
+  const percent = byAttr(ctx.container, 'data-ursim-speed-value')[0]
+  assert.equal(percent.textContent, '50%', 'input 只改本地百分比文字')
+  assert.equal(ctx.request.posts().length, 0, '★ 拖动期间（input）绝不下发命令')
+
+  slider.listeners.change[0]()
+  const posts = ctx.request.posts()
+  assert.equal(posts.length, 1, '★ 松手（change）才发一条')
+  assert.deepEqual(JSON.parse(posts[0].body), { mode: 'speed', fraction: 0.5 })
+
+  // 越界值在面板层就被夹回 10%–100%（设计 §10）。
+  await tick() // 等上一条落地（在途时后续命令会被丢弃）
+  slider.value = '5'
+  slider.listeners.change[0]()
+  await tick()
+  assert.equal(slider.value, '10', '5% 必须被夹到 10%')
+  assert.deepEqual(JSON.parse(ctx.request.posts()[1].body), { mode: 'speed', fraction: 0.1 })
+
+  ctx.panel.dispose()
+})
+
+test('★ 左轨：simulated=false / connected=false 时所有点动按钮 disabled', async () => {
+  const ctx = boot({
+    initial: { ...LIVE, simulated: false },
+    autoSim: false,
+  })
+  ctx.clock.flush()
+  await tick()
+
+  const buttons = allJogButtons(ctx)
+  assert.equal(buttons.length, 13, '位置 6 + 回零 1 + 姿态 6 = 13 个点动按钮')
+  for (const button of buttons) {
+    assert.equal(button.disabled, true, `${button.getAttribute('data-ursim-jog')} 在非仿真时必须禁用`)
+  }
+  assert.equal(speedSlider(ctx).disabled, true, '速度滑块同样要禁用')
+  assert.match(sectionNote(ctx).textContent, /仿真/, '左轨顶部必须写出禁用原因')
+
+  // 仿真来了 ⇒ 解禁
+  ctx.state.set({ simulated: true, ts: 1100 })
+  ctx.clock.flush()
+  for (const button of allJogButtons(ctx)) {
+    assert.equal(button.disabled, false, `${button.getAttribute('data-ursim-jog')} 应解禁`)
+  }
+  assert.equal(sectionNote(ctx).textContent, '', '可点动时不得留着禁用原因')
+
+  // 数据停滞 ⇒ 再次置灰
+  ctx.state.set({ feedStale: true, ts: 1200 })
+  ctx.clock.flush()
+  for (const button of allJogButtons(ctx)) assert.equal(button.disabled, true, '数据停滞时必须禁用')
+  assert.match(sectionNote(ctx).textContent, /停滞/)
+
+  // 断连 ⇒ 置灰并说明
+  ctx.state.set({ connected: false, simulated: false, feedStale: false, ts: 1300 })
+  ctx.clock.flush()
+  for (const button of allJogButtons(ctx)) assert.equal(button.disabled, true, '断连时必须禁用')
+  assert.match(sectionNote(ctx).textContent, /未连接/)
+
+  ctx.panel.dispose()
+})
+
+test('★ 左轨：回零按钮发 {mode:"home"}；步长切换后距离随之变化', async () => {
+  const ctx = boot({ initial: LIVE, autoSim: false })
+  ctx.clock.flush()
+  await tick()
+
+  tapJog(ctx, 'home')
+  await tick() // 等这一条落地，否则在途期间后续点击会被丢弃
+  assert.deepEqual(postedBodies(ctx)[0], { mode: 'home' })
+
+  const ten = byAttrValue(ctx.container, 'data-ursim-step-mm', '10')
+  assert.ok(ten, '必须有 10 mm 步长档')
+  ten.listeners.click[0]()
+  assert.equal(ten.getAttribute('aria-pressed'), 'true', '选中的档位要标出来')
+  assert.equal(
+    byAttrValue(ctx.container, 'data-ursim-step-mm', '5').getAttribute('aria-pressed'),
+    'false',
+    '同时只能有一个档位被选中',
+  )
+
+  tapJog(ctx, 'cartesian-x-plus')
+  await tick()
+  assert.deepEqual(postedBodies(ctx)[1], {
+    mode: 'cartesian',
+    axis: 'x',
+    distance: 0.01,
+    frame: 'tool',
+  })
+
+  ctx.panel.dispose()
+})
+
+test('★ 左轨：旋转点动发 rotate（角度→弧度），参考系切换后随命令下发', async () => {
+  const ctx = boot({ initial: LIVE, autoSim: false })
+  ctx.clock.flush()
+  await tick()
+
+  tapJog(ctx, 'rotate-rx-plus')
+  await tick()
+  const first = postedBodies(ctx)[0]
+  assert.equal(first.mode, 'rotate')
+  assert.equal(first.axis, 'rx')
+  assert.equal(first.frame, 'tool', '默认工具系')
+  assert.ok(Math.abs(first.deltaRad - Math.PI / 180) < 1e-12, '默认 1° = π/180 rad')
+
+  const base = byAttrValue(ctx.container, 'data-ursim-frame', 'base')
+  assert.ok(base, '必须有基座系选项')
+  base.listeners.click[0]()
+  assert.equal(base.getAttribute('aria-pressed'), 'true')
+
+  tapJog(ctx, 'rotate-rz-minus')
+  await tick()
+  const second = postedBodies(ctx)[1]
+  assert.equal(second.axis, 'rz')
+  assert.equal(second.frame, 'base', '切到基座系后 frame 必须跟着变')
+  assert.ok(Math.abs(second.deltaRad + Math.PI / 180) < 1e-12, 'RZ− = -1°')
+
+  tapJog(ctx, 'cartesian-z-minus')
+  await tick()
+  assert.deepEqual(postedBodies(ctx)[2], {
+    mode: 'cartesian',
+    axis: 'z',
+    distance: -0.005,
+    frame: 'base',
+  }, '位置点动同样使用当前参考系')
+
+  ctx.panel.dispose()
+})
+
+test('★ 左轨：命令在途时整组置灰、后续点击被丢弃，返回后解禁', async () => {
+  const calls = []
+  let releasePost = null
+  const request = (url, init = {}) => {
+    const method = init.method ?? 'GET'
+    calls.push({ url, method, body: init.body ?? null })
+    if (method === 'POST') {
+      return new Promise((resolve) => {
+        releasePost = () => resolve({ json: async () => ({ ok: true }) })
+      })
+    }
+    return Promise.resolve({ json: async () => ({ ok: true, active: false, models: [] }) })
+  }
+  const ctx = boot({ initial: LIVE, autoSim: false, request })
+  ctx.clock.flush()
+  await tick()
+
+  tapJog(ctx, 'cartesian-x-plus')
+  ctx.clock.flush(16)
+  assert.equal(jogButton(ctx, 'cartesian-x-plus').disabled, true, '★ 在途时必须置灰')
+  assert.equal(jogButton(ctx, 'cartesian-y-plus').disabled, true, '同一时刻只允许一条命令在飞')
+
+  tapJog(ctx, 'cartesian-y-plus')
+  assert.equal(calls.filter((c) => c.method === 'POST').length, 1, '★ 在途时后续点击必须丢弃')
+
+  releasePost()
+  await tick()
+  ctx.clock.flush(16)
+  assert.equal(jogButton(ctx, 'cartesian-x-plus').disabled, false, '★ 返回后必须解禁')
+
+  ctx.panel.dispose()
+})
+
+test('★ 左轨：按住 250 ms 后每 200 ms 重复一步，松开/卸载即停', () => {
+  const doc = makeDoc()
+  const body = doc.createElement('div')
+  const timers = makeFakeTimers()
+  const sent = []
+  const rail = mountLeftRail(doc, body, {
+    send: (payload) => { sent.push(payload) },
+    setTimeout: timers.setTimeout,
+    clearTimeout: timers.clearTimeout,
+  })
+  rail.sync({ connected: true, simulated: true })
+
+  const button = byAttrValue(body, 'data-ursim-jog', 'cartesian-x-plus')
+  assert.ok(button, '必须建出 X+ 按钮')
+  button.listeners.pointerdown[0]()
+  assert.equal(sent.length, 1, '按下立即走一步')
+  timers.advance(249)
+  assert.equal(sent.length, 1, '未到 250 ms 不得重复')
+  timers.advance(1)
+  assert.equal(sent.length, 2, '按住 250 ms 后走第二步')
+  timers.advance(200)
+  assert.equal(sent.length, 3, '之后每 200 ms 一步')
+
+  button.listeners.pointerup[0]()
+  timers.advance(2000)
+  assert.equal(sent.length, 3, '松开后必须停')
+  assert.equal(timers.pending, 0, '松开后不得留下定时器')
+
+  button.listeners.pointerdown[0]()
+  assert.equal(sent.length, 4)
+  rail.dispose()
+  timers.advance(2000)
+  assert.equal(sent.length, 4, '★ 卸载必须清掉重复定时器')
+  assert.equal(timers.pending, 0)
+})
+
+/** 极简假定时器：`advance(ms)` 按到期顺序执行，嵌套调度也按同一时钟推进。 */
+function makeFakeTimers() {
+  let nextId = 1
+  let current = 0
+  const tasks = new Map()
+  return {
+    setTimeout(fn, ms) {
+      const id = nextId++
+      tasks.set(id, { fn, at: current + Math.max(0, Number(ms) || 0) })
+      return id
+    },
+    clearTimeout(id) {
+      tasks.delete(id)
+    },
+    advance(ms) {
+      const target = current + ms
+      for (;;) {
+        let next = null
+        for (const entry of tasks) {
+          if (entry[1].at <= target && (next === null || entry[1].at < next[1].at)) next = entry
+        }
+        if (next === null) break
+        tasks.delete(next[0])
+        current = next[1].at
+        next[1].fn()
+      }
+      current = target
+    },
+    get pending() {
+      return tasks.size
+    },
+  }
+}

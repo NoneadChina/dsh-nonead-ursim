@@ -54,8 +54,8 @@ import {
 } from 'three'
 
 import kinematicsJson from '../../assets/kinematics.json' with { type: 'json' }
-// 离线仿真开关的宿主路由常量（零依赖共享模块，与 state/stream 用的是同一份真源）。
-import { TWIN_SIM_PATH, TWIN_STATE_PATH } from '../../lib/twin-paths.js'
+// 离线仿真开关与面板控制写路由的宿主路径常量（零依赖共享模块，与 state/stream 同一份真源）。
+import { TWIN_JOG_PATH, TWIN_SIM_PATH, TWIN_STATE_PATH } from '../../lib/twin-paths.js'
 
 import { createScene } from './robot/scene.js'
 import {
@@ -1041,14 +1041,34 @@ export function mountTwinPanel({
   })
 
   /*
-   * 控制轨内容：本任务**只放空 body**，把公开接口定下来。
-   * 后续任务在 `mountLeftRail` / `mountRightRail` 里填控件：
-   *   - 命令走 `deps.send(body)`（body 即宿主 `/twin/jog` 的路由 body）；
+   * 控制轨内容：左轨（点动 / 步长 / 参考系 / 回零 / 速度倍率）已在 twin-controls.js 里建好；
+   * 右轨留给后续任务（`mountRightRail` 仍是空实现）。
+   *   - 命令走 `deps.send(body)`（body 就是宿主 `/twin/jog` 的路由 body）；
    *   - 状态走返回的 `sync(snapshot)`（每帧喂最新快照）。
-   * 骨架阶段 `send` 保持 null：路径真源在路由那一侧，接路由的任务一并注入。
    */
+  /**
+   * 面板控制命令的唯一出口：POST 到宿主 `/twin/jog`（路径真源在 `lib/twin-paths.js`）。
+   *
+   * 失败**抛给左轨**（它把原因写到控件区的错误行上）：这里不吞异常，也不弹窗 ——
+   * 面板没有审批应答者，任何一次失败都只能如实显示。`body.ok !== true` 是宿主拒绝，
+   * 把 `body.error` 原样带出去。
+   */
+  async function sendJog(payload) {
+    if (typeof request !== 'function') throw new Error('请求实现不可用')
+    const res = await request(TWIN_JOG_PATH, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    const body = await res.json()
+    if (body === null || typeof body !== 'object' || body.ok !== true) {
+      throw new Error(String(body?.error ?? '宿主拒绝了这次点动'))
+    }
+    return body
+  }
+
   const railDeps = {
-    send: null,
+    send: sendJog,
     getSnapshot: () => state?.getSnapshot?.() ?? {},
   }
   const leftControls = mountLeftRail(doc, leftRail.body, railDeps)
@@ -2247,10 +2267,14 @@ export function mountTwinPanel({
     updateFeed(nowMs, snap, connected)
     /*
      * 控制轨：**未连接也要喂**（它们据此把整块控件禁用并显示原因），所以放在提前返回之前。
-     * 骨架阶段 `sync` 是空操作；后续任务在此按最新快照回显位姿/关节与在途状态。
+     * "数据停滞"有两个来源：宿主自报的 `feedStale`，以及面板自己的看门狗（采样超过
+     * `FEED_STALE_MS` 没推进）。后者只在这里合成到喂给轨道的快照上 —— 状态源本身不改。
      */
-    leftControls.sync(snap)
-    rightControls.sync(snap)
+    const feedStale = snap?.feedStale === true
+      || (lastFeedAtMs !== null && nowMs - lastFeedAtMs > FEED_STALE_MS)
+    const railSnap = feedStale === (snap?.feedStale === true) ? snap : { ...snap, feedStale }
+    leftControls.sync(railSnap)
+    rightControls.sync(railSnap)
     if (!connected) return
     if (wasDegraded !== snapDegraded) refreshStatus()
 
@@ -2439,6 +2463,10 @@ export function mountTwinPanel({
 
     // 收起面板即停仿真（含 AI 开的那台），并把数据源切回"按宿主解析"。
     stopSimOnDispose()
+
+    // 控件自己的定时器（左轨长按重复）必须在这里清掉，否则面板卸载后还会继续发命令。
+    leftControls.dispose?.()
+    rightControls.dispose?.()
 
     if (frameId !== null) {
       caf?.(frameId)

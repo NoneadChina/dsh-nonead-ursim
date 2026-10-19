@@ -340,6 +340,118 @@ body[data-ds-dark-theme] .ursim-twin-panel {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: pre-wrap;
 }
+/* ── 左轨点动控件（feat/twin-control-panel）─────────────────────────────────
+   尺寸按设计 §4：方向盘每格 40×40、gap 4；分段控件与速度行高 28。
+   状态只走属性：按钮可用性交给 disabled、档位交给 aria-pressed、整块状态交给
+   data-ursim-ctl-state —— 这里没有任何 inline 样式，运行期也不写 style.*。
+   左轨宽 128 px = 3×40 + 2×4，所以左侧 body 的左右内边距归零，让方向盘正好铺满；
+   需要留白的地方（标题/分段/速度行）各自加 6 px。 */
+.ursim-twin-rail-body[data-ursim-twin-rail-body='left'] {
+  padding-left: 0;
+  padding-right: 0;
+}
+.ursim-twin-ctl-note {
+  margin: 0 6px 6px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--ursim-warn);
+}
+.ursim-twin-ctl-note:empty { display: none; }
+.ursim-twin-ctl-error {
+  margin: 0 6px 6px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--ursim-danger);
+  white-space: pre-wrap;
+}
+.ursim-twin-ctl-error:empty { display: none; }
+.ursim-twin-ctl-section { margin: 0 0 8px; }
+.ursim-twin-ctl-label {
+  margin: 0 0 4px;
+  padding: 0 6px;
+  font-size: 11px;
+  color: var(--ursim-text-secondary);
+}
+.ursim-twin-ctl-pad {
+  display: grid;
+  grid-template-columns: repeat(3, 40px);
+  grid-template-rows: repeat(3, 40px);
+  gap: 4px;
+  justify-content: center;
+}
+.ursim-twin-ctl-cell { display: block; }
+.ursim-twin-ctl-button {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--ursim-text);
+  background: var(--ursim-surface);
+  border: 1px solid var(--ursim-border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.ursim-twin-ctl-button[data-ursim-jog='home'] { font-size: 10px; }
+.ursim-twin-ctl-button:hover:not(:disabled) {
+  border-color: var(--ursim-accent);
+  color: var(--ursim-accent);
+}
+.ursim-twin-ctl-button:active:not(:disabled) { background: var(--ursim-hover-bg); }
+.ursim-twin-ctl-button:disabled { opacity: 0.45; cursor: not-allowed; }
+.ursim-twin-ctl-row {
+  display: flex;
+  gap: 4px;
+  justify-content: center;
+  margin-top: 4px;
+}
+.ursim-twin-ctl-seg {
+  display: flex;
+  height: 28px;
+  margin: 0 6px 6px;
+  border: 1px solid var(--ursim-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.ursim-twin-ctl-seg-button {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 28px;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--ursim-text-secondary);
+  background: var(--ursim-surface);
+  border: 0;
+  border-right: 1px solid var(--ursim-border-subtle);
+  cursor: pointer;
+}
+.ursim-twin-ctl-seg-button:last-child { border-right: 0; }
+.ursim-twin-ctl-seg-button[aria-pressed='true'] {
+  color: var(--ursim-accent-ink);
+  background: var(--ursim-accent);
+}
+.ursim-twin-ctl-seg-button:disabled { opacity: 0.45; cursor: not-allowed; }
+.ursim-twin-ctl-speed {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  margin: 0 6px;
+}
+.ursim-twin-ctl-range {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.ursim-twin-ctl-range:disabled { opacity: 0.45; }
+.ursim-twin-ctl-percent {
+  flex: 0 0 40px;
+  font-size: 11px;
+  text-align: right;
+  color: var(--ursim-text-secondary);
+}
 `.trim()
 
 /**
