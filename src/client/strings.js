@@ -193,6 +193,21 @@ export const zh = {
   controlsDisabledSimOnly: '仅离线仿真可点动：真机请用工具调用（受审批门禁保护）',
   controlsDisabledStale: '数据通道停滞：控件已暂停，恢复后自动解禁',
   controlsCommandFailed: (reason) => `点动失败：${reason}`,
+  /* ---- 右轨位姿 / 关节控件（设计 §5）---- */
+  controlsToolPosition: '刀具位置',
+  controlsToolPositionTitle: 'TCP 位姿：X/Y/Z 单位 mm，RX/RY/RZ 单位 rad；回车或失焦下发一条 pose',
+  controlsJoints: '关节',
+  controlsJointsTitle: '拖动滑块只在本地预览（不发命令），松手才下发一条 movej；◀ ▶ 每次 1°',
+  controlsJointBase: '机座',
+  controlsJointShoulder: '肩部',
+  controlsJointElbow: '肘部',
+  controlsJointWrist1: '手腕 1',
+  controlsJointWrist2: '手腕 2',
+  controlsJointWrist3: '手腕 3',
+  controlsJointValue: (deg) => `${deg.toFixed(1)}°`,
+  controlsInvalidRollback: '数值无效：已回滚到最新一帧',
+  controlsRejectedCommand: '宿主拒绝了这次命令',
+  controlsNoPoseData: '尚无位姿数据',
 }
 
 /** 英文文案。键集合必须与 `zh` 完全一致（有测试钉住）。 */
@@ -364,6 +379,21 @@ export const en = {
     'Jogging works in the offline simulation only: use the tools for a real robot (guarded by approval)',
   controlsDisabledStale: 'The data feed stalled: controls are paused and re-enable automatically',
   controlsCommandFailed: (reason) => `Jog failed: ${reason}`,
+  /* ---- right-rail pose / joint controls (design §5) ---- */
+  controlsToolPosition: 'Tool position',
+  controlsToolPositionTitle: 'TCP pose: X/Y/Z in mm, RX/RY/RZ in rad; press Enter or blur to send one pose command',
+  controlsJoints: 'Joints',
+  controlsJointsTitle: 'Dragging a slider previews locally only (no command); release sends one movej; ◀ ▶ step by 1°',
+  controlsJointBase: 'Base',
+  controlsJointShoulder: 'Shoulder',
+  controlsJointElbow: 'Elbow',
+  controlsJointWrist1: 'Wrist 1',
+  controlsJointWrist2: 'Wrist 2',
+  controlsJointWrist3: 'Wrist 3',
+  controlsJointValue: (deg) => `${deg.toFixed(1)}°`,
+  controlsInvalidRollback: 'Invalid value: rolled back to the latest frame',
+  controlsRejectedCommand: 'The host rejected this command',
+  controlsNoPoseData: 'No pose data yet',
 }
 
 /** 支持的语言。 */

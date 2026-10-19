@@ -744,27 +744,543 @@ export function mountLeftRail(doc, body, deps = {}) {
   return { body: host, deps: merged, sync, dispose }
 }
 
+/** 右轨位姿输入的轴顺序（与宿主 `/twin/jog` body 里 `pose` 的下标一致）。 */
+const POSE_AXES = Object.freeze(['x', 'y', 'z', 'rx', 'ry', 'rz'])
+const POSE_INDEX = Object.freeze({ x: 0, y: 1, z: 2, rx: 3, ry: 4, rz: 5 })
+/** 关节滑块的行程（度）：UR 的关节范围 ±360°。 */
+const JOINT_MIN_DEG = -360
+const JOINT_MAX_DEG = 360
+
+/** 位置轴（mm↔m）还是姿态轴（rad）。 */
+function isTranslationAxis(axis) {
+  return axis === 'x' || axis === 'y' || axis === 'z'
+}
+
+/** 六维有限数向量（关节角 / TCP 都按这个口径收）。 */
+function isVec6(value) {
+  return Array.isArray(value) && value.length === 6 && value.every(Number.isFinite)
+}
+
+/** 把角度夹到滑块行程内（只用于滑块/回显，命令本身不做这个钳位）。 */
+function clampJointDeg(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return 0
+  return Math.min(JOINT_MAX_DEG, Math.max(JOINT_MIN_DEG, n))
+}
+
+/** 位姿输入框的显示格式：X/Y/Z 用 mm（1 位小数）、RX/RY/RZ 用 rad（3 位小数）。 */
+function formatPoseValue(axis, value) {
+  return isTranslationAxis(axis) ? (value * 1000).toFixed(1) : Number(value).toFixed(3)
+}
+
 /**
- * 右轨内容（位姿数值 + 六关节滑块）—— **本任务只放空 body**。
+ * 右轨内容：TCP 位姿数值输入（X/Y/Z mm、RX/RY/RZ rad）+ 六关节滑块与 ± 按钮。
  *
- * 后续任务在这里填：X/Y/Z(mm) + RX/RY/RZ(rad) 输入框、6 行关节（名称 + ◀ + 滑块 + ▶ + 数值）。
- * 约定同左轨：命令走 `deps.send(body)`，状态走 `sync(snapshot)`。
+ * 交互（设计 §5 / §6）：
+ *   - 关节滑块 `input` 只更新**本地数值与 FD 预览**（通过可选的 `deps.previewJoints(q)`），
+ *     绝不发命令；`change`（松手）才下发一条 `{mode:'joint', q:[6 个弧度]}`；
+ *     `q` 以**最新帧**的关节角为底，只改被操作的那一个；
+ *   - 位姿输入回车/失焦下发 `{mode:'pose', pose:[6]}`，以最新帧 TCP 为底只改被编辑的分量；
+ *     X/Y/Z 按 mm 收、除以 1000 转米，RX/RY/RZ 按 rad 收；
+ *   - 拖动中的轴不被 `sync` 回填（否则滑块会从用户手指下被拽走）；
+ *   - 命令失败（`ok !== true` 或抛错）→ 输入框/滑块回滚到最新帧值并标红，
+ *     下一次**新帧**（`ts` 变化）后自动清除；
+ *   - 可用性与左轨完全一致（`connected` / `simulated` / `feedStale` / 有没有 `send`），
+ *     整块禁用时在顶部 `data-ursim-ctl-note` 写出原因。
  *
  * @param {Document} doc
  * @param {HTMLElement} body 侧轨的 body 容器
- * @param {{send?: Function, getSnapshot?: Function}} [deps]
- * @returns {{sync: (snapshot?: object) => void, body: HTMLElement|null, deps: object}}
+ * @param {{
+ *   send?: Function,
+ *   getSnapshot?: Function,
+ *   previewJoints?: (q: number[]|null) => void,
+ * }} [deps] `previewJoints` 是纯本地的 3D 预览钩子（不发命令、不改测量值）；
+ *   传 `null` 表示结束预览。
+ * @returns {{sync: (snapshot?: object) => void, dispose: () => void, body: HTMLElement|null, deps: object}}
  */
 export function mountRightRail(doc, body, deps = {}) {
   const host = body ?? makeBody(doc, 'right', deps)
-  if (host) {
-    host.setAttribute('data-ursim-twin-rail-body', 'right')
-    host.__deps = { ...(host.__deps ?? {}), ...deps }
+  if (!host) {
+    return { body: null, deps, sync() {}, dispose() {} }
   }
-  return {
-    body: host,
-    deps,
-    /** 骨架阶段是空操作；后续任务在此做"按最新快照回显/禁用"。 */
-    sync() {},
+  host.setAttribute('data-ursim-twin-rail-body', 'right')
+  const merged = { ...(host.__deps ?? {}), ...deps }
+  host.__deps = merged
+
+  const send = typeof merged.send === 'function' ? merged.send : null
+  const preview = typeof merged.previewJoints === 'function' ? merged.previewJoints : null
+
+  /* ---------------- 可变状态 ---------------- */
+  let disposed = false
+  /** 整块控件是否可用（连接 + 仿真 + 数据在流动）。判断口径与左轨同一套。 */
+  let available = false
+  /** 是否有命令在飞（串行：同一时刻只允许一条）。 */
+  let busy = false
+  /** 最新一帧的关节角 / TCP（命令的唯一基底 —— 绝不用缓存位姿算目标）。 */
+  let latestQ = null
+  let latestTcp = null
+  let latestTs = null
+  /** 标红时的帧时间戳：只有**新帧**（`ts` 变化）才清除红标，不给用户"一帧就消失"的假象。 */
+  let invalidTs = null
+  let lastReason = null
+  let lastRenderKey = null
+  /** 正在拖动的关节下标（这些轴的滑块与数值不得被 sync 回填）。 */
+  const dragging = new Set()
+  /** 当前被标红的元素（下一次成功帧统一清除）。 */
+  const invalidEls = new Set()
+
+  /** 卸载时要摘掉的 DOM 监听。 */
+  const bindings = []
+  const bind = (target, type, handler) => {
+    target.addEventListener(type, handler)
+    bindings.push(() => target.removeEventListener?.(type, handler))
   }
+
+  /* ---------------- DOM ---------------- */
+  const note = makeEl(doc, 'div', 'ursim-twin-ctl-note', 'data-ursim-ctl-note')
+  host.appendChild(note)
+  const error = makeEl(doc, 'div', 'ursim-twin-ctl-error', 'data-ursim-ctl-error')
+  host.appendChild(error)
+
+  const poseInputs = Object.create(null)
+  const jointRows = []
+
+  /* ---- 刀具位置：2 列 × 3 行（左列 X/Y/Z mm，右列 RX/RY/RZ rad）---- */
+  const poseSection = makeEl(doc, 'div', 'ursim-twin-ctl-section', 'data-ursim-ctl-section', 'pose')
+  const poseLabel = makeEl(doc, 'div', 'ursim-twin-ctl-label')
+  poseLabel.textContent = S.controlsToolPosition
+  poseLabel.setAttribute('title', S.controlsToolPositionTitle)
+  poseSection.appendChild(poseLabel)
+
+  const poseGrid = makeEl(doc, 'div', 'ursim-twin-ctl-pose', 'data-ursim-ctl-grid', 'pose')
+  for (const rowAxes of [['x', 'rx'], ['y', 'ry'], ['z', 'rz']]) {
+    for (const axis of rowAxes) {
+      const entry = {
+        axis,
+        index: POSE_INDEX[axis],
+        input: null,
+        editing: false,
+        /** 最近一次**成功/已尝试**下发的字符串值：回车与失焦可能是同一次编辑，靠它去重。 */
+        lastSent: null,
+        /** 回车已经提交过：紧跟着的 change 不再重复提交（真浏览器里两者会成对出现）。 */
+        skipChange: false,
+      }
+      const cell = makeEl(doc, 'div', 'ursim-twin-ctl-pose-cell', 'data-ursim-pose-cell', axis)
+      const label = makeEl(doc, 'span', 'ursim-twin-ctl-pose-label')
+      label.textContent = axis.toUpperCase()
+      const input = doc.createElement('input')
+      input.setAttribute('type', 'text')
+      input.className = 'ursim-twin-ctl-pose-input'
+      input.setAttribute('inputmode', 'decimal')
+      input.setAttribute('data-ursim-pose', axis)
+      input.setAttribute(
+        'aria-label',
+        `${axis.toUpperCase()} (${isTranslationAxis(axis) ? 'mm' : 'rad'})`,
+      )
+      input.setAttribute('title', S.controlsToolPositionTitle)
+      input.setAttribute('placeholder', S.controlsNoPoseData)
+      input.value = ''
+      input.disabled = true
+      entry.input = input
+      poseInputs[axis] = entry
+      cell.appendChild(label)
+      cell.appendChild(input)
+      poseGrid.appendChild(cell)
+
+      bind(input, 'keydown', (event) => {
+        if (event?.key !== 'Enter') return
+        event?.preventDefault?.()
+        entry.skipChange = true
+        commitPose(axis)
+      })
+      bind(input, 'change', () => {
+        // 回车已经发过这一条：紧跟的 change 是同一个编辑的第二次通知，丢弃。
+        if (entry.skipChange) {
+          entry.skipChange = false
+          return
+        }
+        commitPose(axis)
+      })
+      bind(input, 'input', () => {
+        entry.editing = true
+        entry.lastSent = null
+        entry.skipChange = false
+        clearInvalidEl(input)
+      })
+      bind(input, 'focus', () => { entry.editing = true })
+      bind(input, 'blur', () => { entry.editing = false })
+    }
+  }
+  poseSection.appendChild(poseGrid)
+  host.appendChild(poseSection)
+
+  /* ---- 关节：6 行（名称 24 + ◀ 22 + 滑块 + ▶ 22 + 数值 44）---- */
+  const jointSection = makeEl(doc, 'div', 'ursim-twin-ctl-section', 'data-ursim-ctl-section', 'joints')
+  const jointLabel = makeEl(doc, 'div', 'ursim-twin-ctl-label')
+  jointLabel.textContent = S.controlsJoints
+  jointLabel.setAttribute('title', S.controlsJointsTitle)
+  jointSection.appendChild(jointLabel)
+
+  const JOINT_NAMES = [
+    S.controlsJointBase,
+    S.controlsJointShoulder,
+    S.controlsJointElbow,
+    S.controlsJointWrist1,
+    S.controlsJointWrist2,
+    S.controlsJointWrist3,
+  ]
+  for (let index = 0; index < 6; index += 1) {
+    const row = makeEl(doc, 'div', 'ursim-twin-ctl-joint-row', 'data-ursim-joint-row', index)
+    const name = makeEl(doc, 'span', 'ursim-twin-ctl-joint-name')
+    name.textContent = JOINT_NAMES[index]
+    name.setAttribute('title', JOINT_NAMES[index])
+
+    const dec = makeButton(doc, 'ursim-twin-ctl-step', '◀', 'data-ursim-joint-dec', index)
+    dec.setAttribute('aria-label', `${JOINT_NAMES[index]} −1°`)
+    dec.setAttribute('title', S.controlsJointsTitle)
+
+    const slider = doc.createElement('input')
+    slider.setAttribute('type', 'range')
+    slider.className = 'ursim-twin-ctl-joint-range'
+    slider.setAttribute('data-ursim-joint', index)
+    slider.setAttribute('aria-label', `${JOINT_NAMES[index]} (°)`)
+    slider.setAttribute('title', S.controlsJointsTitle)
+    // 关节行程 ±360°（UR 的关节范围）：属性与 property 都写，假 DOM 不会反射。
+    slider.setAttribute('min', String(JOINT_MIN_DEG))
+    slider.setAttribute('max', String(JOINT_MAX_DEG))
+    slider.setAttribute('step', '1')
+    slider.min = String(JOINT_MIN_DEG)
+    slider.max = String(JOINT_MAX_DEG)
+    slider.step = '1'
+    slider.value = '0'
+    slider.disabled = true
+
+    const inc = makeButton(doc, 'ursim-twin-ctl-step', '▶', 'data-ursim-joint-inc', index)
+    inc.setAttribute('aria-label', `${JOINT_NAMES[index]} +1°`)
+    inc.setAttribute('title', S.controlsJointsTitle)
+
+    const value = makeEl(doc, 'span', 'ursim-twin-ctl-joint-value', 'data-ursim-joint-value', index)
+    value.textContent = ''
+
+    row.appendChild(name)
+    row.appendChild(dec)
+    row.appendChild(slider)
+    row.appendChild(inc)
+    row.appendChild(value)
+    jointSection.appendChild(row)
+    jointRows[index] = { row, name, dec, slider, inc, value }
+
+    bind(slider, 'input', () => {
+      if (disposed) return
+      const deg = Number(slider.value)
+      if (!Number.isFinite(deg)) return
+      dragging.add(index)
+      clearInvalidEl(slider)
+      // 拖动只改本地显示与 3D 预览：**不下发**（设计 §6.1）。
+      value.textContent = S.controlsJointValue(deg)
+      if (latestQ !== null && preview !== null) {
+        const q = latestQ.slice()
+        q[index] = (deg * Math.PI) / 180
+        runPreview(q)
+      }
+    })
+    bind(slider, 'change', () => {
+      dragging.delete(index)
+      if (disposed) return
+      const deg = clampJointDeg(Number(slider.value))
+      if (!available || busy || send === null || latestQ === null) {
+        rollbackJoint(index)
+        clearPreview()
+        return
+      }
+      const q = latestQ.slice()
+      q[index] = (deg * Math.PI) / 180
+      error.textContent = ''
+      const sent = runCommand({ mode: 'joint', q }, {
+        onFail: () => {
+          rollbackJoint(index)
+          markInvalid(slider)
+        },
+        onOk: () => { clearInvalidEl(slider) },
+        // 命令落定前保持预览；落定后以**下一帧状态**为准。
+        onSettled: clearPreview,
+      })
+      if (!sent) clearPreview()
+    })
+    bind(inc, 'click', () => stepJoint(index, 1))
+    bind(dec, 'click', () => stepJoint(index, -1))
+  }
+  host.appendChild(jointSection)
+
+  /* ---------------- 行为 ---------------- */
+
+  /** 本地 FK 预览钩子：纯展示，绝不让钩子的异常冒到事件回调外。 */
+  function runPreview(q) {
+    if (preview === null) return
+    try {
+      preview(q)
+    } catch {
+      /* 预览失败不影响数值与后续命令 */
+    }
+  }
+
+  /** 结束预览（松手/失败/卸载/禁用）：面板据下一帧恢复到实际姿态。 */
+  function clearPreview() {
+    if (preview === null) return
+    try {
+      preview(null)
+    } catch {
+      /* 同上：预览是可选能力 */
+    }
+  }
+
+  /** 关节 ±：每次 1°，以最新帧为底只改这一轴。 */
+  function stepJoint(index, direction) {
+    if (disposed || !available || busy || send === null || latestQ === null) return
+    const row = jointRows[index]
+    if (!row) return
+    const q = latestQ.slice()
+    q[index] += (direction * Math.PI) / 180
+    error.textContent = ''
+    runCommand({ mode: 'joint', q }, {
+      onFail: () => markInvalid(row.slider),
+    })
+  }
+
+  /**
+   * 位姿输入提交（回车/失焦）：以最新帧 TCP 为底，只改被编辑的分量。
+   *
+   * X/Y/Z 按 mm 收、除以 1000；RX/RY/RZ 按 rad 收。同一字符串值不重复下发
+   * （回车与 change 一次编辑只发一条）。
+   */
+  function commitPose(axis) {
+    const entry = poseInputs[axis]
+    if (!entry) return
+    entry.editing = false
+    const input = entry.input
+    if (disposed || !available || busy || send === null) return
+
+    const text = String(input.value ?? '').trim()
+    const raw = text === '' ? Number.NaN : Number(text)
+    if (!Number.isFinite(raw)) {
+      rollbackPose(axis)
+      markInvalid(input)
+      error.textContent = S.controlsInvalidRollback
+      return
+    }
+    if (entry.lastSent === input.value) return
+    if (latestTcp === null) return
+
+    const pose = latestTcp.slice()
+    pose[entry.index] = isTranslationAxis(axis) ? raw / 1000 : raw
+    error.textContent = ''
+    runCommand({ mode: 'pose', pose }, {
+      onFail: () => {
+        rollbackPose(axis)
+        markInvalid(input)
+      },
+      onOk: () => {
+        entry.lastSent = input.value
+        clearInvalidEl(input)
+      },
+    })
+  }
+
+  /**
+   * 发一条命令（严格串行）。
+   *
+   * `send` 返回 Promise 时等它落定；返回其它值时视为同步完成。`ok === false` 也算失败
+   * （面板的 `sendJog` 会抛，但单测/自定义出口可能直接回一个失败信封）。
+   *
+   * @returns {boolean} 是否真的发出去
+   */
+  function runCommand(payload, handlers = {}) {
+    if (disposed || !payload || send === null || busy || !available) return false
+    busy = true
+    renderAvailability()
+    const settle = (err) => finish(err, handlers)
+    let result
+    try {
+      result = send(payload)
+    } catch (e) {
+      settle(e)
+      return false
+    }
+    if (result !== null && typeof result?.then === 'function') {
+      result.then(
+        (value) => settle(rejectedError(value)),
+        (e) => settle(e),
+      )
+    } else {
+      settle(rejectedError(result))
+    }
+    return true
+  }
+
+  /** 解析 `{ok:false}` 失败信封；成功/非信封值返回 null。 */
+  function rejectedError(value) {
+    if (value === null || typeof value !== 'object' || value.ok !== false) return null
+    const reason = value.error === undefined || value.error === null ? '' : String(value.error)
+    return new Error(reason === '' ? S.controlsRejectedCommand : reason)
+  }
+
+  /** 一条命令落定：解禁；失败时回滚 + 标红（**不**抛到事件回调外）。 */
+  function finish(err, handlers) {
+    busy = false
+    if (disposed) return
+    if (err) {
+      error.textContent = S.controlsCommandFailed(err instanceof Error ? err.message : String(err))
+      handlers?.onFail?.()
+      invalidTs = latestTs
+    } else {
+      handlers?.onOk?.()
+    }
+    handlers?.onSettled?.()
+    renderAvailability()
+  }
+
+  /** 失败回滚：输入框回到最新帧值（下一帧也会再回填一次，双保险）。 */
+  function rollbackPose(axis) {
+    const entry = poseInputs[axis]
+    if (!entry) return
+    entry.lastSent = null
+    if (latestTcp !== null) {
+      entry.input.value = formatPoseValue(axis, latestTcp[entry.index])
+    }
+  }
+
+  /** 失败回滚：滑块与数值列回到最新帧的关节角。 */
+  function rollbackJoint(index) {
+    const row = jointRows[index]
+    if (!row || latestQ === null) return
+    const deg = (latestQ[index] * 180) / Math.PI
+    row.slider.value = String(clampJointDeg(Math.round(deg)))
+    row.value.textContent = S.controlsJointValue(deg)
+  }
+
+  /**
+   * 标红一个控件。
+   *
+   * `invalidTs` 记下**当前帧**：`sync` 只在收到另一帧（`ts` 变化）时清除，避免标红在
+   * 下一帧（同一个采样）就被抹掉，用户根本看不到。
+   */
+  function markInvalid(el) {
+    if (!el) return
+    el.setAttribute('data-ursim-invalid', 'true')
+    el.setAttribute('aria-invalid', 'true')
+    invalidEls.add(el)
+    invalidTs = latestTs
+  }
+
+  /** 清掉单个控件的红标（用户重新编辑 / 该条命令成功）。 */
+  function clearInvalidEl(el) {
+    if (!el || !invalidEls.has(el)) return
+    el.removeAttribute('data-ursim-invalid')
+    el.removeAttribute('aria-invalid')
+    invalidEls.delete(el)
+  }
+
+  /** 清掉全部红标（新帧到达）。 */
+  function clearInvalid() {
+    for (const el of [...invalidEls]) clearInvalidEl(el)
+    invalidTs = null
+  }
+
+  /** 只有"可用性/在途"变化时才写 DOM —— 每帧重写 disabled 是浪费。 */
+  function renderAvailability() {
+    const key = `${available ? '1' : '0'}${busy ? '1' : '0'}`
+    if (key === lastRenderKey) return
+    lastRenderKey = key
+    const disabled = !available || busy
+    for (const axis of POSE_AXES) poseInputs[axis].input.disabled = disabled
+    for (const row of jointRows) {
+      row.slider.disabled = disabled
+      row.inc.disabled = disabled
+      row.dec.disabled = disabled
+    }
+    host.setAttribute(
+      'data-ursim-ctl-state',
+      !available ? 'disabled' : (busy ? 'busy' : 'ready'),
+    )
+  }
+
+  /** 本帧为什么不可用（空串 = 可用）—— 与左轨同一套判断。 */
+  function unavailableReason(snapshot) {
+    if (send === null) return S.controlsDisabledDisconnected
+    if (snapshot?.connected !== true) return S.controlsDisabledDisconnected
+    if (snapshot?.feedStale === true) return S.controlsDisabledStale
+    if (snapshot?.simulated !== true) return S.controlsDisabledSimOnly
+    return ''
+  }
+
+  /**
+   * 每帧喂最新快照：更新可用性/原因行、回填数值（**跳过正在拖动的滑块**），
+   * 并在新帧到达后清掉失败红标。绝不发命令。
+   */
+  function sync(snapshot) {
+    if (disposed) return
+    const reason = unavailableReason(snapshot)
+    const nextAvailable = reason === ''
+    if (nextAvailable !== available) {
+      available = nextAvailable
+      if (!available) {
+        dragging.clear()
+        clearPreview()
+      }
+      renderAvailability()
+    }
+    if (reason !== lastReason) {
+      lastReason = reason
+      note.textContent = reason
+    }
+
+    if (isVec6(snapshot?.q)) latestQ = snapshot.q.slice()
+    if (isVec6(snapshot?.tcp)) latestTcp = snapshot.tcp.slice()
+    const ts = Number.isFinite(snapshot?.ts) ? snapshot.ts : null
+    if (ts !== null) latestTs = ts
+    // 失败后的**下一帧**才清红标：同一个采样重复喂进来的那几帧不算。
+    // 快照没有 ts 时无法区分"新帧"，下一次 sync 就清（总比永远红着好）。
+    if (invalidEls.size > 0 && (invalidTs === null || (ts !== null && ts !== invalidTs))) {
+      clearInvalid()
+    }
+
+    if (latestTcp !== null) {
+      for (const axis of POSE_AXES) {
+        const entry = poseInputs[axis]
+        if (entry.editing) continue
+        entry.input.value = formatPoseValue(axis, latestTcp[entry.index])
+      }
+    }
+    if (latestQ !== null) {
+      for (let index = 0; index < 6; index += 1) {
+        if (dragging.has(index)) continue
+        const row = jointRows[index]
+        const deg = (latestQ[index] * 180) / Math.PI
+        row.slider.value = String(clampJointDeg(Math.round(deg)))
+        row.value.textContent = S.controlsJointValue(deg)
+      }
+    }
+  }
+
+  /** 卸载：结束预览 + 摘监听（幂等）。 */
+  function dispose() {
+    if (disposed) return
+    disposed = true
+    clearPreview()
+    dragging.clear()
+    invalidEls.clear()
+    for (const off of bindings) {
+      try {
+        off()
+      } catch {
+        /* 元素可能已被宿主移除：解绑失败不影响卸载 */
+      }
+    }
+    bindings.length = 0
+  }
+
+  // 初始一律禁用：第一帧快照到达前不可能知道连没连上/是不是仿真。
+  renderAvailability()
+
+  return { body: host, deps: merged, sync, dispose }
 }

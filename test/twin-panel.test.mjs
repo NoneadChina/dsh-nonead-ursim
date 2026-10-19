@@ -96,6 +96,10 @@ function makeEl(tag) {
     getAttribute(name) {
       return name in this.attributes ? this.attributes[name] : null
     },
+    // 真实 DOM 有 `removeAttribute`：右轨"失败标红后在新帧清除"依赖它，假 DOM 必须同样支持。
+    removeAttribute(name) {
+      delete this.attributes[name]
+    },
     hasAttribute(name) {
       return name in this.attributes
     },
@@ -2825,3 +2829,195 @@ function makeFakeTimers() {
     },
   }
 }
+
+/* ================================================================== *
+ * 右轨控件（feat/twin-control-panel · 位姿数值 + 六关节滑块）
+ * ================================================================== */
+
+const rightBody = (ctx) => byAttrValue(ctx.container, 'data-ursim-twin-rail-body', 'right')
+const poseInput = (ctx, axis) => byAttrValue(ctx.container, 'data-ursim-pose', axis)
+const jointSlider = (ctx, index) => byAttrValue(ctx.container, 'data-ursim-joint', String(index))
+const jointValueEl = (ctx, index) =>
+  byAttrValue(ctx.container, 'data-ursim-joint-value', String(index))
+const jointInc = (ctx, index) => byAttrValue(ctx.container, 'data-ursim-joint-inc', String(index))
+const jointDec = (ctx, index) => byAttrValue(ctx.container, 'data-ursim-joint-dec', String(index))
+const rightNote = (ctx) => byAttr(rightBody(ctx), 'data-ursim-ctl-note')[0]
+const rightError = (ctx) => byAttr(rightBody(ctx), 'data-ursim-ctl-error')[0]
+
+const KIN12 = resolveKinematics('ur12e')
+const degToRad = (deg) => (deg * Math.PI) / 180
+
+test('★ 右轨：拖关节滑块只预览不发命令，松手才发一条 joint', async () => {
+  const ctx = boot({ initial: LIVE, autoSim: false })
+  ctx.clock.flush()
+  await tick()
+  ctx.clock.flush(16)
+
+  assert.ok(rightBody(ctx), '必须建出右轨正文容器')
+  const slider = jointSlider(ctx, 0)
+  assert.ok(slider, '必须有 J0 滑块（data-ursim-joint="0"）')
+  assert.equal(slider.min, '-360', '关节滑块按度，覆盖 UR 的 ±360° 行程')
+  assert.equal(slider.max, '360')
+  assert.equal(slider.step, '1')
+  assert.equal(slider.value, '90', '滑块回显最新帧的关节角（度，取整）')
+  assert.equal(jointValueEl(ctx, 0).textContent, '90.0°', '数值列显示 1 位小数（度）')
+
+  // 拖动：只改本地预览，不发命令。
+  slider.value = '30'
+  slider.listeners.input[0]()
+  assert.equal(ctx.request.posts().length, 0, '★ 拖动期间绝不发命令')
+
+  // 本地 FK 预览：3D 按拖动值摆姿态，其余关节仍取最新帧。
+  ctx.clock.flush(16)
+  const previewQ = Q0.slice()
+  previewQ[0] = degToRad(30)
+  const applied = ctx.modelLoader.handles[0].applied.at(-1)
+  assert.ok(applied, '拖动预览必须真的写过 3D 姿态')
+  assertClose(applied.tool0, fkChain(KIN12, previewQ).tool0, '★ 拖动时 3D 按本地 FK 预览')
+
+  // 拖着的轴不被 sync 回填（否则滑块会从用户手指下被拽走）。
+  ctx.state.set({ q: [-0.2, 0.3, 0, 0, 0, 0], ts: 1200 })
+  ctx.clock.flush(16)
+  assert.equal(slider.value, '30', '★ 拖动中的滑块不得被 sync 覆盖')
+
+  // 松手：一条 joint，被操作的轴取滑块值，其余取最新帧。
+  slider.listeners.change[0]()
+  await tick()
+  const posts = ctx.request.posts()
+  assert.equal(posts.length, 1, '★ 松手（change）才发一条')
+  const body = JSON.parse(posts[0].body)
+  assert.equal(body.mode, 'joint')
+  assert.equal(body.q.length, 6)
+  assert.ok(Math.abs(body.q[0] - degToRad(30)) < 1e-12, '被操作的关节 = 30° 的弧度')
+  assert.equal(body.q[1], 0.3, '其余关节取最新帧（而不是拖动前的旧值）')
+  assert.equal(body.q[2], 0)
+
+  ctx.panel.dispose()
+})
+
+test('★ 右轨：位姿输入回车只改一个分量，其余分量取最新帧', async () => {
+  const ctx = boot({ initial: LIVE, autoSim: false })
+  ctx.clock.flush()
+  await tick()
+  // 推一帧新的 TCP，证明命令取的是**最新帧**而不是挂载时那一帧。
+  ctx.state.set({ tcp: [0.2, -0.3, 0.4, 0.1, 0.2, 0.3], ts: 1100 })
+  ctx.clock.flush(16)
+
+  const x = poseInput(ctx, 'x')
+  assert.ok(x, '必须有 X 位姿输入（data-ursim-pose="x"）')
+  assert.equal(x.value, '200.0', 'X 按 mm 回显')
+  assert.equal(poseInput(ctx, 'rx').value, '0.100', 'RX 按 rad 回显')
+
+  x.value = '250'
+  x.listeners.keydown[0]({ key: 'Enter', preventDefault() {} })
+  await tick()
+
+  const posts = ctx.request.posts()
+  assert.equal(posts.length, 1, '回车只发一条')
+  assert.deepEqual(JSON.parse(posts[0].body), {
+    mode: 'pose',
+    pose: [0.25, -0.3, 0.4, 0.1, 0.2, 0.3],
+  }, '★ 只改 X（mm→m），其余分量取最新帧')
+
+  // 回车与失焦可能是同一次编辑：值没变就不得重复下发。
+  x.listeners.keydown[0]({ key: 'Enter', preventDefault() {} })
+  await tick()
+  assert.equal(ctx.request.posts().length, 1, '同一次编辑只允许一条命令')
+
+  ctx.panel.dispose()
+})
+
+test('★ 右轨：命令失败时输入框回滚到最新帧值并标红', async () => {
+  const base = makeFakeRequest()
+  const request = (url, init = {}) => {
+    if ((init.method ?? 'GET') === 'POST') {
+      return Promise.resolve({ json: async () => ({ ok: false, error: 'SIM_UNREACHABLE' }) })
+    }
+    return base(url, init)
+  }
+  const ctx = boot({ initial: LIVE, autoSim: false, request })
+  ctx.clock.flush()
+  await tick()
+
+  const y = poseInput(ctx, 'y')
+  assert.equal(y.value, '200.0')
+  y.value = '999'
+  y.listeners.change[0]()
+  await tick()
+
+  assert.equal(y.value, '200.0', '★ 失败后回滚到最新帧值')
+  assert.equal(y.getAttribute('data-ursim-invalid'), 'true', '★ 失败必须标红')
+  assert.match(rightError(ctx).textContent, /SIM_UNREACHABLE/, '失败原因写到右轨错误行')
+
+  // 下一帧（ts 变化）清掉红标，并回填新值。
+  ctx.state.set({ tcp: [0.2, -0.3, 0.4, 0.1, 0.2, 0.3], ts: 1200 })
+  ctx.clock.flush(16)
+  assert.equal(y.getAttribute('data-ursim-invalid'), null, '★ 下一次成功帧后清除红标')
+  assert.equal(y.value, '-300.0', '回填最新帧值（mm）')
+
+  ctx.panel.dispose()
+})
+
+test('★ 右轨：关节 ± 按钮各发一条 joint，且步进是 1°', async () => {
+  const ctx = boot({ initial: LIVE, autoSim: false })
+  ctx.clock.flush()
+  await tick()
+
+  const inc = jointInc(ctx, 3)
+  const dec = jointDec(ctx, 3)
+  assert.ok(inc, '必须有 J3 的 + 按钮（data-ursim-joint-inc="3"）')
+  assert.ok(dec, '必须有 J3 的 − 按钮（data-ursim-joint-dec="3"）')
+
+  inc.listeners.click[0]()
+  await tick()
+  dec.listeners.click[0]()
+  await tick()
+
+  const posts = ctx.request.posts()
+  assert.equal(posts.length, 2, '★ 两个按钮各发一条')
+  const first = JSON.parse(posts[0].body)
+  const second = JSON.parse(posts[1].body)
+  assert.equal(first.mode, 'joint')
+  assert.equal(second.mode, 'joint')
+  assert.equal(first.q.length, 6)
+  assert.equal(second.q.length, 6)
+  assert.ok(Math.abs(first.q[3] - degToRad(1)) < 1e-12, '★ + 按钮 = +1°')
+  assert.ok(Math.abs(second.q[3] - degToRad(-1)) < 1e-12, '★ − 按钮 = −1°')
+  assert.deepEqual(first.q.slice(0, 3), [Q0[0], Q0[1], Q0[2]], '其余关节取最新帧')
+  assert.deepEqual(second.q.slice(0, 3), [Q0[0], Q0[1], Q0[2]])
+
+  ctx.panel.dispose()
+})
+
+test('★ 右轨：禁用条件与左轨一致（connected / simulated / feedStale）', async () => {
+  const ctx = boot({ initial: { ...LIVE, simulated: false }, autoSim: false })
+  ctx.clock.flush()
+  await tick()
+
+  const controls = () => [
+    ...byAttr(ctx.container, 'data-ursim-pose'),
+    ...byAttr(ctx.container, 'data-ursim-joint'),
+    ...byAttr(ctx.container, 'data-ursim-joint-inc'),
+    ...byAttr(ctx.container, 'data-ursim-joint-dec'),
+  ]
+  assert.equal(controls().length, 6 + 6 + 6 + 6, '6 位姿输入 + 6 滑块 + 6×2 按钮')
+  for (const el of controls()) assert.equal(el.disabled, true, '非仿真时右轨控件必须全部禁用')
+  assert.match(rightNote(ctx).textContent, /仿真/, '右轨顶部必须写出禁用原因')
+
+  ctx.state.set({ simulated: true, ts: 1100 })
+  ctx.clock.flush()
+  for (const el of controls()) assert.equal(el.disabled, false, '仿真恢复后解禁')
+  assert.equal(rightNote(ctx).textContent, '', '可用时不得留着禁用原因')
+
+  ctx.state.set({ feedStale: true, ts: 1200 })
+  ctx.clock.flush()
+  for (const el of controls()) assert.equal(el.disabled, true, '数据停滞必须禁用')
+  assert.match(rightNote(ctx).textContent, /停滞/)
+
+  ctx.state.set({ connected: false, simulated: false, feedStale: false, ts: 1300 })
+  ctx.clock.flush()
+  for (const el of controls()) assert.equal(el.disabled, true, '断连必须禁用')
+  assert.match(rightNote(ctx).textContent, /未连接/)
+
+  ctx.panel.dispose()
+})

@@ -452,6 +452,104 @@ body[data-ds-dark-theme] .ursim-twin-panel {
   text-align: right;
   color: var(--ursim-text-secondary);
 }
+/* ── 右轨位姿 / 关节控件（feat/twin-control-panel · 设计 §5）────────────────
+   176 px 轨：位姿 2 列 × 3 行（输入框 64×24、行高 28）；关节 6 行
+   （名称 24 + ◀ 22 + 滑块自适应 + ▶ 22 + 数值 44，行高 30）。
+   右轨正文左右内边距压到 3 px，否则 2×64 的输入框加轴标签放不进 176。
+   状态仍只走属性：disabled / aria-invalid / data-ursim-invalid。 */
+.ursim-twin-rail-body[data-ursim-twin-rail-body='right'] {
+  padding-left: 3px;
+  padding-right: 3px;
+}
+.ursim-twin-rail-body[data-ursim-twin-rail-body='right'] .ursim-twin-ctl-label {
+  padding-left: 0;
+  padding-right: 0;
+}
+.ursim-twin-ctl-pose {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px 4px;
+  margin: 0 0 6px;
+}
+.ursim-twin-ctl-pose-cell {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 28px;
+  min-width: 0;
+}
+.ursim-twin-ctl-pose-label {
+  flex: 0 0 14px;
+  font-size: 10px;
+  color: var(--ursim-text-secondary);
+}
+.ursim-twin-ctl-pose-input {
+  width: 64px;
+  height: 24px;
+  box-sizing: border-box;
+  padding: 0 4px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--ursim-text);
+  background: var(--ursim-surface);
+  border: 1px solid var(--ursim-border);
+  border-radius: 4px;
+}
+.ursim-twin-ctl-pose-input:disabled { opacity: 0.45; cursor: not-allowed; }
+.ursim-twin-ctl-joint-row {
+  display: grid;
+  grid-template-columns: 24px 22px minmax(0, 1fr) 22px 44px;
+  align-items: center;
+  gap: 2px;
+  height: 30px;
+}
+.ursim-twin-ctl-joint-name {
+  font-size: 10px;
+  color: var(--ursim-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ursim-twin-ctl-step {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--ursim-text);
+  background: var(--ursim-surface);
+  border: 1px solid var(--ursim-border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.ursim-twin-ctl-step:hover:not(:disabled) {
+  border-color: var(--ursim-accent);
+  color: var(--ursim-accent);
+}
+.ursim-twin-ctl-step:disabled { opacity: 0.45; cursor: not-allowed; }
+.ursim-twin-ctl-joint-range {
+  width: 100%;
+  min-width: 0;
+}
+.ursim-twin-ctl-joint-range:disabled { opacity: 0.45; }
+.ursim-twin-ctl-joint-value {
+  font-size: 10px;
+  text-align: right;
+  color: var(--ursim-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+/* 失败标红：统一由 data-ursim-invalid 驱动，下一帧成功自动消失。 */
+.ursim-twin-ctl-pose-input[data-ursim-invalid='true'],
+.ursim-twin-ctl-joint-range[data-ursim-invalid='true'] {
+  border-color: var(--ursim-danger);
+  color: var(--ursim-danger);
+}
+.ursim-twin-ctl-joint-range[data-ursim-invalid='true'] {
+  outline: 1px solid var(--ursim-danger);
+  outline-offset: 1px;
+}
+.ursim-twin-ctl-joint-value[data-ursim-invalid='true'] { color: var(--ursim-danger); }
 `.trim()
 
 /**

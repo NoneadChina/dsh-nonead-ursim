@@ -1041,11 +1041,21 @@ export function mountTwinPanel({
   })
 
   /*
-   * 控制轨内容：左轨（点动 / 步长 / 参考系 / 回零 / 速度倍率）已在 twin-controls.js 里建好；
-   * 右轨留给后续任务（`mountRightRail` 仍是空实现）。
+   * 控制轨内容都在 twin-controls.js 里建好：左轨（点动 / 步长 / 参考系 / 回零 / 速度倍率）、
+   * 右轨（位姿数值 + 六关节滑块）。
    *   - 命令走 `deps.send(body)`（body 就是宿主 `/twin/jog` 的路由 body）；
-   *   - 状态走返回的 `sync(snapshot)`（每帧喂最新快照）。
+   *   - 状态走返回的 `sync(snapshot)`（每帧喂最新快照）；
+   *   - 右轨拖滑块时走 `deps.previewJoints(q)` 做**本地 FK 预览**（见下面的 `previewQ`）。
    */
+  /**
+   * 右轨拖关节滑块时的本地预览关节角（`null` = 不预览）。
+   *
+   * 设计 §6.1：拖动时 3D 跟着动、**不发命令**，松手才下发一条 `movej`。面板是唯一
+   * 知道"怎么把关节角摆进场景"的一方（`applyPoseToScene`），所以预览状态放在这里：
+   * 预览期间 `step()` 用这组关节角出帧，而不是复现实测姿态；松手后右轨传 `null`
+   * 结束预览，下一帧回到实际姿态（命令的结果随后由状态帧带来）。
+   */
+  let previewQ = null
   /**
    * 面板控制命令的唯一出口：POST 到宿主 `/twin/jog`（路径真源在 `lib/twin-paths.js`）。
    *
@@ -1070,6 +1080,20 @@ export function mountTwinPanel({
   const railDeps = {
     send: sendJog,
     getSnapshot: () => state?.getSnapshot?.() ?? {},
+    /**
+     * 右轨拖动关节滑块时的本地 FK 预览：只把 3D 摆到拖动值，不发命令、不改读数。
+     * 传 `null` 结束预览（松手 / 命令落定 / 控件禁用 / 卸载）。
+     */
+    previewJoints(q) {
+      const next = Array.isArray(q) && q.length === 6 && q.every(Number.isFinite)
+        ? q.slice()
+        : null
+      if (next === null && previewQ === null) return
+      previewQ = next
+      // 结束预览时必须让下一帧**重算**姿态（不能复用静止帧里缓存的预览结果）。
+      poseSettled = false
+      dirty = true
+    },
   }
   const leftControls = mountLeftRail(doc, leftRail.body, railDeps)
   const rightControls = mountRightRail(doc, rightRail.body, railDeps)
@@ -2352,14 +2376,22 @@ export function mountTwinPanel({
        * 也相同。旧写法照样每帧重算一遍（FK + 若干矩阵写入 + 一次轨迹重绘），60 Hz 全跑。
        */
       const windowDone = nowMs >= animatingUntil
-      const staticFrame = !isNewSample && !dirty && windowDone && poseSettled && poseResult !== null
+      /*
+       * 右轨拖滑块期间的本地预览：3D 摆到拖动值，但**不改测量值、不发命令**。
+       * 预览期间必须绕过静止帧复用 —— 否则数据面每来一帧就会把预览姿态盖回实际姿态，
+       * 滑块在动、画面却在原地跳。
+       */
+      const previewing = previewQ !== null
+      const staticFrame = !previewing && !isNewSample && !dirty && windowDone && poseSettled && poseResult !== null
       if (staticFrame) {
         fkResult = poseResult
       } else {
         // 渲染滞后一个采样周期（自校准）：只有一个样本时不插值，直接呈现该样本。
-        const smooth = prevSample
-          ? interpolateAt(prevSample, curSample, nowMs - renderDelayMs(prevSample, curSample))
-          : curSample.q.slice()
+        const smooth = previewing
+          ? previewQ.slice()
+          : (prevSample
+            ? interpolateAt(prevSample, curSample, nowMs - renderDelayMs(prevSample, curSample))
+            : curSample.q.slice())
         // 姿态：只在模型就绪时写（applyFK 不产生 GPU 资源，无需暂存）。这一步同时把模型置为
         // 可见、并把本次关节角记下来（换型号时新模型据此立刻摆姿态）—— 见 applyPoseToScene。
         fkResult = applyPoseToScene(smooth, kin)
@@ -2467,6 +2499,7 @@ export function mountTwinPanel({
     // 控件自己的定时器（左轨长按重复）必须在这里清掉，否则面板卸载后还会继续发命令。
     leftControls.dispose?.()
     rightControls.dispose?.()
+    previewQ = null
 
     if (frameId !== null) {
       caf?.(frameId)
