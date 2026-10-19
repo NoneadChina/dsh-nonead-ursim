@@ -12,12 +12,14 @@
  * 本模块**零 Node 依赖**（浏览器 bundle 直接打包）：只用注入进来的 `doc`，不 import `node:*`，
  * 也不碰 three.js、不发请求。
  *
- * ## 样式为什么用 inline 而不是再注入一份 `<style>`
+ * ## 样式分工：静态在 `TWIN_CSS`，动态只有列宽
  * 本仓库的面板样式走 `styles.js` 的 `<style>` 字符串注入（Ruling 28：客户端产物只有单文件，
- * shell 不加载任何 `.css`）。但既有测试钉死了两条不变量：**整个文档恰好一份 `<style>`**、
- * 且它 `textContent === TWIN_CSS`。控制轨的样式若再注入第二份，就会同时打破这两条。
- * 而本轮的文件范围不含 `styles.js`，所以骨架期的结构样式（flex/尺寸/收起隐藏）用 inline
- * 写在这里 —— 效果与那几条 CSS 规则逐条等价，且不依赖样式表是否已注入。
+ * shell 不加载任何 `.css`）。既有测试钉死了两条不变量：**整个文档恰好一份 `<style>`**、
+ * 且它 `textContent === TWIN_CSS` ⇒ 控制轨**不**注入第二份样式：`.ursim-twin-stage`、
+ * `.ursim-twin-rail*` 的静态规则全部住在 `TWIN_CSS` 里。
+ * 真正取决于运行状态的只剩**列宽**：`stage.style.gridTemplateColumns` 由 `stageColumns()`
+ * 拼出（唯一拼法，面板只负责写入）。收起态本身落在 `data-collapsed` 属性上，正文显隐、
+ * 轨宽、把手尺寸都由 CSS 消费这个属性 —— 这里不再写 `style.*`。
  *
  * ## 容错底线
  * 无 DOM / `storage` 不可用（隐私模式下 `localStorage.getItem` 会抛 SecurityError）时
@@ -105,32 +107,11 @@ export function writeRailState(storage, state) {
   }
 }
 
-/** 把控制轨的结构样式写到 inline style 上（与设计文档里那几条 CSS 规则逐条等价）。 */
-function applyRailChrome(rail, toggle, body) {
-  rail.style.display = 'flex'
-  rail.style.flexDirection = 'column'
-  rail.style.overflowY = 'auto'
-  rail.style.overflowX = 'hidden'
-  rail.style.minWidth = '0'
-  rail.style.boxSizing = 'border-box'
-  rail.style.background = 'color-mix(in srgb, var(--ursim-chrome, #ffffff) 88%, transparent)'
-  toggle.style.flex = '0 0 auto'
-  toggle.style.height = '24px'
-  toggle.style.padding = '0'
-  toggle.style.font = 'inherit'
-  toggle.style.fontSize = '11px'
-  toggle.style.lineHeight = '1'
-  toggle.style.color = 'var(--ursim-text-secondary, #59636e)'
-  toggle.style.background = 'transparent'
-  toggle.style.cursor = 'pointer'
-  body.style.flex = '1 1 auto'
-  body.style.minHeight = '0'
-  body.style.boxSizing = 'border-box'
-  body.style.padding = '6px 6px 8px'
-}
-
 /**
  * 建一侧的轨（把手 + 空 body），并把初始收起状态从 storage 恢复。
+ *
+ * 结构样式**不在这里写**：`.ursim-twin-rail` / `.ursim-twin-rail-toggle` / `.ursim-twin-rail-body`
+ * 三条规则住在 `styles.js` 的 `TWIN_CSS` 里（见文件头）。本函数只建 DOM、挂 `data-*`、管状态。
  *
  * @param {Document} doc 文档（测试注入假 document）
  * @param {'left'|'right'} side 哪一侧
@@ -163,20 +144,12 @@ export function buildRail(doc, side, storage, options = {}) {
 
   rail.appendChild(toggle)
   rail.appendChild(body)
-  applyRailChrome(rail, toggle, body)
-  rail.style.borderRight = which === 'left' ? '1px solid var(--ursim-border-subtle, #e6eaef)' : ''
-  rail.style.borderLeft = which === 'right' ? '1px solid var(--ursim-border-subtle, #e6eaef)' : ''
-  toggle.style.border = '0'
-  toggle.style.borderBottom = '1px solid var(--ursim-border-subtle, #e6eaef)'
 
   let collapsed = false
 
-  /** 把收起状态同步到四个地方：`data-collapsed`、`style.width`、`aria-expanded`、body 显隐。 */
+  /** 把收起状态同步到三处：`data-collapsed`（CSS 据此收正文）、`aria-expanded`、把手文案。 */
   function syncChrome() {
     rail.setAttribute('data-collapsed', collapsed ? 'true' : 'false')
-    rail.style.width = `${railWidth(which, collapsed)}px`
-    // 收起后正文必须彻底让位（不能只靠 overflow 藏：那样仍能滚出内容）。
-    body.style.display = collapsed ? 'none' : ''
     toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true')
     // 箭头指向"点下去会发生什么"：左轨展开时朝左（收起），收起后朝右（展开）。
     const arrow = which === 'left'

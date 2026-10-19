@@ -998,13 +998,12 @@ export function mountTwinPanel({
    * 把快照喂给它、把命令出口留好。
    */
   const stage = makeEl(doc, 'div', 'ursim-twin-stage', 'data-ursim-twin-stage')
-  // 三栏 grid：左轨 / 3D / 右轨。尺寸全部走 inline（理由见 twin-controls.js 文件头：
-  // 面板只允许存在一份 `<style>`，而它由 styles.js 拥有且内容被测试逐一比对）。
-  stage.style.display = 'grid'
-  stage.style.alignItems = 'stretch'
-  stage.style.flex = '1 1 auto'
-  stage.style.minHeight = '0'
-  stage.style.minWidth = '0'
+  /*
+   * 三栏 grid：左轨 / 3D / 右轨。
+   * 静态结构（display/align-items/flex/min-*）住在 `styles.js` 的 `TWIN_CSS` 里；
+   * 这里**只**写真正随运行状态变化的列宽 —— 它的唯一拼法是 `stageColumns()`。
+   * 收起/展开时轨宽由 CSS 列宽决定，不再额外写 `rail.style.width`（两个真源会打架）。
+   */
   /** 控制轨状态存储：隐私模式下连**取 localStorage** 都可能抛，必须包起来。 */
   const railStorage = (() => {
     try {
@@ -1855,7 +1854,9 @@ export function mountTwinPanel({
     if (connected !== wasConnected) {
       wasConnected = connected
       root.setAttribute('data-ursim-twin-connected', connected ? 'true' : 'false')
-      stage.style.display = connected ? 'grid' : 'none'
+      // 空串 = 把显示交回样式表（`.ursim-twin-stage` 在 TWIN_CSS 里是 grid）：
+      // 这里只负责"连不上就藏起来"，不再把 grid 这个静态值抄进 inline。
+      stage.style.display = connected ? '' : 'none'
       view.style.display = connected ? '' : 'none'
       hud.style.display = connected ? '' : 'none'
       toolbar.style.display = connected ? '' : 'none'

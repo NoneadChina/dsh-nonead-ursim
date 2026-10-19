@@ -99,6 +99,54 @@ body[data-ds-dark-theme] .ursim-twin-panel {
   flex: 1 1 auto;
   min-height: 0;
 }
+/* ── 三栏骨架与可收起控制轨（feat/twin-control-panel）──────────────────────
+   这里是控制轨静态样式的**唯一真源**（以前写在 JS 的 inline 上）。运行期只剩一个动态量：
+   stage.style.gridTemplateColumns —— 它的唯一拼法是 twin-controls.js 的 stageColumns()，
+   因为列宽取决于两条轨是否收起。收起态本身落在 data-collapsed 属性上，正文显隐由下面的
+   CSS 决定，不靠 JS 改 style.display。
+   ⚠️ 不要在这里写死列宽：.ursim-twin-stage 的 grid 模板由面板按状态写入 inline。 */
+.ursim-twin-stage {
+  display: grid;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+.ursim-twin-rail {
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
+  overflow-y: auto;
+  min-width: 0;
+  box-sizing: border-box;
+  /* 半透明 chrome：与工具栏/HUD 同一套质感。 */
+  background: color-mix(in srgb, var(--ursim-chrome) 88%, transparent);
+}
+/* 左右轨各贴中线一侧的边：用 data-* 取值而不是再传一个 class，避免两侧规则重复。 */
+.ursim-twin-rail[data-ursim-twin-rail='left'] { border-right: 1px solid var(--ursim-border-subtle); }
+.ursim-twin-rail[data-ursim-twin-rail='right'] { border-left: 1px solid var(--ursim-border-subtle); }
+.ursim-twin-rail-toggle {
+  flex: 0 0 auto;
+  height: 24px;
+  padding: 0;
+  /* font: inherit 会重置 font-size/line-height，所以这两条必须写在它后面。 */
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--ursim-text-secondary);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--ursim-border-subtle);
+  cursor: pointer;
+}
+.ursim-twin-rail-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  box-sizing: border-box;
+  padding: 6px 6px 8px;
+}
+/* 收起后正文必须彻底让位（不能只靠 overflow 藏：那样仍能滚出内容），把手保留。 */
+.ursim-twin-rail[data-collapsed='true'] .ursim-twin-rail-body { display: none; }
 /*
  * 视角工具栏。以前面板里唯一的控件是一个画布 —— OrbitControls 允许把相机推进机械臂内部或
  * 推到看不见的地方，而"重置"只能靠收起面板再展开。这排按钮补上那个缺口。

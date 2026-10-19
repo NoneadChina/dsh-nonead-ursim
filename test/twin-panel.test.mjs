@@ -2436,7 +2436,14 @@ test('★ 控制面板骨架：三栏 grid + 两条侧轨 + 收起把手，收�
   const root = panelRoot(ctx)
   const stage = byAttr(root, 'data-ursim-twin-stage')[0]
   assert.ok(stage, '★ 必须有三栏容器（data-ursim-twin-stage）')
-  assert.equal(stage.style.display, 'grid', '连接后三栏容器必须恢复 grid（不能清成默认 block）')
+  // 静态样式住在 TWIN_CSS：inline 不写 display，连接后靠**清掉** none 恢复样式表里的 grid。
+  assert.equal(stage.style.display, '', '连接后不得留 inline display（grid 由 TWIN_CSS 提供）')
+  assert.match(TWIN_CSS, /\.ursim-twin-stage\s*\{[^}]*display:\s*grid/,
+    '★ `.ursim-twin-stage` 的 display:grid 必须在 TWIN_CSS 里（静态样式唯一真源）')
+  assert.match(TWIN_CSS, /\.ursim-twin-rail\[data-collapsed='true'\] \.ursim-twin-rail-body\s*\{\s*display:\s*none/,
+    '★ 收起态正文让位必须由 TWIN_CSS 消费 data-collapsed，而不是 JS 写 inline display')
+  assert.match(TWIN_CSS, /\.ursim-twin-rail-toggle\s*\{[^}]*height:\s*24px/,
+    '★ 把手高度必须由 TWIN_CSS 提供（不再是 inline style）')
   const left = byAttrValue(root, 'data-ursim-twin-rail', 'left')
   const right = byAttrValue(root, 'data-ursim-twin-rail', 'right')
   assert.ok(left, '左轨应存在')
@@ -2450,11 +2457,11 @@ test('★ 控制面板骨架：三栏 grid + 两条侧轨 + 收起把手，收�
   assert.deepEqual(stage.children, [left, view, right], 'stage 顺序必须是 左轨 / 画布 / 右轨')
   assert.notEqual(stage.style.gridTemplateColumns, '', '三栏 grid 必须落到 inline style 上')
 
-  // 展开态 → 点一下收起：属性、宽度、aria 三处同步，并写 localStorage。
+  // 展开态 → 点一下收起：属性、aria、存储三处同步，列宽由 grid 模板表达。
   assert.equal(left.getAttribute('data-collapsed'), 'false')
   toggle.listeners.click[0]()
   assert.equal(left.getAttribute('data-collapsed'), 'true', '★ 点收起把手后必须进入收起态')
-  assert.equal(left.style.width, '24px', '收起后列宽必须是 24px')
+  assert.ok(!('width' in left.style), '轨宽不再写 inline：列宽由 grid 决定，收起由 data-collapsed 驱动')
   assert.equal(toggle.getAttribute('aria-expanded'), 'false', 'aria-expanded 要跟着收起态走')
   assert.match(stage.style.gridTemplateColumns, /^24px minmax\(280px, 1fr\) 176px$/,
     '★ 收起后 grid 左列必须变成 24px（3D 自动占满）')
@@ -2462,10 +2469,9 @@ test('★ 控制面板骨架：三栏 grid + 两条侧轨 + 收起把手，收�
   assert.equal(saved.left, true, '★ 收起状态必须写进 localStorage')
   assert.equal(saved.right, false)
 
-  // 再点一下展开：宽度回到 128px，存储也回写。
+  // 再点一下展开：属性回 false，存储也回写，列宽回到 128px。
   toggle.listeners.click[0]()
   assert.equal(left.getAttribute('data-collapsed'), 'false')
-  assert.equal(left.style.width, '128px')
   assert.equal(toggle.getAttribute('aria-expanded'), 'true')
   assert.match(stage.style.gridTemplateColumns, /^128px minmax\(280px, 1fr\) 176px$/)
   assert.equal(JSON.parse(storage.map.get('dsh-nonead-ursim.rails')).left, false)
@@ -2489,9 +2495,8 @@ test('★ 控制面板骨架：收起状态来自 localStorage，跨挂载保持
   const left = byAttrValue(root, 'data-ursim-twin-rail', 'left')
   const right = byAttrValue(root, 'data-ursim-twin-rail', 'right')
   assert.equal(left.getAttribute('data-collapsed'), 'true', '★ 存储里已收起 → 挂载后直接是收起态')
-  assert.equal(left.style.width, '24px')
+  assert.ok(!('width' in left.style), '轨宽不再写 inline（由 grid 列宽表达）')
   assert.equal(right.getAttribute('data-collapsed'), 'false', '未记录的侧保持展开')
-  assert.equal(right.style.width, '176px')
   assert.match(stage.style.gridTemplateColumns, /^24px minmax\(280px, 1fr\) 176px$/,
     '★ 初始 grid 必须按存储里的收起状态算，否则首帧会跳一下')
 
@@ -2527,6 +2532,8 @@ test('★ 控制面板骨架：localStorage 不可用（隐私模式）时静默
   // 写存储同样会抛：收起交互仍必须可用（只是不持久化）。
   assert.doesNotThrow(() => toggle.listeners.click[0](), '存储写入抛错不得冒到点击回调外')
   assert.equal(left.getAttribute('data-collapsed'), 'true', '没有存储时收起交互照样工作')
-  assert.equal(left.style.width, '24px')
+  const stage = byAttr(panelRoot(ctx), 'data-ursim-twin-stage')[0]
+  assert.match(stage.style.gridTemplateColumns, /^24px minmax\(280px, 1fr\) 176px$/,
+    '收起后列宽仍必须是 24px（由 grid 模板表达）')
   ctx.panel.dispose()
 })
