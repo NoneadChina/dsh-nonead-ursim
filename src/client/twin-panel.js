@@ -81,6 +81,12 @@ import { fkChain } from './robot/fk.js'
 import { interpolateAt } from './robot/interpolate.js'
 import { pushSample, trajectoryColors, trajectoryCsv, trajectoryPoints } from './robot/trajectory.js'
 import { injectStyles } from './styles.js'
+import {
+  buildRail,
+  mountLeftRail,
+  mountRightRail,
+  stageColumns,
+} from './twin-controls.js'
 import { activeStrings } from './strings.js'
 import { resolveTheme, watchTheme } from './theme.js'
 
@@ -981,9 +987,77 @@ export function mountTwinPanel({
   simCaps.style.display = 'none'
   simBar.appendChild(simCaps)
 
+  /*
+   * ── 三栏骨架：左轨 / 3D 画布 / 右轨 ────────────────────────────────────
+   *
+   * 两条控制轨**可收起**：展开时列宽 128 / 176，收起后 24（只留一个把手），3D 自动占满
+   * 中间那一列。收起状态存 localStorage、跨会话保持 —— 所以这里先读一次，并按它算**首帧**
+   * 列宽，否则每次打开面板都会先撑开再收一下。
+   *
+   * 方向由 `twin-controls.js` 负责（控件 DOM 与收起状态机）；本文件只把 stage 插进布局、
+   * 把快照喂给它、把命令出口留好。
+   */
+  const stage = makeEl(doc, 'div', 'ursim-twin-stage', 'data-ursim-twin-stage')
+  // 三栏 grid：左轨 / 3D / 右轨。尺寸全部走 inline（理由见 twin-controls.js 文件头：
+  // 面板只允许存在一份 `<style>`，而它由 styles.js 拥有且内容被测试逐一比对）。
+  stage.style.display = 'grid'
+  stage.style.alignItems = 'stretch'
+  stage.style.flex = '1 1 auto'
+  stage.style.minHeight = '0'
+  stage.style.minWidth = '0'
+  /** 控制轨状态存储：隐私模式下连**取 localStorage** 都可能抛，必须包起来。 */
+  const railStorage = (() => {
+    try {
+      return (doc.defaultView ?? globalThis)?.localStorage ?? null
+    } catch {
+      return null
+    }
+  })()
+
+  /**
+   * 按两条轨的当前收起状态重算 grid 列宽。
+   *
+   * 列宽变化后画布必须**重新量一次**：`ResizeObserver` 也会通知，但它要等浏览器完成一次
+   * 布局才回调，中间那一帧仍按旧尺寸渲染（被 CSS 拉伸、画面发糊）。这里先主动 `resize()`，
+   * 下一帧再由 observer 兜底。
+   */
+  function refreshStageColumns() {
+    stage.style.gridTemplateColumns = stageColumns({
+      left: leftRail.isCollapsed(),
+      right: rightRail.isCollapsed(),
+    })
+    resize()
+    invalidate()
+  }
+
+  const leftRail = buildRail(doc, 'left', railStorage, { onChange: refreshStageColumns })
+  const rightRail = buildRail(doc, 'right', railStorage, { onChange: refreshStageColumns })
+  stage.appendChild(leftRail.rail)
+  stage.appendChild(view)
+  stage.appendChild(rightRail.rail)
+  // 首帧列宽直接按存储恢复的状态算（不走 refreshStageColumns：挂载期不该 resize/invalidate）。
+  stage.style.gridTemplateColumns = stageColumns({
+    left: leftRail.isCollapsed(),
+    right: rightRail.isCollapsed(),
+  })
+
+  /*
+   * 控制轨内容：本任务**只放空 body**，把公开接口定下来。
+   * 后续任务在 `mountLeftRail` / `mountRightRail` 里填控件：
+   *   - 命令走 `deps.send(body)`（body 即宿主 `/twin/jog` 的路由 body）；
+   *   - 状态走返回的 `sync(snapshot)`（每帧喂最新快照）。
+   * 骨架阶段 `send` 保持 null：路径真源在路由那一侧，接路由的任务一并注入。
+   */
+  const railDeps = {
+    send: null,
+    getSnapshot: () => state?.getSnapshot?.() ?? {},
+  }
+  const leftControls = mountLeftRail(doc, leftRail.body, railDeps)
+  const rightControls = mountRightRail(doc, rightRail.body, railDeps)
+
   root.appendChild(toolbar)
   root.appendChild(simBar)
-  root.appendChild(view)
+  root.appendChild(stage)
   root.appendChild(hud)
   root.appendChild(status)
   root.appendChild(errorLine)
@@ -993,6 +1067,8 @@ export function mountTwinPanel({
      ⚠️ 仿真开关行**不在此列**：打开面板即自动进仿真，而未连接正是一次失败时最常见的样子，
      这一行（含失败原因与重试按钮）必须从头就在。 */
   toolbar.style.display = 'none'
+  // 未连接时整块三栏都藏起来：只留侧轨的把手（里面还是空的）比不显示更让人困惑。
+  stage.style.display = 'none'
   view.style.display = 'none'
   hud.style.display = 'none'
   status.textContent = STATUS_DISCONNECTED
@@ -1089,6 +1165,12 @@ export function mountTwinPanel({
     try {
       resizeObserver = new ResizeObserverImpl(() => resize())
       resizeObserver.observe(container)
+      /*
+       * 同时观察**画布容器**：把侧轨收起/展开只改中间那一列的宽度，宿主容器（侧栏）的
+       * 外框尺寸一动不动 —— 只盯 container 的话，收起侧轨后画布会一直用旧尺寸渲染，
+       * 直到用户拖动窗口。观察 view 才是"列宽变了"这件事的真正信号。
+       */
+      resizeObserver.observe?.(view)
     } catch {
       resizeObserver = null
     }
@@ -1773,6 +1855,7 @@ export function mountTwinPanel({
     if (connected !== wasConnected) {
       wasConnected = connected
       root.setAttribute('data-ursim-twin-connected', connected ? 'true' : 'false')
+      stage.style.display = connected ? 'grid' : 'none'
       view.style.display = connected ? '' : 'none'
       hud.style.display = connected ? '' : 'none'
       toolbar.style.display = connected ? '' : 'none'
@@ -2161,6 +2244,12 @@ export function mountTwinPanel({
     applyConnection(connected)
     // 数据通道健康度要**连未连接时也更新**：此时最该看到的正是"正在重连"。
     updateFeed(nowMs, snap, connected)
+    /*
+     * 控制轨：**未连接也要喂**（它们据此把整块控件禁用并显示原因），所以放在提前返回之前。
+     * 骨架阶段 `sync` 是空操作；后续任务在此按最新快照回显位姿/关节与在途状态。
+     */
+    leftControls.sync(snap)
+    rightControls.sync(snap)
     if (!connected) return
     if (wasDegraded !== snapDegraded) refreshStatus()
 

@@ -169,6 +169,34 @@ function makeContainer(doc) {
   return el
 }
 
+/**
+ * 假 localStorage：只实现面板用到的 `getItem` / `setItem`。
+ *
+ * `throws:true` 模拟**隐私模式**（Safari 的 localStorage 在写入时抛 SecurityError、
+ * 某些嵌入式 WebView 连读都会抛）：面板必须静默降级，不能连挂载都失败。
+ */
+function makeFakeStorage(initial = {}, { throws = false } = {}) {
+  const map = new Map(Object.entries(initial))
+  const guard = () => {
+    if (throws) throw new Error('SecurityError: localStorage is disabled')
+  }
+  return {
+    map,
+    getItem(key) {
+      guard()
+      return map.has(key) ? map.get(key) : null
+    },
+    setItem(key, value) {
+      guard()
+      map.set(key, String(value))
+    },
+    removeItem(key) {
+      guard()
+      map.delete(key)
+    },
+  }
+}
+
 /* ------------------------------------------------------------------ *
  * 假协作者
  * ------------------------------------------------------------------ */
@@ -420,8 +448,11 @@ function makeFakeRequest({ active = false, model = 'ur5e', models = ['ur3', 'ur5
 }
 
 /** 组装一个可直接推帧的面板。 */
-function boot({ initial = {}, usedFallback = false, request = null, modelLoader = null, autoSim = false } = {}) {
+function boot({ initial = {}, usedFallback = false, request = null, modelLoader = null, autoSim = false, storage = null } = {}) {
   const doc = makeDoc()
+  // 控制轨的收起状态存在 localStorage 里：**必须在挂载前**装好假实现，
+  // 否则面板读到的永远是"没有存储"（也测不到跨挂载保持）。
+  if (storage !== null) doc.defaultView.localStorage = storage
   const container = makeContainer(doc)
   const state = makeFakeState(initial)
   const sceneFactory = makeSceneFactory()
@@ -2381,5 +2412,121 @@ test('★ 0.1.12：断连必须清空风险行并复位等级（否则残留"⚠
   assert.equal(row.textContent, '', '★ 断连后风险行必须清空（上一版漏了，会挂着旧的腕角/等级）')
   assert.equal(row.getAttribute('data-ursim-twin-risk'), 'ok', '等级必须复位，否则样式还染着红/琥珀')
   assert.equal(row.getAttribute('title'), '', 'title 也要清')
+  ctx.panel.dispose()
+})
+
+/* ================================================================== *
+ * 控制面板骨架（feat/twin-control-panel · 三栏 + 可收起侧轨）
+ * ================================================================== */
+
+/** 从一堆元素里按 `data-*` 的**值**挑一个（`byAttr` 只按属性名找，侧轨左右同属性）。 */
+const byAttrValue = (root, attr, value) =>
+  byAttr(root, attr).find((el) => el.getAttribute(attr) === value) ?? null
+
+test('★ 控制面板骨架：三栏 grid + 两条侧轨 + 收起把手，收起状态写 localStorage', async () => {
+  const storage = makeFakeStorage()
+  const ctx = boot({
+    initial: { connected: true, model: 'ur12e', q: Q0, tcp: TCP0, ts: 1000 },
+    autoSim: false,
+    storage,
+  })
+  ctx.clock.flush()
+  await tick()
+
+  const root = panelRoot(ctx)
+  const stage = byAttr(root, 'data-ursim-twin-stage')[0]
+  assert.ok(stage, '★ 必须有三栏容器（data-ursim-twin-stage）')
+  assert.equal(stage.style.display, 'grid', '连接后三栏容器必须恢复 grid（不能清成默认 block）')
+  const left = byAttrValue(root, 'data-ursim-twin-rail', 'left')
+  const right = byAttrValue(root, 'data-ursim-twin-rail', 'right')
+  assert.ok(left, '左轨应存在')
+  assert.ok(right, '右轨应存在')
+  const toggle = byAttrValue(root, 'data-ursim-twin-rail-toggle', 'left')
+  assert.ok(toggle, '左轨收起把手应存在')
+
+  // 画布必须被夹在两条轨中间（不是并排在 stage 之外的旧布局）。
+  const view = byAttr(root, 'data-ursim-twin-view')[0]
+  assert.equal(view.parentNode, stage, '画布容器必须在三栏容器里')
+  assert.deepEqual(stage.children, [left, view, right], 'stage 顺序必须是 左轨 / 画布 / 右轨')
+  assert.notEqual(stage.style.gridTemplateColumns, '', '三栏 grid 必须落到 inline style 上')
+
+  // 展开态 → 点一下收起：属性、宽度、aria 三处同步，并写 localStorage。
+  assert.equal(left.getAttribute('data-collapsed'), 'false')
+  toggle.listeners.click[0]()
+  assert.equal(left.getAttribute('data-collapsed'), 'true', '★ 点收起把手后必须进入收起态')
+  assert.equal(left.style.width, '24px', '收起后列宽必须是 24px')
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false', 'aria-expanded 要跟着收起态走')
+  assert.match(stage.style.gridTemplateColumns, /^24px minmax\(280px, 1fr\) 176px$/,
+    '★ 收起后 grid 左列必须变成 24px（3D 自动占满）')
+  const saved = JSON.parse(storage.map.get('dsh-nonead-ursim.rails'))
+  assert.equal(saved.left, true, '★ 收起状态必须写进 localStorage')
+  assert.equal(saved.right, false)
+
+  // 再点一下展开：宽度回到 128px，存储也回写。
+  toggle.listeners.click[0]()
+  assert.equal(left.getAttribute('data-collapsed'), 'false')
+  assert.equal(left.style.width, '128px')
+  assert.equal(toggle.getAttribute('aria-expanded'), 'true')
+  assert.match(stage.style.gridTemplateColumns, /^128px minmax\(280px, 1fr\) 176px$/)
+  assert.equal(JSON.parse(storage.map.get('dsh-nonead-ursim.rails')).left, false)
+  ctx.panel.dispose()
+})
+
+test('★ 控制面板骨架：收起状态来自 localStorage，跨挂载保持', async () => {
+  const storage = makeFakeStorage({
+    'dsh-nonead-ursim.rails': JSON.stringify({ left: true, right: false }),
+  })
+  const ctx = boot({
+    initial: { connected: true, model: 'ur12e', q: Q0, tcp: TCP0, ts: 1000 },
+    autoSim: false,
+    storage,
+  })
+  ctx.clock.flush()
+  await tick()
+
+  const root = panelRoot(ctx)
+  const stage = byAttr(root, 'data-ursim-twin-stage')[0]
+  const left = byAttrValue(root, 'data-ursim-twin-rail', 'left')
+  const right = byAttrValue(root, 'data-ursim-twin-rail', 'right')
+  assert.equal(left.getAttribute('data-collapsed'), 'true', '★ 存储里已收起 → 挂载后直接是收起态')
+  assert.equal(left.style.width, '24px')
+  assert.equal(right.getAttribute('data-collapsed'), 'false', '未记录的侧保持展开')
+  assert.equal(right.style.width, '176px')
+  assert.match(stage.style.gridTemplateColumns, /^24px minmax\(280px, 1fr\) 176px$/,
+    '★ 初始 grid 必须按存储里的收起状态算，否则首帧会跳一下')
+
+  // 再挂载一次（模拟收起面板后重开）：状态仍来自同一份存储。
+  ctx.panel.dispose()
+  const again = boot({
+    initial: { connected: true, model: 'ur12e', q: Q0, tcp: TCP0, ts: 1000 },
+    autoSim: false,
+    storage,
+  })
+  again.clock.flush()
+  await tick()
+  const leftAgain = byAttrValue(panelRoot(again), 'data-ursim-twin-rail', 'left')
+  assert.equal(leftAgain.getAttribute('data-collapsed'), 'true', '★ 跨挂载必须保持收起状态')
+  again.panel.dispose()
+})
+
+test('★ 控制面板骨架：localStorage 不可用（隐私模式）时静默降级，不抛错', () => {
+  const storage = makeFakeStorage({}, { throws: true })
+  let ctx = null
+  assert.doesNotThrow(() => {
+    ctx = boot({
+      initial: { connected: true, model: 'ur12e', q: Q0, tcp: TCP0, ts: 1000 },
+      autoSim: false,
+      storage,
+    })
+  }, '存储读取抛错时挂载不得失败')
+
+  const root = panelRoot(ctx)
+  const left = byAttrValue(root, 'data-ursim-twin-rail', 'left')
+  assert.ok(left, '没有存储也要有左轨')
+  const toggle = byAttrValue(root, 'data-ursim-twin-rail-toggle', 'left')
+  // 写存储同样会抛：收起交互仍必须可用（只是不持久化）。
+  assert.doesNotThrow(() => toggle.listeners.click[0](), '存储写入抛错不得冒到点击回调外')
+  assert.equal(left.getAttribute('data-collapsed'), 'true', '没有存储时收起交互照样工作')
+  assert.equal(left.style.width, '24px')
   ctx.panel.dispose()
 })
