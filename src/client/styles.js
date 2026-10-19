@@ -341,24 +341,26 @@ body[data-ds-dark-theme] .ursim-twin-panel {
   white-space: pre-wrap;
 }
 /* ── 左轨点动控件（feat/twin-control-panel）─────────────────────────────────
-   尺寸按设计 §4：方向盘每格 40×40、gap 4；分段控件与速度行高 28。
+   180 px 轨的尺寸是反推出来的：3×3 盘每格 52×52、gap 6（3×52 + 2×6 = 168），
+   加上左右各 6 px 内边距正好铺满。Z / RZ 行两枚按钮各占一半宽（高 32）；
+   分段控件与速度行高 28。
    状态只走属性：按钮可用性交给 disabled、档位交给 aria-pressed、整块状态交给
    data-ursim-ctl-state —— 这里没有任何 inline 样式，运行期也不写 style.*。
-   左轨宽 128 px = 3×40 + 2×4，所以左侧 body 的左右内边距归零，让方向盘正好铺满；
-   需要留白的地方（标题/分段/速度行）各自加 6 px。 */
+   ⚠️ 左轨**没有**文字原因栏（data-ursim-ctl-note / -error 只在右轨）：不可用时
+   只置灰控件，不再拿一行文字去挤方向盘的垂直空间。 */
 .ursim-twin-rail-body[data-ursim-twin-rail-body='left'] {
-  padding-left: 0;
-  padding-right: 0;
+  padding: 6px;
 }
+/* 只读提示/错误行只服务右轨（左轨没有这两个节点），所以横向不再留 6 px 缩进。 */
 .ursim-twin-ctl-note {
-  margin: 0 6px 6px;
+  margin: 0 0 6px;
   font-size: 11px;
   line-height: 1.35;
   color: var(--ursim-warn);
 }
 .ursim-twin-ctl-note:empty { display: none; }
 .ursim-twin-ctl-error {
-  margin: 0 6px 6px;
+  margin: 0 0 6px;
   font-size: 11px;
   line-height: 1.35;
   color: var(--ursim-danger);
@@ -368,24 +370,23 @@ body[data-ds-dark-theme] .ursim-twin-panel {
 .ursim-twin-ctl-section { margin: 0 0 8px; }
 .ursim-twin-ctl-label {
   margin: 0 0 4px;
-  padding: 0 6px;
   font-size: 11px;
   color: var(--ursim-text-secondary);
 }
 .ursim-twin-ctl-pad {
   display: grid;
-  grid-template-columns: repeat(3, 40px);
-  grid-template-rows: repeat(3, 40px);
-  gap: 4px;
+  grid-template-columns: repeat(3, 52px);
+  grid-template-rows: repeat(3, 52px);
+  gap: 6px;
   justify-content: center;
 }
 .ursim-twin-ctl-cell { display: block; }
 .ursim-twin-ctl-button {
-  width: 40px;
-  height: 40px;
+  width: 52px;
+  height: 52px;
   padding: 0;
   font: inherit;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1;
   color: var(--ursim-text);
   background: var(--ursim-surface);
@@ -393,23 +394,27 @@ body[data-ds-dark-theme] .ursim-twin-panel {
   border-radius: 4px;
   cursor: pointer;
 }
-.ursim-twin-ctl-button[data-ursim-jog='home'] { font-size: 10px; }
 .ursim-twin-ctl-button:hover:not(:disabled) {
   border-color: var(--ursim-accent);
   color: var(--ursim-accent);
 }
 .ursim-twin-ctl-button:active:not(:disabled) { background: var(--ursim-hover-bg); }
 .ursim-twin-ctl-button:disabled { opacity: 0.45; cursor: not-allowed; }
+/* Z / RZ 行：两枚按钮各占一半宽（168 = 2×81 + 6），高度比圆盘钮矮，避免整列过长。 */
 .ursim-twin-ctl-row {
   display: flex;
-  gap: 4px;
-  justify-content: center;
-  margin-top: 4px;
+  gap: 6px;
+  margin-top: 6px;
+}
+.ursim-twin-ctl-row .ursim-twin-ctl-button {
+  flex: 1 1 0;
+  width: auto;
+  height: 32px;
 }
 .ursim-twin-ctl-seg {
   display: flex;
   height: 28px;
-  margin: 0 6px 6px;
+  margin: 0 0 6px;
   border: 1px solid var(--ursim-border);
   border-radius: 4px;
   overflow: hidden;
@@ -439,57 +444,67 @@ body[data-ds-dark-theme] .ursim-twin-panel {
   align-items: center;
   gap: 6px;
   height: 28px;
-  margin: 0 6px;
 }
 .ursim-twin-ctl-range {
   flex: 1 1 auto;
   min-width: 0;
 }
 .ursim-twin-ctl-range:disabled { opacity: 0.45; }
+/* 右侧百分比数字固定 44 px 并右对齐：数值变化时滑块的可用长度不会跟着抖。 */
 .ursim-twin-ctl-percent {
-  flex: 0 0 40px;
-  font-size: 11px;
+  flex: 0 0 44px;
+  font-size: 12px;
   text-align: right;
   color: var(--ursim-text-secondary);
+  font-variant-numeric: tabular-nums;
 }
 /* ── 右轨位姿 / 关节控件（feat/twin-control-panel · 设计 §5）────────────────
-   176 px 轨：位姿 2 列 × 3 行（输入框 64×24、行高 28）；关节 6 行
-   （名称 24 + ◀ 22 + 滑块自适应 + ▶ 22 + 数值 44，行高 30）。
-   右轨正文左右内边距压到 3 px，否则 2×64 的输入框加轴标签放不进 176。
+   350 px 轨：位姿 3 列 × 2 行（第一行 X/Y/Z mm、第二行 RX/RY/RZ rad；每格 =
+   28 px 标签 + 最小 76 px 输入框，列宽 (350 − 1 − 16 − 12) / 3 ≈ 107）；关节 6 行
+   （名称 40 + ◀ 26 + 滑块自适应 + ▶ 26 + 数值 56，行高 30）。
+   正文内边距 6 × 8：这个宽度刚好放得下 3 × 107 的网格，不需要再按窄轨压缩。
    状态仍只走属性：disabled / aria-invalid / data-ursim-invalid。 */
 .ursim-twin-rail-body[data-ursim-twin-rail-body='right'] {
-  padding-left: 3px;
-  padding-right: 3px;
+  padding: 6px 8px;
 }
-.ursim-twin-rail-body[data-ursim-twin-rail-body='right'] .ursim-twin-ctl-label {
-  padding-left: 0;
-  padding-right: 0;
+/* 顶部只读摘要（TCP 米制三元组）：等宽数字，放不下就省略，不换行。 */
+.ursim-twin-ctl-summary {
+  margin: 0 0 6px;
+  font-size: 11px;
+  color: var(--ursim-text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .ursim-twin-ctl-pose {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 2px 4px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px 6px;
   margin: 0 0 6px;
 }
 .ursim-twin-ctl-pose-cell {
   display: flex;
   align-items: center;
   gap: 2px;
-  height: 28px;
+  height: 26px;
   min-width: 0;
 }
 .ursim-twin-ctl-pose-label {
-  flex: 0 0 14px;
+  flex: 0 0 28px;
   font-size: 10px;
   color: var(--ursim-text-secondary);
 }
 .ursim-twin-ctl-pose-input {
-  width: 64px;
-  height: 24px;
+  flex: 1 1 auto;
+  min-width: 76px;
+  height: 26px;
   box-sizing: border-box;
   padding: 0 4px;
   font: inherit;
   font-size: 11px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
   color: var(--ursim-text);
   background: var(--ursim-surface);
   border: 1px solid var(--ursim-border);
@@ -498,7 +513,7 @@ body[data-ds-dark-theme] .ursim-twin-panel {
 .ursim-twin-ctl-pose-input:disabled { opacity: 0.45; cursor: not-allowed; }
 .ursim-twin-ctl-joint-row {
   display: grid;
-  grid-template-columns: 24px 22px minmax(0, 1fr) 22px 44px;
+  grid-template-columns: 40px 26px minmax(0, 1fr) 26px 56px;
   align-items: center;
   gap: 2px;
   height: 30px;
@@ -511,11 +526,11 @@ body[data-ds-dark-theme] .ursim-twin-panel {
   text-overflow: ellipsis;
 }
 .ursim-twin-ctl-step {
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
   padding: 0;
   font: inherit;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1;
   color: var(--ursim-text);
   background: var(--ursim-surface);
@@ -534,7 +549,7 @@ body[data-ds-dark-theme] .ursim-twin-panel {
 }
 .ursim-twin-ctl-joint-range:disabled { opacity: 0.45; }
 .ursim-twin-ctl-joint-value {
-  font-size: 10px;
+  font-size: 11px;
   text-align: right;
   color: var(--ursim-text-secondary);
   font-variant-numeric: tabular-nums;

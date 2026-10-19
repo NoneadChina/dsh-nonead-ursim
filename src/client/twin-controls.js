@@ -37,9 +37,17 @@ import { activeStrings } from './strings.js'
  */
 const S = activeStrings()
 
-/** 侧轨宽度（px）—— 与 `stageColumns()` 同一份真源。 */
-export const RAIL_W_LEFT = 128
-export const RAIL_W_RIGHT = 176
+/**
+ * 侧轨宽度（px）—— 与 `stageColumns()` 同一份真源。
+ *
+ * 180 / 350 是控件尺寸反推出来的，不是随手定的：
+ *   - 左轨 3×3 盘用 52×52 按钮 + gap 6（3×52 + 2×6 = 168），加左右各 6 px 内边距正好 180；
+ *   - 右轨位姿 3 列 × 2 行（每格 = 28 px 标签 + 最小 76 px 输入框），加左右各 8 px 内边距
+ *     正好放得下 3×107 + 2×6 的网格。
+ * 改这两个常量时，`styles.js` 里对应的格宽/内边距**必须一起重算**（否则会溢出或留白）。
+ */
+export const RAIL_W_LEFT = 180
+export const RAIL_W_RIGHT = 350
 /** 收起后的列宽（px）：只留一个把手。 */
 export const RAIL_W_COLLAPSED = 24
 /** 中列最小宽度（px）：低于它 3D 就失去可读性。 */
@@ -313,7 +321,7 @@ const JOG_SPECS = Object.freeze({
   'rotate-ry-minus': { mode: 'rotate', axis: 'ry', sign: -1, label: 'RY−' },
   'rotate-rz-plus': { mode: 'rotate', axis: 'rz', sign: 1, label: 'RZ+' },
   'rotate-rz-minus': { mode: 'rotate', axis: 'rz', sign: -1, label: 'RZ−' },
-  home: { mode: 'home', label: S.controlsHome, title: S.controlsHomeTitle },
+  home: { mode: 'home', label: S.controlsHome },
 })
 
 /** 建元素并顺手写 class / 一个 `data-*`（本模块所有控件共用的最小构造器）。 */
@@ -353,6 +361,8 @@ function makeSegment(doc, label, attr, options, initial, onPick) {
   }
   for (const option of options) {
     const button = makeButton(doc, 'ursim-twin-ctl-seg-button', option.text, attr, option.value)
+    // 段选按钮也要有可读说明（"步长 5 mm" / "切换到基座系点动"），而不是只有一个数字。
+    if (option.title) button.setAttribute('title', option.title)
     button.addEventListener('click', () => {
       if (button.disabled === true) return
       setActive(option.value)
@@ -373,8 +383,14 @@ function makeSegment(doc, label, attr, options, initial, onPick) {
  *   - 松开（`pointerup` / `pointerleave` / `pointercancel`）即停，定时器在 `dispose()` 清掉；
  *   - **同一时刻只允许一条命令在飞**（串行）：在途时所有点动按钮置灰、后续点击丢弃；
  *   - 速度滑块 `input` 只改本地百分比文字，`change`（松手）才下发一条 `speed`；
- *   - 快照 `connected !== true` / `feedStale === true` / `simulated !== true` ⇒ 全部控件禁用，
- *     并在左轨顶部写出一行原因（文案来自 `strings.js`）。
+ *   - 快照 `connected !== true` / `feedStale === true` / `simulated !== true` ⇒ 全部控件禁用。
+ *
+ * **左轨没有文字原因栏**：这一栏在窄轨时代会把方向盘挤下去，而且"为什么不能点"在右轨
+ * 已经有一份。这里只靠置灰 + `data-ursim-ctl-state` 表达，不再写 `data-ursim-ctl-note` /
+ * `data-ursim-ctl-error`（它们只存在于右轨）。
+ *
+ * 按钮文案一律带轴与方向（`X+` / `RX−` / `回零`…），`title` 里再写清"沿哪个参考系的哪根轴、
+ * 走多少"—— 步长或参考系一变就重算，避免标题与真实命令对不上。
  *
  * @param {Document} doc
  * @param {HTMLElement} body 侧轨的 body 容器
@@ -405,7 +421,6 @@ export function mountLeftRail(doc, body, deps = {}) {
   /** 是否有命令在飞（串行：同一时刻只允许一条）。 */
   let busy = false
   let repeatTimer = null
-  let lastReason = null
   let lastRenderKey = null
 
   /** 卸载时要摘掉的 DOM 监听（元素会被移出文档，但显式解绑更干净）。 */
@@ -416,10 +431,8 @@ export function mountLeftRail(doc, body, deps = {}) {
   }
 
   /* ---------------- DOM ---------------- */
-  const note = makeEl(doc, 'div', 'ursim-twin-ctl-note', 'data-ursim-ctl-note')
-  host.appendChild(note)
-  const error = makeEl(doc, 'div', 'ursim-twin-ctl-error', 'data-ursim-ctl-error')
-  host.appendChild(error)
+  // 左轨**不建** note / error 两个节点（见函数文档）：禁用状态只由 data-ursim-ctl-state
+  // 与控件的 disabled 表达。右轨仍保留那一对（那里有空间，也承载命令失败原因）。
 
   const jogButtons = []
   const segmentButtons = []
@@ -461,45 +474,6 @@ export function mountLeftRail(doc, body, deps = {}) {
   zRow.appendChild(makeJogButton('cartesian-z-minus'))
   posSection.appendChild(zRow)
 
-  const stepMmSeg = makeSegment(
-    doc,
-    S.controlsStepMm,
-    'data-ursim-step-mm',
-    JOG_STEPS_MM.map((value) => ({ value: String(value), text: String(value) })),
-    String(stepMm),
-    (next) => { stepMm = Number(next) },
-  )
-  stepMmSeg.wrap.setAttribute('data-ursim-ctl-seg', 'step-mm')
-  segmentButtons.push(...stepMmSeg.buttons.map((entry) => entry.button))
-  posSection.appendChild(stepMmSeg.wrap)
-
-  const stepDegSeg = makeSegment(
-    doc,
-    S.controlsStepDeg,
-    'data-ursim-step-deg',
-    JOG_STEPS_DEG.map((value) => ({ value: String(value), text: `${value}°` })),
-    String(stepDeg),
-    (next) => { stepDeg = Number(next) },
-  )
-  stepDegSeg.wrap.setAttribute('data-ursim-ctl-seg', 'step-deg')
-  segmentButtons.push(...stepDegSeg.buttons.map((entry) => entry.button))
-  posSection.appendChild(stepDegSeg.wrap)
-
-  const frameSeg = makeSegment(
-    doc,
-    S.controlsFrame,
-    'data-ursim-frame',
-    [
-      { value: 'tool', text: S.controlsFrameTool },
-      { value: 'base', text: S.controlsFrameBase },
-    ],
-    frame,
-    (next) => { frame = next },
-  )
-  frameSeg.wrap.setAttribute('data-ursim-ctl-seg', 'frame')
-  segmentButtons.push(...frameSeg.buttons.map((entry) => entry.button))
-  posSection.appendChild(frameSeg.wrap)
-
   host.appendChild(posSection)
 
   /* ---- TCP 方向 ---- */
@@ -537,6 +511,67 @@ export function mountLeftRail(doc, body, deps = {}) {
   rotSection.appendChild(rzRow)
 
   host.appendChild(rotSection)
+
+  /* ---- 步进与参考系（位置/姿态两组步长共用同一块，避免单位混在某个分区标题下）---- */
+  const stepSection = makeEl(doc, 'div', 'ursim-twin-ctl-section', 'data-ursim-ctl-section', 'steps')
+
+  const stepMmSeg = makeSegment(
+    doc,
+    S.controlsStepMm,
+    'data-ursim-step-mm',
+    JOG_STEPS_MM.map((value) => ({
+      value: String(value),
+      text: String(value),
+      title: S.controlsStepMmOptionTitle(value),
+    })),
+    String(stepMm),
+    (next) => {
+      stepMm = Number(next)
+      refreshJogTitles()
+    },
+  )
+  stepMmSeg.wrap.setAttribute('data-ursim-ctl-seg', 'step-mm')
+  segmentButtons.push(...stepMmSeg.buttons.map((entry) => entry.button))
+  stepSection.appendChild(stepMmSeg.wrap)
+
+  const stepDegSeg = makeSegment(
+    doc,
+    S.controlsStepDeg,
+    'data-ursim-step-deg',
+    JOG_STEPS_DEG.map((value) => ({
+      value: String(value),
+      text: String(value),
+      title: S.controlsStepDegOptionTitle(value),
+    })),
+    String(stepDeg),
+    (next) => {
+      stepDeg = Number(next)
+      refreshJogTitles()
+    },
+  )
+  stepDegSeg.wrap.setAttribute('data-ursim-ctl-seg', 'step-deg')
+  segmentButtons.push(...stepDegSeg.buttons.map((entry) => entry.button))
+  stepSection.appendChild(stepDegSeg.wrap)
+
+  const frameSeg = makeSegment(
+    doc,
+    S.controlsFrame,
+    'data-ursim-frame',
+    [
+      { value: 'tool', text: S.controlsFrameTool, title: S.controlsFrameOptionTitle(S.controlsFrameTool) },
+      { value: 'base', text: S.controlsFrameBase, title: S.controlsFrameOptionTitle(S.controlsFrameBase) },
+    ],
+    frame,
+    (next) => {
+      frame = next
+      refreshJogTitles()
+    },
+  )
+  frameSeg.wrap.setAttribute('data-ursim-ctl-seg', 'frame')
+  segmentButtons.push(...frameSeg.buttons.map((entry) => entry.button))
+  stepSection.appendChild(frameSeg.wrap)
+
+  host.appendChild(stepSection)
 
   /* ---- 速度倍率（运行中）---- */
   const speedSection = makeEl(doc, 'div', 'ursim-twin-ctl-section', 'data-ursim-ctl-section', 'speed')
@@ -577,7 +612,6 @@ export function mountLeftRail(doc, body, deps = {}) {
     slider.value = String(speedPercent)
     percentEl.textContent = S.controlsSpeedValue(speedPercent)
     if (!available || busy) return
-    error.textContent = ''
     runCommand(speedCommand(speedPercent))
   })
 
@@ -592,7 +626,6 @@ export function mountLeftRail(doc, body, deps = {}) {
   function makeJogButton(key) {
     const spec = JOG_SPECS[key]
     const button = makeButton(doc, 'ursim-twin-ctl-button', spec?.label ?? key, 'data-ursim-jog', key)
-    if (spec?.title) button.setAttribute('title', spec.title)
     button.disabled = true
     bind(button, 'pointerdown', (event) => {
       // 阻止按住时选中文本/触发拖拽手势；假 DOM 的事件参数可能不存在。
@@ -602,8 +635,33 @@ export function mountLeftRail(doc, body, deps = {}) {
     bind(button, 'pointerup', stopRepeat)
     bind(button, 'pointerleave', stopRepeat)
     bind(button, 'pointercancel', stopRepeat)
-    jogButtons.push({ button })
+    jogButtons.push({ button, key })
     return button
+  }
+
+  /**
+   * 重写所有点动按钮的 `title`：说明"沿/绕哪个参考系的哪根轴、走多大一步"。
+   *
+   * 步长与参考系都是可变的，标题必须是**派生值**而不是建按钮时写死的常量 —— 否则界面上
+   * 写着"5 mm"、实际下发 10 mm，操作员只能靠数点击次数猜。分段控件切换后调用一次即可。
+   */
+  function refreshJogTitles() {
+    const frameName = frame === 'base' ? S.controlsFrameBase : S.controlsFrameTool
+    for (const { button, key } of jogButtons) {
+      const spec = JOG_SPECS[key]
+      if (!spec) continue
+      if (spec.mode === 'home') {
+        button.setAttribute('title', S.controlsHomeTitle)
+        continue
+      }
+      const axis = String(spec.axis).toUpperCase()
+      button.setAttribute(
+        'title',
+        spec.mode === 'cartesian'
+          ? S.controlsJogPositionTitle(frameName, axis, spec.sign, stepMm)
+          : S.controlsJogRotateTitle(frameName, axis, spec.sign, stepDeg),
+      )
+    }
   }
 
   /** 由按钮 key + 当前步长/参考系拼出命令 body（每次现算，绝不复用旧值）。 */
@@ -620,7 +678,6 @@ export function mountLeftRail(doc, body, deps = {}) {
   /** 按下：立即走一步，然后开始长按重复（回零只走一步）。 */
   function onPress(key) {
     if (disposed || !available || busy || send === null) return
-    error.textContent = ''
     if (!runCommand(bodyFor(key))) return
     if (JOG_SPECS[key]?.mode !== 'home') startRepeat(key)
   }
@@ -631,6 +688,8 @@ export function mountLeftRail(doc, body, deps = {}) {
    * `send` 返回 Promise 时在它落定后解禁；返回其它值（如单测里的记录器）视为同步完成 ——
    * 否则长按重复在假时钟下会被上一条"永远在飞"卡死。
    *
+   * 失败只回滚"在途"状态：左轨没有原因栏，异常不抛到事件回调外，也不写任何文字节点。
+   *
    * @returns {boolean} 是否真的发出去（在途/没有出口时为 false）
    */
   function runCommand(payload) {
@@ -640,25 +699,22 @@ export function mountLeftRail(doc, body, deps = {}) {
     let result
     try {
       result = send(payload)
-    } catch (e) {
-      finish(e)
+    } catch {
+      finish()
       return false
     }
     if (result !== null && typeof result?.then === 'function') {
-      result.then(() => finish(null), (e) => finish(e))
+      result.then(() => finish(), () => finish())
     } else {
-      finish(null)
+      finish()
     }
     return true
   }
 
-  /** 一条命令落定：解禁；失败时把原因写到错误行（**不**抛到事件回调外）。 */
-  function finish(err) {
+  /** 一条命令落定：解禁（失败与成功对左轨而言只差一次置灰的时长）。 */
+  function finish() {
     busy = false
     if (disposed) return
-    if (err) {
-      error.textContent = S.controlsCommandFailed(err instanceof Error ? err.message : String(err))
-    }
     renderAvailability()
   }
 
@@ -667,10 +723,7 @@ export function mountLeftRail(doc, body, deps = {}) {
     stopRepeat()
     const repeat = () => {
       if (disposed) return
-      if (available && !busy) {
-        error.textContent = ''
-        runCommand(bodyFor(key))
-      }
+      if (available && !busy) runCommand(bodyFor(key))
       repeatTimer = setT(repeat, JOG_REPEAT_INTERVAL_MS)
     }
     repeatTimer = setT(repeat, JOG_HOLD_DELAY_MS)
@@ -695,31 +748,26 @@ export function mountLeftRail(doc, body, deps = {}) {
     host.setAttribute('data-ursim-ctl-state', !available ? 'disabled' : (busy ? 'busy' : 'ready'))
   }
 
-  /** 本帧为什么不可用（空串 = 可用）。 */
-  function unavailableReason(snapshot) {
-    if (send === null) return S.controlsDisabledDisconnected
-    if (snapshot?.connected !== true) return S.controlsDisabledDisconnected
-    if (snapshot?.feedStale === true) return S.controlsDisabledStale
-    if (snapshot?.simulated !== true) return S.controlsDisabledSimOnly
-    return ''
+  /** 这一帧是否可点动（连接 + 仿真 + 数据在流动 + 有命令出口）。 */
+  function isAvailable(snapshot) {
+    if (send === null) return false
+    if (snapshot?.connected !== true) return false
+    if (snapshot?.feedStale === true) return false
+    if (snapshot?.simulated !== true) return false
+    return true
   }
 
   /**
-   * 每帧喂最新快照：只更新"可用性 + 原因行"，从不回写用户正在操作的步长/滑块
-   * （那会把手指还按着的控件抢回去）。
+   * 每帧喂最新快照：只更新可用性（置灰/解禁），从不回写用户正在操作的步长/滑块
+   * （那会把手指还按着的控件抢回去），也不写任何文字原因（左轨没有原因栏）。
    */
   function sync(snapshot) {
     if (disposed) return
-    const reason = unavailableReason(snapshot)
-    const nextAvailable = reason === ''
+    const nextAvailable = isAvailable(snapshot)
     if (nextAvailable !== available) {
       available = nextAvailable
       if (!available) stopRepeat()
       renderAvailability()
-    }
-    if (reason !== lastReason) {
-      lastReason = reason
-      note.textContent = reason
     }
   }
 
@@ -739,6 +787,8 @@ export function mountLeftRail(doc, body, deps = {}) {
   }
 
   // 初始一律禁用：第一帧快照到达前不可能知道连没连上/是不是仿真。
+  // 标题在建完按钮后统一派生一次（默认 5 mm / 1° / 工具系）。
+  refreshJogTitles()
   renderAvailability()
 
   return { body: host, deps: merged, sync, dispose }
@@ -774,6 +824,18 @@ function formatPoseValue(axis, value) {
 }
 
 /**
+ * 只读摘要里的米制数值：保留 3 位小数，去掉无意义的尾零，负数用排版减号（与面板文案一致）。
+ *
+ * @param {number} value 米
+ * @returns {string} 例如 `0` / `−0.058` / `1.485`
+ */
+function formatMeters(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return '—'
+  return String(Number(n.toFixed(3))).replace(/^-/, '−')
+}
+
+/**
  * 右轨内容：TCP 位姿数值输入（X/Y/Z mm、RX/RY/RZ rad）+ 六关节滑块与 ± 按钮。
  *
  * 交互（设计 §5 / §6）：
@@ -786,7 +848,9 @@ function formatPoseValue(axis, value) {
  *   - 命令失败（`ok !== true` 或抛错）→ 输入框/滑块回滚到最新帧值并标红，
  *     下一次**新帧**（`ts` 变化）后自动清除；
  *   - 可用性与左轨完全一致（`connected` / `simulated` / `feedStale` / 有没有 `send`），
- *     整块禁用时在顶部 `data-ursim-ctl-note` 写出原因。
+ *     整块禁用时在顶部 `data-ursim-ctl-note` 写出原因；
+ *   - 顶部另有一行**只读摘要**（`data-ursim-ctl-summary`，`TCP: x, y, z m`）：随快照更新，
+ *     不是输入、不参与下发。
  *
  * @param {Document} doc
  * @param {HTMLElement} body 侧轨的 body 容器
@@ -842,10 +906,20 @@ export function mountRightRail(doc, body, deps = {}) {
   const error = makeEl(doc, 'div', 'ursim-twin-ctl-error', 'data-ursim-ctl-error')
   host.appendChild(error)
 
+  /*
+   * 只读摘要：350 px 轨有空间，把"机器人现在在哪"放在最上面一眼可见。
+   * 它不是输入、不参与下发，只随快照更新 —— 位姿输入框仍各自承担编辑。
+   */
+  const summary = makeEl(doc, 'div', 'ursim-twin-ctl-summary', 'data-ursim-ctl-summary')
+  summary.setAttribute('role', 'status')
+  summary.setAttribute('title', S.controlsSummaryTitle)
+  summary.textContent = ''
+  host.appendChild(summary)
+
   const poseInputs = Object.create(null)
   const jointRows = []
 
-  /* ---- 刀具位置：2 列 × 3 行（左列 X/Y/Z mm，右列 RX/RY/RZ rad）---- */
+  /* ---- TCP 位姿：3 列 × 2 行（第一行 X/Y/Z mm，第二行 RX/RY/RZ rad）---- */
   const poseSection = makeEl(doc, 'div', 'ursim-twin-ctl-section', 'data-ursim-ctl-section', 'pose')
   const poseLabel = makeEl(doc, 'div', 'ursim-twin-ctl-label')
   poseLabel.textContent = S.controlsToolPosition
@@ -853,68 +927,67 @@ export function mountRightRail(doc, body, deps = {}) {
   poseSection.appendChild(poseLabel)
 
   const poseGrid = makeEl(doc, 'div', 'ursim-twin-ctl-pose', 'data-ursim-ctl-grid', 'pose')
-  for (const rowAxes of [['x', 'rx'], ['y', 'ry'], ['z', 'rz']]) {
-    for (const axis of rowAxes) {
-      const entry = {
-        axis,
-        index: POSE_INDEX[axis],
-        input: null,
-        editing: false,
-        /** 最近一次**成功/已尝试**下发的字符串值：回车与失焦可能是同一次编辑，靠它去重。 */
-        lastSent: null,
-        /** 回车已经提交过：紧跟着的 change 不再重复提交（真浏览器里两者会成对出现）。 */
-        skipChange: false,
-      }
-      const cell = makeEl(doc, 'div', 'ursim-twin-ctl-pose-cell', 'data-ursim-pose-cell', axis)
-      const label = makeEl(doc, 'span', 'ursim-twin-ctl-pose-label')
-      label.textContent = axis.toUpperCase()
-      const input = doc.createElement('input')
-      input.setAttribute('type', 'text')
-      input.className = 'ursim-twin-ctl-pose-input'
-      input.setAttribute('inputmode', 'decimal')
-      input.setAttribute('data-ursim-pose', axis)
-      input.setAttribute(
-        'aria-label',
-        `${axis.toUpperCase()} (${isTranslationAxis(axis) ? 'mm' : 'rad'})`,
-      )
-      input.setAttribute('title', S.controlsToolPositionTitle)
-      input.setAttribute('placeholder', S.controlsNoPoseData)
-      input.value = ''
-      input.disabled = true
-      entry.input = input
-      poseInputs[axis] = entry
-      cell.appendChild(label)
-      cell.appendChild(input)
-      poseGrid.appendChild(cell)
-
-      bind(input, 'keydown', (event) => {
-        if (event?.key !== 'Enter') return
-        event?.preventDefault?.()
-        entry.skipChange = true
-        commitPose(axis)
-      })
-      bind(input, 'change', () => {
-        // 回车已经发过这一条：紧跟的 change 是同一个编辑的第二次通知，丢弃。
-        if (entry.skipChange) {
-          entry.skipChange = false
-          return
-        }
-        commitPose(axis)
-      })
-      bind(input, 'input', () => {
-        entry.editing = true
-        entry.lastSent = null
-        entry.skipChange = false
-        clearInvalidEl(input)
-      })
-      bind(input, 'focus', () => { entry.editing = true })
-      bind(input, 'blur', () => { entry.editing = false })
+  // 轴顺序就是 `POSE_AXES`：3 列网格下自动折成 X/Y/Z + RX/RY/RZ 两行。
+  for (const axis of POSE_AXES) {
+    const entry = {
+      axis,
+      index: POSE_INDEX[axis],
+      input: null,
+      editing: false,
+      /** 最近一次**成功/已尝试**下发的字符串值：回车与失焦可能是同一次编辑，靠它去重。 */
+      lastSent: null,
+      /** 回车已经提交过：紧跟着的 change 不再重复提交（真浏览器里两者会成对出现）。 */
+      skipChange: false,
     }
+    const cell = makeEl(doc, 'div', 'ursim-twin-ctl-pose-cell', 'data-ursim-pose-cell', axis)
+    const label = makeEl(doc, 'span', 'ursim-twin-ctl-pose-label')
+    label.textContent = axis.toUpperCase()
+    const input = doc.createElement('input')
+    input.setAttribute('type', 'text')
+    input.className = 'ursim-twin-ctl-pose-input'
+    input.setAttribute('inputmode', 'decimal')
+    input.setAttribute('data-ursim-pose', axis)
+    input.setAttribute(
+      'aria-label',
+      `${axis.toUpperCase()} (${isTranslationAxis(axis) ? 'mm' : 'rad'})`,
+    )
+    input.setAttribute('title', S.controlsToolPositionTitle)
+    input.setAttribute('placeholder', S.controlsNoPoseData)
+    input.value = ''
+    input.disabled = true
+    entry.input = input
+    poseInputs[axis] = entry
+    cell.appendChild(label)
+    cell.appendChild(input)
+    poseGrid.appendChild(cell)
+
+    bind(input, 'keydown', (event) => {
+      if (event?.key !== 'Enter') return
+      event?.preventDefault?.()
+      entry.skipChange = true
+      commitPose(axis)
+    })
+    bind(input, 'change', () => {
+      // 回车已经发过这一条：紧跟的 change 是同一个编辑的第二次通知，丢弃。
+      if (entry.skipChange) {
+        entry.skipChange = false
+        return
+      }
+      commitPose(axis)
+    })
+    bind(input, 'input', () => {
+      entry.editing = true
+      entry.lastSent = null
+      entry.skipChange = false
+      clearInvalidEl(input)
+    })
+    bind(input, 'focus', () => { entry.editing = true })
+    bind(input, 'blur', () => { entry.editing = false })
   }
   poseSection.appendChild(poseGrid)
   host.appendChild(poseSection)
 
-  /* ---- 关节：6 行（名称 24 + ◀ 22 + 滑块 + ▶ 22 + 数值 44）---- */
+  /* ---- 关节：6 行（名称 40 + ◀ 26 + 滑块 + ▶ 26 + 数值 56，行高 30）---- */
   const jointSection = makeEl(doc, 'div', 'ursim-twin-ctl-section', 'data-ursim-ctl-section', 'joints')
   const jointLabel = makeEl(doc, 'div', 'ursim-twin-ctl-label')
   jointLabel.textContent = S.controlsJoints
@@ -937,7 +1010,7 @@ export function mountRightRail(doc, body, deps = {}) {
 
     const dec = makeButton(doc, 'ursim-twin-ctl-step', '◀', 'data-ursim-joint-dec', index)
     dec.setAttribute('aria-label', `${JOINT_NAMES[index]} −1°`)
-    dec.setAttribute('title', S.controlsJointsTitle)
+    dec.setAttribute('title', S.controlsJointStepTitle(JOINT_NAMES[index], -1))
 
     const slider = doc.createElement('input')
     slider.setAttribute('type', 'range')
@@ -957,7 +1030,7 @@ export function mountRightRail(doc, body, deps = {}) {
 
     const inc = makeButton(doc, 'ursim-twin-ctl-step', '▶', 'data-ursim-joint-inc', index)
     inc.setAttribute('aria-label', `${JOINT_NAMES[index]} +1°`)
-    inc.setAttribute('title', S.controlsJointsTitle)
+    inc.setAttribute('title', S.controlsJointStepTitle(JOINT_NAMES[index], 1))
 
     const value = makeEl(doc, 'span', 'ursim-twin-ctl-joint-value', 'data-ursim-joint-value', index)
     value.textContent = ''
@@ -1235,7 +1308,15 @@ export function mountRightRail(doc, body, deps = {}) {
     }
 
     if (isVec6(snapshot?.q)) latestQ = snapshot.q.slice()
-    if (isVec6(snapshot?.tcp)) latestTcp = snapshot.tcp.slice()
+    if (isVec6(snapshot?.tcp)) {
+      latestTcp = snapshot.tcp.slice()
+      // 只读摘要跟着最新帧走：3 位小数足够看清"在哪"，也不至于每帧抖动位数。
+      summary.textContent = S.controlsSummary(
+        formatMeters(latestTcp[0]),
+        formatMeters(latestTcp[1]),
+        formatMeters(latestTcp[2]),
+      )
+    }
     const ts = Number.isFinite(snapshot?.ts) ? snapshot.ts : null
     if (ts !== null) latestTs = ts
     // 失败后的**下一帧**才清红标：同一个采样重复喂进来的那几帧不算。
