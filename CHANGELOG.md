@@ -8,6 +8,27 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.3.1] - 2026-10-19
+
+A version about jogging feel and panel layout: holding a jog button now moves the arm **continuously** instead of one step at a time, both rails are wider, and the left rail lost a control it did not need.
+
+### Added
+
+- **Press-and-hold jogging = a velocity stream.** A short tap still moves one step (for fine adjustment); holding for 250 ms switches to a velocity stream (25 mm/s translation, 15 °/s rotation, restated every 100 ms), and releasing stops immediately. This is the teach-pendant feel — packing more small steps closer together does not work, because each `movel` accelerates and decelerates on its own and still reads as stuttering.
+- **Velocity semantics in the simulation.** The virtual robot integrates the twist over time inside `advance()` (first frame `dt = 0`, per-frame clamp 0.1 s); angular velocity is composed by left-multiplication in the base frame and right-multiplication in the tool frame, then solved by IK. The new `speedl` op and the existing `stopl` both drive it. A **watchdog** zeroes the velocity if no new velocity command arrives within 400 ms — if the browser crashes or the tab is backgrounded, the arm stops by itself. That is the deliberately chosen failure direction.
+- **Two new modes on `/nonead-ursim/twin/jog`**: `velocity` (`twist` six values + `frame` + `ttlMs`, clamped to 100–2000 ms) and `stop`.
+
+### Changed
+
+- Both panel rails are wider: left 128 → **180 px**, right 176 → **350 px**; jog buttons grow to 52×52 and are labelled with axis and direction (`X+`, `Y−`, `RX+`, …), section titles carry their units, and the right rail's pose inputs become a 3-column × 2-row grid with a fixed-width value column for joints.
+- **The left rail no longer has a speed-scaling control** (it was added for mid-run speed changes, but the feel is dominated by the velocity stream). The capability is still available through `ursim_set_speed_scaling`.
+
+### Fixed
+
+- **Press-and-hold moved only one step.** The root cause was setting the pressed button to `disabled` while a command was in flight: a disabled element stops receiving `pointerup`, the browser fires `pointercancel`, and the hold timer was cleared on the spot. Now only unavailability disables a control; the busy state is expressed with `aria-disabled` plus CSS, and pointer capture is used (`setPointerCapture` / `lostpointercapture`).
+- The left rail's `3×52 + 2×6 = 168` overflowed the 167 px available width by 1 px and was clipped by `overflow-x: hidden`; the pad `gap` is now **5**.
+- `docs/tool-matrix` still marked `speedl` as `unsupported` although the simulation now implements it; regenerated as `simulated`.
+
 ## [0.3.0] - 2026-10-19
 
 The release that turns the simulation panel from “read-only” into “controllable”: left-rail jogging, right-rail pose and joints, plus the write route and the two tools behind them. Every control applies **only to the offline simulation**; real-robot control still goes exclusively through the approval-gated tools.
