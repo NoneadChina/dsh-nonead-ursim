@@ -39,7 +39,7 @@
 - [ ] **Step 1: 确认 Python 侧的位姿/矩阵 helper 名字**
 
 Run: `Select-String -Path python/ur_worker.py -Pattern '^def _tool_axis_move|^def _current_tcp_pose|^def _pose_to_matrix|^def _matrix_to_pose|^def _compose' | ForEach-Object { "{0}: {1}" -f $_.LineNumber, $_.Line.Trim() }`
-Expected: 打印 `_tool_axis_move` 等函数的行号。**本计划里 `_compose_rotation` / `_current_tcp_pose` / `_sim_tcp_pose` 是按语义起的名字**：如果文件里已有等价函数（很可能有，`_tool_axis_move` 内部就在用），**直接复用真名，不要新写一套数学**。
+Expected: 打印 `_tool_axis_move` 等函数的行号。**本计划里的函数名是按语义先写的**，实施时按真实代码校正。实证结果：`_rotvec_to_matrix`（1914）、`_tool_axis_move`（1930）、`_sim_tool_axis_move`（4233）存在；「矩阵 → 旋转向量」**不存在**，需自补 `_matrix_to_rotvec`；最终真机与仿真共用一个 `_jog_rotate_target(pose, axis_index, delta, frame)`。
 
 - [ ] **Step 2: 确认 HANDLERS 表与 sim 派发表的位置**
 
@@ -218,7 +218,7 @@ Expected: PASS，`fail 0`
               }
               let body;
               try {
-                body = JSON.parse(await readJsonBody(req));
+                body = await readJsonBody(req);   // ⚠️ 不要 JSON.parse：readJsonBody 已 resolve 解析后的对象
               } catch {
                 sendJson(res, { status: 400, headers: {}, body: { ok: false, code: 'BAD_JSON', error: '请求体不是合法 JSON' } });
                 return;
@@ -376,12 +376,17 @@ def op_jog_rotate(p):
 
     index = {"rx": 3, "ry": 4, "rz": 5}[axis]
     target = list(current)
+    delta_vec = [0.0, 0.0, 0.0]
+    delta_vec[index - 3] = delta
+    r_cur = _rotvec_to_matrix(current[3:6])
     if frame == "tool":
-        # 工具系：把「绕工具轴的小旋转」左乘到当前姿态上
-        target[3:] = _compose_rotation(current[3:], index - 3, delta)
+        # 工具系：轴是工具自己的 ⇒ 右乘 R_target = R_current · R_axis(δ)
+        target[3:] = _matrix_to_rotvec(r_cur @ _rotvec_to_matrix(delta_vec))
     else:
-        # 基座系：把「绕基座轴的小旋转」左乘到当前姿态上（角度分量在基座系直接累加）
-        target[index] = current[index] + delta
+        # 基座系：轴是基座的 ⇒ 左乘 R_target = R_axis(δ) · R_current
+        # ⚠️ 不能写成 `target[index] += delta`（同轴累加）：那只在当前旋转向量与该轴对齐时
+        # 才等价，一般情形差 BCH 交叉项（量级 δ·|rotvec|），反复点动会累积漂移
+        target[3:] = _matrix_to_rotvec(_rotvec_to_matrix(delta_vec) @ r_cur)
 
     result = op_movel({"ip": ip, "pose": target})
     if result.get("ok") is not True:
@@ -394,7 +399,7 @@ def op_jog_rotate(p):
     return result
 ```
 
-> **实现提示（读代码时确认）**：本文件已有「姿态（旋转向量）↔ 矩阵」的成对 helper（`_tool_axis_move` 内部用的那几个，名字以 `_` 开头）。`_compose_rotation(rotvec, axisIndex, delta)` = 把 rotvec 转成矩阵 → 右乘 `R_axis(delta)` → 再转回旋转向量；**若已有等价 helper 就直接复用，不要新写一套数学**。
+> **实现提示（实证过的真名）**：`_rotvec_to_matrix` 已在 `python/ur_worker.py:1914`；**「矩阵 → 旋转向量」的反向函数不存在，必须自补 `_matrix_to_rotvec`**（θ≈0 返回零向量；θ≈π 时反对称部分退化，按 `R = 2kkᵀ − I` 取对角最大分量定轴；一般分支用「反对称向量归一化后乘 θ」——**不要**写 `θ/(2 sinθ)`，那会在 π 附近放大误差到 1e-4 量级）。
 
 - [ ] **Step 4: 实现仿真路径**
 
@@ -412,12 +417,11 @@ def _sim_jog_rotate(sim, p):
         return err("BADARG", "axis / frame 不合法", {"axis": axis, "frame": frame})
     if not math.isfinite(delta) or delta == 0.0:
         return err("BADARG", "delta_rad 必须是非零有限数", {"delta_rad": delta})
-    target = list(current)
-    index = {"rx": 3, "ry": 4, "rz": 5}[axis]
-    if frame == "tool":
-        target[3:] = _compose_rotation(current[3:], index - 3, delta)
-    else:
-        target[index] = current[index] + delta
+    # 与真机**共用同一个** `_jog_rotate_target`（不要在这里再写一份几何）
+    target = _jog_rotate_target(current, index - 3, delta, frame)
+    # 仿真侧另外要拆段：纯旋转零位移只做一次 IK 跳变，会撞 ur_sim 的 MAX_IK_STEP_RAD=0.5，
+    # 实测 δ=0.6 不拆段直接 SIM_UNREACHABLE（真机 movel 能执行）。按 ≤0.4 rad 拆，逐段从
+    # 上一段**实际**位姿续算。
     ok_ = sim.movel(target)                  # 仿真里已有的绝对位姿入口（与 op_movel 的仿真分支一致）
     if not ok_:
         return err("SIM_UNREACHABLE", "目标位姿在仿真里不可达", {"target_pose": target})
