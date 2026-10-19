@@ -3802,6 +3802,43 @@ def op_get_runtime_telemetry(p):
     })
 
 
+# 速度倍率的 op 契约：钳到 0.01–1.0（面板那一层另有 10%–100% 的产品约束，见设计文档）。
+SPEED_SCALING_MIN = 0.01
+SPEED_SCALING_MAX = 1.0
+
+
+def _clamp_speed_fraction(value):
+    """把倍率钳到 `SPEED_SCALING_MIN`–`SPEED_SCALING_MAX`。
+
+    ⚠️ 刻意**不**复用 `ur_sim._clamp_speed`：那个是 `VirtualRobot.__init__` 的**构造期兜底**，
+    非正数会被抬到 **1.0（最快）**。对一次显式设置来说方向反了 —— 调用方想把速度调到 0，
+    却会被设成满速。这里非正值一律压到下界；NaN/Infinity/非数值在解析阶段就已 BADARG。
+    """
+    return max(SPEED_SCALING_MIN, min(SPEED_SCALING_MAX, value))
+
+
+def _speed_scaling_args(p):
+    """解析 `fraction` → `(钳位后的倍率, 客户端原始值)`；非法一律 ValueError（⇒ BADARG）。
+
+    `requested` 原样带走（可能就是 0.0001 或 9）：面板要能把「你要的 0.5% / 实际 1%」如实
+    显示出来，钳位不能把调用方给的原值悄悄吃掉。
+    """
+    raw = p.get("fraction")
+    if raw is None:
+        raise ValueError("set_speed_scaling 缺少 fraction（速度倍率，0.01–1.0）")
+    if isinstance(raw, bool):
+        raise ValueError("set_speed_scaling 的 fraction 必须是数值，收到布尔值 %r" % (raw,))
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        raise ValueError("set_speed_scaling 的 fraction 必须是数值，收到 %r" % (raw,))
+    if not math.isfinite(value):
+        # NaN / Infinity 绝不能"尽力而为"地变成某个倍率：那会把调用方的错误悄悄变成一条运动。
+        raise ValueError("set_speed_scaling 的 fraction 必须是有穷数值（不能是 NaN/Infinity），收到 %s"
+                         % value)
+    return _clamp_speed_fraction(value), raw
+
+
 def op_get_speed_scaling(p):
     """读取速度倍率。
 
@@ -3828,6 +3865,48 @@ def op_get_speed_scaling(p):
                            % (actual if actual is not None else "不可用",
                               target if target is not None else "不可用")),
                "data": {"speed_scaling": actual, "target_speed_fraction": target, "ip": ip}})
+
+
+def op_set_speed_scaling(p):
+    """设置速度倍率（真机侧用 URScript 的 `set_speed_slider`，钳到 0.01–1.0）。
+
+    ⚠️ 回包里的 `actual` 是控制器**此刻实测**的倍率（`RobotModel.SpeedScaling()`），**不是**
+    "请求值回读"：URBasic 的 `TargetSpeedFraction()` 是 `NotImplementedError`，拿不到请求值。
+    而 `speed_scaling` 在**机器人静止时控制器就报 0** —— 所以：
+
+      · `fraction`  —— 钳位后真正下发的值（本次 set 的目标）；
+      · `requested` —— 客户端原始值（面板据此显示「你要的 0.5% / 实际 1%」）；
+      · `actual`    —— 实测值。静止时读 0 属正常，**既不**代表设置失败，**也不**构成
+                       「请求已生效」的证据，所以回包里不写"已校验/已生效"这类话；
+                       读不到时给 None 并说明，绝不编造一个数字。
+
+    与仿真侧的 `_sim_set_speed_scaling` 共用 `_speed_scaling_args`（同一套参数校验与钳位）。
+    """
+    fraction, requested = _speed_scaling_args(p)
+    ip = str(p["ip"])
+    robot, model = ensure_connected(ip)
+    _assert_remote_control(ip, "设置速度倍率")
+    script = "set_speed_slider(%.6f)" % fraction
+    if not _send_program(robot, script):
+        return err("设置速度倍率失败：URScript 未能交给发送通道（脚本：%s）" % script,
+                   "SEND_FAILED",
+                   {"fraction": fraction, "requested": requested, "script": script, "ip": ip})
+    actual = None
+    try:
+        actual = float(model.SpeedScaling())
+    except Exception as exc:
+        # 读不到就如实说读不到 —— 不能拿 fraction 冒充 actual。
+        _log("读取 SpeedScaling() 失败（actual 将回报为 null）：%r" % (exc,))
+        actual = None
+    return ok({
+        "message": ("速度倍率已下发：请求 %r → 钳位后 %.4f（URScript：%s）。"
+                    "actual 是控制器此刻的**实测**倍率%s：机器人静止时它读 0 属正常，"
+                    "既不代表设置失败，也不构成「请求已生效」的证据 —— 请在运动中复核。"
+                    % (requested, fraction, script,
+                       "（%.4f）" % actual if actual is not None else "（本次读取失败，已置为 null）")),
+        "data": {"fraction": fraction, "requested": requested, "actual": actual,
+                 "script": script, "sent": True, "ip": ip},
+    })
 
 
 def op_set_gravity(p):
@@ -4232,6 +4311,36 @@ def _sim_get_speed_scaling(sim, p):
     return ok({"message": "仿真速度倍率（它直接缩放每段运动的时长）：%.2f" % sim.speed_scaling,
                "data": _sim_data(sim, {"speed_scaling": sim.speed_scaling,
                                        "target_speed_fraction": sim.speed_scaling})})
+
+
+def _sim_set_speed_scaling(sim, p):
+    """运行中改速度倍率：**只改这一个属性，绝不重建 VirtualRobot**。
+
+    这是本 op 存在的唯一理由：面板的速度滑块要在机械臂**站着不动**的前提下改倍率。
+    `VirtualRobot(...)` 的构造会重置 q（回到起始位姿），所以这里不碰构造、不碰 `sim_start`，
+    也不碰 `q` / `_waypoints` / `_segment_s` —— 位姿与关节角必须逐值不变。
+
+    新倍率从**下一段运动**开始生效：已经在跑的轨迹在 `_plan` 时就把时长算好了（设计文档
+    §6 的「即时生效但不重算已下发的那一段」）。
+
+    仿真里的 `actual` 就是 `sim.speed_scaling` 本身（没有真机那种"实测 vs 请求"之分，
+    也就不存在"静止时读 0"的折扣），所以这里可以如实回报。
+    """
+    fraction, requested = _speed_scaling_args(p)
+    sim.speed_scaling = fraction
+    return ok({
+        "message": ("仿真速度倍率已设为 %.0f%%（%.4f）：直接改运行中实例，**没有重建**仿真，"
+                    "位姿与关节角保持不变。（新倍率从下一段运动开始生效）"
+                    % (fraction * 100.0, fraction)),
+        "data": _sim_data(sim, {
+            "ok": True,
+            "fraction": fraction,
+            "requested": requested,
+            "actual": sim.speed_scaling,
+            "speed_scaling": sim.speed_scaling,
+            "target_speed_fraction": sim.speed_scaling,
+        }),
+    })
 
 
 def _sim_status(sim, p):
@@ -4861,6 +4970,8 @@ SIM_OPS = {
     "get_safety_mode": _sim_get_safety_mode,
     "get_program_state": _sim_get_program_state,
     "get_speed_scaling": _sim_get_speed_scaling,
+    # 面板速度滑块：运行中改倍率，**原地改属性**（绝不重建仿真）。
+    "set_speed_scaling": _sim_set_speed_scaling,
     "status": _sim_status,
     "get_target_values": _sim_get_target_values,
     "movej": _sim_movej,
@@ -5117,6 +5228,8 @@ HANDLERS = {
     # 实时遥测（字段本来就在 RTDE 数据流里）
     "get_runtime_telemetry": op_get_runtime_telemetry,
     "get_speed_scaling": op_get_speed_scaling,
+    # 面板速度滑块：真机侧走 URScript 的 set_speed_slider（读不到"请求值"回读，见 op 说明）。
+    "set_speed_scaling": op_set_speed_scaling,
     "get_tcp_force": op_get_tcp_force,
     # 配置 / 工具端 I/O / 传送带跟踪
     "set_gravity": op_set_gravity,

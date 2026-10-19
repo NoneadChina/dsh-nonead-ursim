@@ -376,6 +376,66 @@ else:
             "matrix": float(max(abs(float(x)) for x in (ur_worker._rotvec_to_matrix(_back) - _m).flatten())),
         }
 
+# ── 5e. set_speed_scaling：运行中调速 —— 仿真**原地改**，绝不重建 ──────────────
+#
+# 这个 op 存在的唯一理由：面板滑块要在**不重建仿真**的前提下改倍率。VirtualRobot 的构造会把
+# q 重置成起始位姿，所以"位姿与关节角逐值不变"才是核心断言 —— 只看"读回 0.5"抓不到重建
+# （重建完再设一次倍率，读回照样是 0.5，但机械臂已经跳回去了）。
+
+def sim_state():
+    q = ur_worker.route_op("get_joint_pose", {"ip": IP})["data"]["joint_positions"]
+    pose = ur_worker.route_op("get_tcp_pose", {"ip": IP})["data"]["tcp_pose"]
+    return [float(x) for x in q], [float(x) for x in pose]
+
+def set_scaling(fraction):
+    params = {"ip": IP}
+    if fraction is not None:
+        params["fraction"] = fraction
+    return dispatch("set_speed_scaling", params)
+
+q_before, pose_before = sim_state()
+instance_before = id(ur_worker.SIMS[IP])
+apply_reply = set_scaling(0.5)
+q_after, pose_after = sim_state()
+apply_data = apply_reply.get("data") or {}
+out["set_scaling"] = {
+    "code": apply_reply.get("code"),
+    "message": apply_reply.get("message"),
+    "ok": apply_data.get("ok"),
+    "fraction": apply_data.get("fraction"),
+    "requested": apply_data.get("requested"),
+    "actual": apply_data.get("actual"),
+    "read_back": dispatch("get_speed_scaling", {"ip": IP})["data"]["speed_scaling"],
+    "q_before": q_before,
+    "q_after": q_after,
+    "pose_before": pose_before,
+    "pose_after": pose_after,
+    # 同一个 VirtualRobot 实例：换了实例就说明被重建了（哪怕数值碰巧一样）
+    "same_instance": id(ur_worker.SIMS[IP]) == instance_before,
+}
+
+# 越界：0.0001 → 0.01（下界），9 → 1.0（上界）；requested 必须原样回显客户端给的值。
+low_reply = set_scaling(0.0001)
+low_data = low_reply.get("data") or {}
+low_read = dispatch("get_speed_scaling", {"ip": IP})["data"]["speed_scaling"]
+high_reply = set_scaling(9)
+high_data = high_reply.get("data") or {}
+high_read = dispatch("get_speed_scaling", {"ip": IP})["data"]["speed_scaling"]
+out["set_scaling_clamp"] = {
+    "low": {"code": low_reply.get("code"), "fraction": low_data.get("fraction"),
+            "requested": low_data.get("requested"), "read_back": low_read},
+    "high": {"code": high_reply.get("code"), "fraction": high_data.get("fraction"),
+             "requested": high_data.get("requested"), "read_back": high_read},
+}
+
+# 非法参数：缺失 / NaN / Infinity / 非数值 —— 一律 BADARG，绝不"猜一个倍率"继续跑。
+out["set_scaling_badargs"] = {
+    "missing": set_scaling(None).get("code"),
+    "nan": set_scaling(float("nan")).get("code"),
+    "inf": set_scaling(float("inf")).get("code"),
+    "text": set_scaling("fast").get("code"),
+}
+
 # ── 6. 仿真推送：仿真帧必须带 simulated 与 conn ───────────────────────────────
 captured = []
 ur_worker._write_protocol_line = lambda body: captured.append(body)
@@ -638,5 +698,46 @@ test('★ _matrix_to_rotvec 与 _rotvec_to_matrix 互逆（含 θ≈π 的退化
   for (const [label, row] of Object.entries(out.rotvec_roundtrip)) {
     assert.ok(row.angle < 1e-6, `${label}：往返后姿态夹角 ${row.angle} rad（必须回到同一个姿态）`)
     assert.ok(row.matrix < 1e-6, `${label}：往返后矩阵最大偏差 ${row.matrix}`)
+  }
+})
+
+// ── set_speed_scaling：运行中调速（仿真原地改，不重建）──────────────────────
+//
+// 这个 op 存在的唯一理由就是「**不重建**」：面板拖动速度滑块时，机械臂不能跳回起始位姿。
+// 所以断言分两层：
+//   ① 值：读回 == 0.5；越界被钳到 0.01 / 1.0（客户端原始值原样回显在 requested）；
+//   ② 位姿与关节角逐值不变，且 SIMS[IP] 还是**同一个对象**。
+// 只断言读回是抓不到重建的 —— 重建之后再设一次倍率，读回照样是 0.5，而机械臂已经回去了。
+
+test('★ set_speed_scaling：改倍率后读回 0.5，且位姿/关节角逐值不变、仿真对象没被重建', () => {
+  const s = out.set_scaling
+  assert.ok(!s.code, `set_speed_scaling 不该报错：${s.code}`)
+  assert.equal(s.ok, true)
+  assert.equal(s.fraction, 0.5, '回包必须给出钳位后的 fraction（实际生效值）')
+  assert.equal(s.requested, 0.5, 'requested 是客户端原始值')
+  assert.equal(s.actual, 0.5, '仿真里 actual 就是当前生效值（没有真机那种"静止读 0"的折扣）')
+  assert.equal(s.read_back, 0.5, '随后 get_speed_scaling 必须读回 0.5（钳位值真的生效）')
+  assert.deepEqual(s.q_after, s.q_before, '★ 关节角必须逐值不变（变了就说明仿真被重建/被挪动）')
+  assert.deepEqual(s.pose_after, s.pose_before, '★ TCP 位姿必须逐值不变')
+  assert.equal(s.same_instance, true, '★ 必须是同一个 VirtualRobot 实例（换实例就是重建）')
+  assert.match(String(s.message), /没有重建/, '回包必须说清这是"原地改倍率、没有重建"')
+})
+
+test('★ set_speed_scaling：越界钳到 0.01–1.0，requested 回显原始值', () => {
+  const c = out.set_scaling_clamp
+  assert.ok(!c.low.code, `fraction=0.0001 不该报错：${c.low.code}`)
+  assert.equal(c.low.fraction, 0.01, '低于下限（0.0001）必须钳到 0.01')
+  assert.equal(c.low.requested, 0.0001, '★ requested 必须原样回显客户端给的值（面板要显示"0.01%→1%"）')
+  assert.equal(c.low.read_back, 0.01, '钳位后的值必须真的生效，而不是只改回包')
+
+  assert.ok(!c.high.code, `fraction=9 不该报错：${c.high.code}`)
+  assert.equal(c.high.fraction, 1, '高于上限（9）必须钳到 1.0')
+  assert.equal(c.high.requested, 9)
+  assert.equal(c.high.read_back, 1, '钳位后的值必须真的生效')
+})
+
+test('★ set_speed_scaling：缺失 / NaN / Infinity / 非数值一律 BADARG（绝不猜一个倍率）', () => {
+  for (const [label, code] of Object.entries(out.set_scaling_badargs)) {
+    assert.equal(code, 'BADARG', `fraction=${label} 必须报 BADARG，实际 ${code}`)
   }
 })
