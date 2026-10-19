@@ -1782,3 +1782,86 @@ test('★ jog 路由（路由级）：成功响应透出 worker 的 message，�
     '派发给 worker 的必须是钳位后的值',
   );
 });
+
+test('★ jog 路由（路由级）：六种 mode 的 body → worker op 与参数（含 deltaRad 改名、home 常量）', async () => {
+  // 用户 2026-10-17 裁定的回零位形；与型号无关的关节角。
+  const HOME_Q = [0, -Math.PI / 2, 0, -Math.PI / 2, -Math.PI, 0];
+
+  /**
+   * 这张表把「面板发的 body」到「真正派给 worker 的 op + 参数」的映射钉死。
+   *
+   * 它防的是**只改了一边**的错误：路由 body 用 `deltaRad`（驼峰），而 worker op 收的是
+   * `delta_rad`（下划线）—— 这种改名点没有类型检查保护，只有断言能挡住。同理 `home`
+   * 的关节常量若被改错，这里会立刻红。
+   *
+   * 判定方式：`replies` 只挂**期望的那个 op**，若 dispatch 拼出别的 op 名，桩不会命中，
+   * `calls` 保持空 ⇒ 断言失败。
+   */
+  const rows = [
+    {
+      name: 'cartesian 默认工具系',
+      body: { mode: 'cartesian', axis: 'x', distance: 0.005 },
+      op: 'move_tool_x',
+      params: { ip: '127.0.0.1', distance: 0.005 },
+    },
+    {
+      name: 'cartesian 基座系负向',
+      body: { mode: 'cartesian', axis: 'z', distance: -0.01, frame: 'base' },
+      op: 'move_z',
+      params: { ip: '127.0.0.1', distance: -0.01 },
+    },
+    {
+      name: 'rotate 工具系（deltaRad → delta_rad）',
+      body: { mode: 'rotate', axis: 'rz', deltaRad: 0.02 },
+      op: 'jog_rotate',
+      params: { ip: '127.0.0.1', axis: 'rz', delta_rad: 0.02, frame: 'tool' },
+    },
+    {
+      name: 'rotate 基座系负向',
+      body: { mode: 'rotate', axis: 'rx', deltaRad: -0.035, frame: 'base' },
+      op: 'jog_rotate',
+      params: { ip: '127.0.0.1', axis: 'rx', delta_rad: -0.035, frame: 'base' },
+    },
+    {
+      name: 'joint',
+      body: { mode: 'joint', q: [0, -1.5, 0, -1.5, -1.5, 0] },
+      op: 'movej',
+      params: { ip: '127.0.0.1', q: [0, -1.5, 0, -1.5, -1.5, 0] },
+    },
+    {
+      name: 'pose',
+      body: { mode: 'pose', pose: [0.1, -0.2, 0.3, 0.4, 0.5, 0.6] },
+      op: 'movel',
+      params: { ip: '127.0.0.1', pose: [0.1, -0.2, 0.3, 0.4, 0.5, 0.6] },
+    },
+    {
+      name: 'home（回零位形）',
+      body: { mode: 'home' },
+      op: 'movej',
+      params: { ip: '127.0.0.1', q: HOME_Q },
+    },
+    {
+      name: 'speed',
+      body: { mode: 'speed', fraction: 0.5 },
+      op: 'set_speed_scaling',
+      params: { ip: '127.0.0.1', fraction: 0.5 },
+    },
+  ];
+
+  for (const row of rows) {
+    const calls = [];
+    const mounted = await mountTwinRoutesWithSim({
+      replies: {
+        [row.op]: (params) => {
+          calls.push(params);
+          return { message: `stub:${row.op}`, data: {} };
+        },
+      },
+    });
+
+    const got = await callJogRoute(mounted.routes.get(TWIN_JOG_PATH), { body: row.body });
+    assert.equal(got.status, 200, `${row.name} 应返回 200`);
+    assert.equal(JSON.parse(got.body).ok, true, `${row.name} 应成功`);
+    assert.deepEqual(calls, [row.params], `★ ${row.name}：派发的 op=${row.op} 与参数必须与表一致`);
+  }
+});
