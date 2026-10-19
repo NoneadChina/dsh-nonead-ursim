@@ -157,6 +157,10 @@
       "gated": false,
       "sim": "unsupported"
     },
+    "jog_rotate": {
+      "gated": true,
+      "sim": "simulated"
+    },
     "list_programs": {
       "gated": false,
       "sim": "unsupported"
@@ -276,6 +280,10 @@
     "set_payload_inertia": {
       "gated": true,
       "sim": "unsupported"
+    },
+    "set_speed_scaling": {
+      "gated": true,
+      "sim": "simulated"
     },
     "set_tcp": {
       "gated": true,

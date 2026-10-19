@@ -691,6 +691,42 @@
     }
   },
   {
+    "name": "ursim_jog_rotate",
+    "op": "jog_rotate",
+    "description": "绕指定轴**增量**旋转 TCP：`axis` 只认 rx / ry / rz；`frame=\"tool\"`（默认）绕**工具自身**轴、`frame=\"base\"` 绕**基座**轴（rx/ry/rz ↔ 基座 x/y/z）。`delta_rad` 为非零有限弧度。真机与仿真**共用同一份几何**（同一套旋转合成 ⇒ 同一个目标位姿），TCP 位置保持不变。⚠️ 会驱动机械臂运动。",
+    "timeoutMs": null,
+    "parameters": {
+      "axis": {
+        "description": "旋转轴：rx / ry / rz（不是 x/y/z —— 那三个在别的工具里表示平移）",
+        "enum": [
+          "rx",
+          "ry",
+          "rz"
+        ],
+        "required": true,
+        "type": "string"
+      },
+      "delta_rad": {
+        "description": "增量旋转角（弧度），必须是非零有限数值；正负号按右手定则决定方向",
+        "required": true,
+        "type": "number"
+      },
+      "frame": {
+        "default": "tool",
+        "description": "参考系：tool（默认，绕工具自身轴）/ base（绕基座轴，rx/ry/rz ↔ 基座 x/y/z）",
+        "enum": [
+          "tool",
+          "base"
+        ],
+        "type": "string"
+      },
+      "ip": {
+        "description": "仿真机器人地址，可省略（默认且唯一合法值为保留回环地址 127.0.0.1；sim 模式下本插件不连真机）",
+        "type": "string"
+      }
+    }
+  },
+  {
     "name": "ursim_list_programs",
     "op": "list_programs",
     "description": "通过 SSH 读取机器人的 .urp 程序列表。优先扫描 /programs（真机默认）；若不存在则自动探测 ~/URSim_Linux-*/programs.*/*.urp（URSim）；也可用 programs_dir 覆盖。**必须显式提供 password**：本插件不再内置默认口令，且未知主机密钥会被直接拒绝。",
@@ -1471,6 +1507,23 @@
       "transition_time": {
         "description": "负载切换过渡时间（秒，默认 0）",
         "type": "number"
+      }
+    }
+  },
+  {
+    "name": "ursim_set_speed_scaling",
+    "op": "set_speed_scaling",
+    "description": "设置速度倍率（1%–100%，即 0.01–1.0；越界会被**钳到**该区间，客户端原始值仍会随回包返回）。仿真侧**原地修改运行中的实例、不重建**（位姿与关节角保持不变，新倍率从下一段运动开始生效）；真机侧发 URScript `set_speed_slider` 并读回控制器**实测**值 —— 机器人静止时实测读 0 属正常，**不是**「未生效」的证据。⚠️ 影响此后所有运动的速度。",
+    "timeoutMs": null,
+    "parameters": {
+      "fraction": {
+        "description": "速度倍率 0.01–1.0（1%–100%）；越界会被钳到该区间，NaN/Infinity 与非数值会被拒绝",
+        "required": true,
+        "type": "number"
+      },
+      "ip": {
+        "description": "仿真机器人地址，可省略（默认且唯一合法值为保留回环地址 127.0.0.1；sim 模式下本插件不连真机）",
+        "type": "string"
       }
     }
   },

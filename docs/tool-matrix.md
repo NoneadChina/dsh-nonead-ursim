@@ -5,7 +5,7 @@
 > **是否受人工审批门禁**、**仿真会怎么处理它** —— 这两件事以前是"沉默的默认值"，
 > H-1（七个带物理副作用的 op 免审批）就是这样溜过去的。
 
-共 **87** 个 op：受门禁 **48**、仿真实现 **46**、仿真透传 **6**、仿真明确不支持 **35**。
+共 **89** 个 op：受门禁 **50**、仿真实现 **48**、仿真透传 **6**、仿真明确不支持 **35**。
 
 | op | 工具 | 审批门禁 | 仿真 | 声明理由 |
 | --- | --- | --- | --- | --- |
@@ -48,6 +48,7 @@
 | `get_time` | `ursim_get_uptime` | 否 | simulated |  |
 | `get_tool_analog_in` | `ursim_get_tool_analog_in` | 否 | unsupported |  |
 | `get_tool_telemetry` | `ursim_get_tool_telemetry` | 否 | unsupported |  |
+| `jog_rotate` | `ursim_jog_rotate` | **是** | simulated |  |
 | `list_programs` | `ursim_list_programs` | 否 | unsupported |  |
 | `load_program` | `ursim_load_program` | **是** | unsupported |  |
 | `motion_version` | `ursim_motion_version` | **是** | unsupported |  |
@@ -78,6 +79,7 @@
 | `set_gravity` | `ursim_set_gravity` | **是** | unsupported |  |
 | `set_payload` | `ursim_set_payload` | **是** | unsupported |  |
 | `set_payload_inertia` | `ursim_set_payload_inertia` | **是** | unsupported |  |
+| `set_speed_scaling` | `ursim_set_speed_scaling` | **是** | simulated |  |
 | `set_tcp` | `ursim_set_tcp` | **是** | unsupported |  |
 | `set_teach_mode` | `ursim_set_teach_mode` | **是** | unsupported |  |
 | `set_tool_output_mode` | `ursim_set_tool_output_mode` | **是** | unsupported |  |
