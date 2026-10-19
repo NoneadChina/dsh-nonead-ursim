@@ -38,11 +38,12 @@ const EXPECTED_TOOLS = 89
  * 仿真侧注册的 `kind:'exact'` 路由条数。
  *
  * 0.6.3 起是 4 条：state / asset / models / **stream**（第 20 条的 SSE 实时流）。
- * 0.7.0 增加第 5 条：**sim**（离线仿真开关 —— 唯一的写路由，GET 读状态 / POST 启停）。
+ * 0.7.0 增加第 5 条：**sim**（离线仿真开关 —— 第一条写路由，GET 读状态 / POST 启停）。
+ * 0.3.0 增加第 6 条：**jog**（面板实时控制 —— 点动/位姿/关节/调速，只对仿真目标生效）。
  * 加路由时必须同步改这里 —— 这条断言的意义就是"注册形状变了要有人知道"，
  * 而不是"永远只能是 N 条"。
  */
-const TWIN_ROUTE_COUNT = 5
+const TWIN_ROUTE_COUNT = 6
 
 const failures = []
 const pass = (title, detail) => console.log(`PASS  ${title}${detail === undefined ? '' : ` — ${detail}`}`)
