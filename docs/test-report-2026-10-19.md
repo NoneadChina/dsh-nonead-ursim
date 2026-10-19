@@ -114,7 +114,7 @@ star 外接半径 = side/(2·sin72°)）、`run_sequence`（3 段 + `t=6`，`seg
 无仿真语义的指令（`force_mode` / `get_safety_status` / `load_program` / `send_script` / `set_freedrive`）
 全部**如实拒绝**并附完整能力清单 —— 没有"假成功"。
 
-### 发现的两处文案缺陷（未修，待维护者决定）
+### 原发现的两处文案缺陷（已修，并由 test/sim-only.test.mjs 断言钉住）
 
 1. **中**：`_sim_no_semantics` 的拒绝文案仍写"请使用 URSim……用 `ursim_connect` 指向它的 IP 即可"，
    但 sim 模式下非回环地址会被结构性拒绝（`SIM_BADARG`）⇒ **照做必失败**。该问题在

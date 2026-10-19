@@ -10,6 +10,14 @@ never part of the published tarball.
 
 ## [Unreleased]
 
+### Fixed
+
+- Two messages that promised something the plugin cannot do are corrected: the "no simulation
+  semantics" refusal used to tell users to point `ursim_connect` at a URSim IP (which is rejected in
+  sim mode), it now points at `motionMode=real` + the `realRobotIps` allow-list; `ursim_sim_stop` no
+  longer claims the plugin returns to a real robot. Both are pinned by assertions in
+  `test/sim-only.test.mjs`.
+
 ### Documentation
 
 - Added [`docs/test-report-2026-10-19.md`](./docs/test-report-2026-10-19.md): records the four-layer

@@ -348,8 +348,8 @@ def _sim_no_semantics(op):
     caps = sim_capabilities()
     return err(
         "指令 %s 在离线仿真中没有语义。仿真只实现**运动学**：运动类工具（%s 等）与位姿读回；"
-        "%s 都需要真实控制器。若确实要在没有真机的情况下执行这些指令，请使用 URSim"
-        "（UR 官方模拟控制器）：把它当成一台真机，用 ursim_connect 指向它的 IP 即可。"
+        "%s 都需要真实控制器。本插件只做运动学仿真：要执行这些指令，请把 motionMode 设为 real 并在"
+        "realRobotIps 白名单里填入目标 IP（真机或 URSim）；sim 模式下非回环地址会被拒绝。"
         % (op, "、".join(caps["motion"][:6]), "、".join(caps["not_simulated"][:4])),
         "SIM_UNSUPPORTED",
         {"op": op, "simulated": True, "capabilities": caps})
@@ -4867,8 +4867,8 @@ def op_sim_stop(p):
         return ok({"message": "离线仿真本来就没有开启。",
                    "data": {"simulated": False, "active": False, "ip": SIM_IP}})
     _sim_bump_epoch(ip)
-    return ok({"message": "已关闭离线仿真（%s · %s）。仿真会回到真机（若已连接），"
-                          "或显示未连接。" % (ip, _sim_module().canonical_model_name(sim.model)),
+    return ok({"message": "离线仿真已关闭（%s · %s）。"
+                                  % (ip, _sim_module().canonical_model_name(sim.model)),
                "data": {"simulated": False, "active": False, "ip": SIM_IP}})
 
 

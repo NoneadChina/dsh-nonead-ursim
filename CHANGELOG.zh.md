@@ -8,6 +8,12 @@
 
 ## [未发布]
 
+### 修复
+
+- 修正两处"承诺了插件做不到的事"的文案：无仿真语义的拒绝文案原让用户用 `ursim_connect` 指向 URSim 的 IP
+  （而 sim 模式下该地址会被结构性拒绝），现改为指向 `motionMode=real` + `realRobotIps` 白名单；
+  `ursim_sim_stop` 不再声称"仿真会回到真机"。两处都由 `test/sim-only.test.mjs` 的断言钉住。
+
 ### 文档
 
 - 新增 [`docs/test-report-2026-10-19.md`](./docs/test-report-2026-10-19.md)：记录 0.2.4 的四层验证结果

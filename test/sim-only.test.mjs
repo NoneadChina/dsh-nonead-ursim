@@ -81,6 +81,7 @@ out["auto_tcp_z"] = round(st.get("tcp_pose", [0, 0, 0])[2], 4)
 #   ⚠️⚠️ 本段是嵌在 JS 模板字符串里的 Python：注释里**绝不能出现反引号**（会截断模板串）。
 r = ur_worker.route_op("force_mode", {})
 out["force_mode_code"] = r.get("code") if isinstance(r, dict) else "?"
+out["force_mode_error"] = r.get("error") if isinstance(r, dict) else None
 r = ur_worker.route_op("set_tool_voltage", {})
 out["telemetry_code"] = r.get("code") if isinstance(r, dict) else "?"
 
@@ -111,6 +112,7 @@ out["upright_fallback_models"] = [
 ur_worker.SIMS.clear()
 s = ur_worker.op_sim_start({"model": "ur12e"})
 out["default_preset"] = (s.get("data") or {}).get("preset")
+out["sim_stop_message"] = (ur_worker.op_sim_stop({}) or {}).get("message")
 
 ur_worker._PROTOCOL_OUT.write(json.dumps(out) + "\\n")
 ur_worker._PROTOCOL_OUT.flush()
@@ -138,6 +140,17 @@ test('行为：真机地址被拒、自动就绪、无语义指令回报 SIM_UNS
   assert.equal(got.auto_sim_running, true, '调用后仿真必须在跑')
   assert.ok(Math.abs(got.auto_tcp_z - 0.1768) < 1e-3,
     `动作必须真的做完（TCP z 应 ≈0.1768，实际 ${got.auto_tcp_z}）`)
+
+  // ⑦ 文案必须可执行：无仿真语义的指引要指向 real 通道，sim_stop 不得声称"回到真机"
+  //    （依据：sim 模式下非回环地址会被结构性拒绝，旧文案教用户 ursim_connect 指向 URSim 必然失败）
+  assert.ok(got.force_mode_error && got.force_mode_error.includes("realRobotIps"),
+    "无仿真语义的指引必须指向 real 通道（realRobotIps 白名单）：" + got.force_mode_error)
+  assert.ok(!got.force_mode_error.includes("指向它的 IP"),
+    "不得再教用户用 ursim_connect 指向 URSim（sim 模式下该地址会被拒绝）")
+  assert.ok(got.sim_stop_message && got.sim_stop_message.includes("离线仿真已关闭"),
+    "sim_stop 文案应如实说明仿真已关闭：" + got.sim_stop_message)
+  assert.ok(!got.sim_stop_message.includes("回到真机"),
+    "sim 模式不存在真机通道，sim_stop 文案不得声称回到真机")
 
   // ③ 仿真无语义的指令如实回报，不假装成功、也不去碰真机
   assert.equal(got.force_mode_code, 'SIM_UNSUPPORTED')
