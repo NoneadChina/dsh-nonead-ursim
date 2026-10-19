@@ -73,3 +73,54 @@ npm run test:python      # worker 自检（Python 依赖）
 发布前回归固定使用以上五条；仿真不覆盖真机力控/安全位/程序执行，发布前需真机补验。
 
 工具分类与审批门禁见 [工具矩阵](./tool-matrix.md)；版本变更见 [CHANGELOG](../CHANGELOG.md)。
+
+## 4. worker / 仿真层 88 个 op 全量扫测（2026-10-19 补充）
+
+方法：从 `lib/tool-defs.js` 解析 op→toolName（87 个，无重复；第 88 个 `shutdown_worker` 无工具），
+`docs/tool-schemas.golden.json` 提供参数，逐个调用 `route_op(op, params)`（passthrough 回落 `HANDLERS`），
+`_timeout_ms=3000`，起点 `sim_start(ur12e / upright / 1.0x)`；结果逐条落盘 JSONL。
+
+**结果：88/88 全部返回，0 个未捕获异常，0 条信封不一致；跑完全部 op 后 worker 仍存活（ping ok）。**
+
+| 分类 | 数量 |
+| --- | ---: |
+| ok | 43 |
+| SIM_UNSUPPORTED（如实拒绝，带 simulated / op / capabilities） | 35 |
+| TIMEOUT（3 s 预算不足；30 s 复核后 ok） | 2 |
+| SIM_UNREACHABLE（起点跨基座奇异点被连续性门拒绝；换可达起点复核后 ok） | 7 |
+| SKIPPED（`shutdown_worker`；另有子进程探针验证 ok:true + exit 0） | 1 |
+
+关键结论：
+
+- 0.2.4 的"信封 `ok` 必须等于 `data.ok`"在 88 条返回上 **0 违规**；真实 `main()` 子进程探针同样一致
+  （movej 超时 → 信封 `ok:false` + `code:TIMEOUT` + `data.ok:false`）。
+- 7 个 `SIM_UNREACHABLE` 是**测试夹具的起点问题**，不是目标不可达；它恰好证明 `MAX_IK_STEP_RAD=0.5` 的
+  连续性门在工作（没有这道门，仿真会在两个构型分支之间画出真机走不了的折线还报"已到达"）。
+- `run_sequence`（20 段 + `t=30`）与四个 `draw_*` 的计划时长 = `t + 0.05 s`（`_MIN_SEGMENT_S` 地板，
+  测试里已明文记录该常数）。
+
+## 5. 宿主工具层冒烟（2026-10-19 补充，会话内真实调用 36 个已注册工具）
+
+全部通过：`sim_start` / `get_status` / `get_speed_scaling` / `get_uptime` / `get_robot_model` /
+`get_serial_number` / `get_joint_pose` / `get_tcp_pose`、`set_digital_out` + `get_digital_out_bits`
+（写后读回 bit0=true）、`get_digital_in(_bits)`、`set_analog_out`（5 V → fraction 0.5）、`get_analog_in`、
+`get_int_register` / `get_double_register` / `get_bit_register`、`get_runtime_telemetry` /
+`get_joint_temperatures`、`movej` / `movel` / `movep` / `movec` / `move_x` / `move_tool_z`、
+`draw_circle` / `draw_square` / `draw_rectangle` / `draw_star`（含 `t` 生效、circle steps=33、
+star 外接半径 = side/(2·sin72°)）、`run_sequence`（3 段 + `t=6`，`segment_count=3`）、
+`move_optimized`（a/v 折成能力比例）、`servoj`、`wait_steady`、`stopj` / `stopl`、`get_target_values`、
+`get_program_state`、`sim_stop` / `sim_start`、`ping`（python 3.12.9 + urbasic true）。
+
+无仿真语义的指令（`force_mode` / `get_safety_status` / `load_program` / `send_script` / `set_freedrive`）
+全部**如实拒绝**并附完整能力清单 —— 没有"假成功"。
+
+### 发现的两处文案缺陷（未修，待维护者决定）
+
+1. **中**：`_sim_no_semantics` 的拒绝文案仍写"请使用 URSim……用 `ursim_connect` 指向它的 IP 即可"，
+   但 sim 模式下非回环地址会被结构性拒绝（`SIM_BADARG`）⇒ **照做必失败**。该问题在
+   `docs/audit-2026-10-13-four-experts.md` 一脉的 Python 面审查（M7）里已记，不在本轮修复清单内。
+2. **低**：`ursim_sim_stop` 回包写"仿真会回到真机（若已连接）"，而 sim 模式下本插件不存在真机通道，
+   措辞会误导。
+
+建议：改成"本插件只做运动学仿真；URSim 需按 `motionMode=real` + `realRobotIps` 白名单接入"与
+"仿真已关闭"，并在 `test/sim-only.test.mjs` 里加一条断言把措辞钉住（避免再漂）。
