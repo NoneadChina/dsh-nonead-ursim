@@ -2570,6 +2570,13 @@ const allJogButtons = (ctx) => byAttr(ctx.container, 'data-ursim-jog')
 const leftBody = (ctx) => byAttrValue(ctx.container, 'data-ursim-twin-rail-body', 'left')
 const rightBody = (ctx) => byAttrValue(ctx.container, 'data-ursim-twin-rail-body', 'right')
 const postedBodies = (ctx) => ctx.request.posts().map((p) => JSON.parse(p.body))
+/**
+ * 只取"操作命令"（滤掉松手时补的 `{mode:'stop'}`）。
+ *
+ * 新的交互在**每一次松手**都补一条 stop（短按也不例外），所以 `postedBodies` 的下标
+ * 会被 stop 打乱；关心"第几条运动命令"的断言一律用它，既不掩盖 stop，也不必数下标。
+ */
+const postedCommands = (ctx) => postedBodies(ctx).filter((body) => body?.mode !== 'stop')
 
 /** 点一下（按下 + 松开）：按下立即发一步，松开取消长按计时。 */
 function tapJog(ctx, key) {
@@ -2653,7 +2660,7 @@ test('★ 控制轨尺寸：左轨 180 / 右轨 350，按钮 52×52、位姿 3 �
   ctx.panel.dispose()
 })
 
-test('★ 左轨：点一次 X+ 只发一条 cartesian 命令，body 形状正确', async () => {
+test('★ 左轨：点一次 X+ 只发一条 cartesian + 一条 stop，body 形状正确', async () => {
   const ctx = boot({ initial: LIVE, autoSim: false })
   ctx.clock.flush()
   await tick()
@@ -2661,7 +2668,7 @@ test('★ 左轨：点一次 X+ 只发一条 cartesian 命令，body 形状正�
   tapJog(ctx, 'cartesian-x-plus')
 
   const posts = ctx.request.posts()
-  assert.equal(posts.length, 1, '★ 点一次只允许发一条命令（按下立即发一步）')
+  assert.equal(posts.length, 2, '★ 按下一条 cartesian、松手补一条 stop（短按不产生 velocity）')
   assert.equal(posts[0].url, TWIN_JOG_PATH, '命令必须发往 /twin/jog 的路径真源')
   assert.match(String(posts[0].headers['content-type']), /application\/json/)
   assert.deepEqual(JSON.parse(posts[0].body), {
@@ -2670,6 +2677,9 @@ test('★ 左轨：点一次 X+ 只发一条 cartesian 命令，body 形状正�
     distance: 0.005,
     frame: 'tool',
   }, '默认 5 mm 步长 + 工具系')
+  assert.deepEqual(JSON.parse(posts[1].body), { mode: 'stop' }, '★ 松手立即发 stop')
+  assert.equal(postedBodies(ctx).filter((body) => body.mode === 'velocity').length, 0,
+    '★ 短按全程不得出现 velocity')
 
   ctx.panel.dispose()
 })
@@ -2724,7 +2734,7 @@ test('★ 左轨：回零按钮发 {mode:"home"}；步长切换后距离随之�
 
   tapJog(ctx, 'home')
   await tick() // 等这一条落地，否则在途期间后续点击会被丢弃
-  assert.deepEqual(postedBodies(ctx)[0], { mode: 'home' })
+  assert.deepEqual(postedCommands(ctx)[0], { mode: 'home' })
 
   const ten = byAttrValue(ctx.container, 'data-ursim-step-mm', '10')
   assert.ok(ten, '必须有 10 mm 步长档')
@@ -2738,7 +2748,7 @@ test('★ 左轨：回零按钮发 {mode:"home"}；步长切换后距离随之�
 
   tapJog(ctx, 'cartesian-x-plus')
   await tick()
-  assert.deepEqual(postedBodies(ctx)[1], {
+  assert.deepEqual(postedCommands(ctx)[1], {
     mode: 'cartesian',
     axis: 'x',
     distance: 0.01,
@@ -2755,7 +2765,7 @@ test('★ 左轨：旋转点动发 rotate（角度→弧度），参考系切换
 
   tapJog(ctx, 'rotate-rx-plus')
   await tick()
-  const first = postedBodies(ctx)[0]
+  const first = postedCommands(ctx)[0]
   assert.equal(first.mode, 'rotate')
   assert.equal(first.axis, 'rx')
   assert.equal(first.frame, 'tool', '默认工具系')
@@ -2768,14 +2778,14 @@ test('★ 左轨：旋转点动发 rotate（角度→弧度），参考系切换
 
   tapJog(ctx, 'rotate-rz-minus')
   await tick()
-  const second = postedBodies(ctx)[1]
+  const second = postedCommands(ctx)[1]
   assert.equal(second.axis, 'rz')
   assert.equal(second.frame, 'base', '切到基座系后 frame 必须跟着变')
   assert.ok(Math.abs(second.deltaRad + Math.PI / 180) < 1e-12, 'RZ− = -1°')
 
   tapJog(ctx, 'cartesian-z-minus')
   await tick()
-  assert.deepEqual(postedBodies(ctx)[2], {
+  assert.deepEqual(postedCommands(ctx)[2], {
     mode: 'cartesian',
     axis: 'z',
     distance: -0.005,
@@ -2785,15 +2795,15 @@ test('★ 左轨：旋转点动发 rotate（角度→弧度），参考系切换
   ctx.panel.dispose()
 })
 
-test('★ 左轨：命令在途时按钮不禁用（aria-disabled 表达 busy）、后续点击被丢弃', async () => {
+test('★ 左轨：命令在途时按钮不禁用（aria-disabled 表达 busy）、后续运动点击被丢弃', async () => {
   const calls = []
-  let releasePost = null
+  const releases = []
   const request = (url, init = {}) => {
     const method = init.method ?? 'GET'
     calls.push({ url, method, body: init.body ?? null })
     if (method === 'POST') {
       return new Promise((resolve) => {
-        releasePost = () => resolve({ json: async () => ({ ok: true }) })
+        releases.push(() => resolve({ json: async () => ({ ok: true }) }))
       })
     }
     return Promise.resolve({ json: async () => ({ ok: true, active: false, models: [] }) })
@@ -2802,6 +2812,8 @@ test('★ 左轨：命令在途时按钮不禁用（aria-disabled 表达 busy）
   ctx.clock.flush()
   await tick()
 
+  const bodies = () => calls.filter((c) => c.method === 'POST').map((c) => JSON.parse(c.body))
+
   tapJog(ctx, 'cartesian-x-plus')
   ctx.clock.flush(16)
   const held = jogButton(ctx, 'cartesian-x-plus')
@@ -2809,11 +2821,14 @@ test('★ 左轨：命令在途时按钮不禁用（aria-disabled 表达 busy）
   assert.equal(held.getAttribute('aria-disabled'), 'true', '★ busy 用 aria-disabled 表达')
   assert.equal(leftBody(ctx).getAttribute('data-ursim-ctl-state'), 'busy', '★ 宿主节点状态是 busy')
   assert.equal(jogButton(ctx, 'cartesian-y-plus').disabled, false, '其它按钮同样保持可点（闸门在代码里）')
+  assert.equal(bodies().filter((b) => b.mode === 'stop').length, 1,
+    '★ 松手 stop 不走 busy 闸门：在途时也必须发出去')
 
   tapJog(ctx, 'cartesian-y-plus')
-  assert.equal(calls.filter((c) => c.method === 'POST').length, 1, '★ 在途时后续点击必须丢弃')
+  assert.equal(bodies().filter((b) => b.mode === 'cartesian').length, 1,
+    '★ 在途时后续**运动**点击必须丢弃（stop 是安全例外）')
 
-  releasePost()
+  releases[0]() // 第一条 cartesian 落地
   await tick()
   ctx.clock.flush(16)
   assert.equal(held.disabled, false, '返回后仍然不禁用')
@@ -2823,43 +2838,48 @@ test('★ 左轨：命令在途时按钮不禁用（aria-disabled 表达 busy）
   ctx.panel.dispose()
 })
 
-test('★ 左轨：按住 250 ms 后每 200 ms 重复一步，松开/卸载即停', () => {
-  const doc = makeDoc()
-  const body = doc.createElement('div')
-  const timers = makeFakeTimers()
-  const sent = []
-  const rail = mountLeftRail(doc, body, {
-    send: (payload) => { sent.push(payload) },
-    setTimeout: timers.setTimeout,
-    clearTimeout: timers.clearTimeout,
-  })
-  rail.sync({ connected: true, simulated: true })
+test('★ 左轨：短按一步；按住 250 ms 切速度流，每 100 ms 重发；松开/卸载即停', () => {
+  const { body, timers, sent, rail, button } = mountJogRecorder()
+  const btn = button('cartesian-x-plus')
+  const count = (mode) => sent.filter((payload) => payload.mode === mode).length
 
-  const button = byAttrValue(body, 'data-ursim-jog', 'cartesian-x-plus')
-  assert.ok(button, '必须建出 X+ 按钮')
-  button.listeners.pointerdown[0]()
-  assert.equal(sent.length, 1, '按下立即走一步')
+  btn.listeners.pointerdown[0]({ pointerId: 1 })
+  assert.equal(count('cartesian'), 1, '按下立即走一步')
+  assert.equal(count('velocity'), 0, '短按不产生 velocity')
+  assert.equal(body.getAttribute('data-ursim-jog-mode'), 'step', '空闲/步进阶段是 step')
+
   timers.advance(249)
-  assert.equal(sent.length, 1, '未到 250 ms 不得重复')
-  timers.advance(1)
-  assert.equal(sent.length, 2, '按住 250 ms 后走第二步')
-  timers.advance(200)
-  assert.equal(sent.length, 3, '之后每 200 ms 一步')
+  assert.equal(count('velocity'), 0, '未到 250 ms 不得切速度流')
+  assert.equal(count('cartesian'), 1, '★ 步进阶段不再重复小步')
 
-  button.listeners.pointerup[0]()
+  timers.advance(1)
+  assert.equal(count('velocity'), 1, '按住 250 ms 时发第一条 velocity')
+  assert.equal(body.getAttribute('data-ursim-jog-mode'), 'velocity', '★ 宿主节点切换为 velocity')
+
+  timers.advance(200)
+  assert.equal(count('velocity'), 3, '之后每 100 ms 重发一次（喂看门狗）')
+
+  btn.listeners.pointerup[0]({ pointerId: 1 })
+  assert.equal(sent.at(-1).mode, 'stop', '★ 松手立刻补一条 stop')
+  assert.equal(body.getAttribute('data-ursim-jog-mode'), 'step', '松手后回到 step')
+  const afterRelease = sent.length
   timers.advance(2000)
-  assert.equal(sent.length, 3, '松开后必须停')
+  assert.equal(sent.length, afterRelease, '松开后必须停')
   assert.equal(timers.pending, 0, '松开后不得留下定时器')
 
-  button.listeners.pointerdown[0]()
-  assert.equal(sent.length, 4)
+  // 卸载同样必须停表（并且补一条 stop）。
+  btn.listeners.pointerdown[0]({ pointerId: 2 })
+  timers.advance(250)
+  assert.ok(count('velocity') >= 2, '第二次按住应已进入速度流')
   rail.dispose()
+  assert.equal(sent.at(-1).mode, 'stop', '★ 卸载时也补 stop')
+  const afterDispose = sent.length
   timers.advance(2000)
-  assert.equal(sent.length, 4, '★ 卸载必须清掉重复定时器')
+  assert.equal(sent.length, afterDispose, '★ 卸载必须清掉速度流定时器')
   assert.equal(timers.pending, 0)
 })
 
-test('★ 左轨：长按中某一步在飞时按钮不被禁用，长按继续（busy 只跳过这一拍）', async () => {
+test('★ 左轨：速度流中某一条在飞时按钮不被禁用，重发跳过这一拍但绝不停表', async () => {
   const doc = makeDoc()
   const body = doc.createElement('div')
   const timers = makeFakeTimers()
@@ -2885,24 +2905,231 @@ test('★ 左轨：长按中某一步在飞时按钮不被禁用，长按继续�
   assert.equal(button.getAttribute('aria-disabled'), 'true', '★ busy 只由 aria-disabled 表达')
 
   timers.advance(250)
-  assert.equal(sent.length, 1, '② 第一条还在飞：这一拍必须跳过（不排队）')
+  assert.equal(sent.length, 1, '② 第一步还在飞：这一拍 velocity 必须跳过（不排队）')
+  assert.equal(body.getAttribute('data-ursim-jog-mode'), 'velocity', '★ 跳过发送不等于停表')
   assert.equal(button.disabled, false, '★ 仍在途，按钮仍不得 disabled')
 
-  pending.shift()() // 第一条落地
+  pending.shift()() // 第一步落地
   await tick()
   assert.equal(button.disabled, false, '落地后按钮仍然可用')
   assert.equal(button.getAttribute('aria-disabled'), 'false', '★ 落地后解除 busy 标记')
 
+  timers.advance(100)
+  assert.equal(sent.length, 2, '③ 速度流继续：下一条 velocity 应在 100 ms 后发出')
+  assert.equal(sent[1].mode, 'velocity')
+
+  // 这条 velocity 一直挂着：后续两拍必须跳过，但节奏不能停。
   timers.advance(200)
-  assert.equal(sent.length, 2, '③ 长按继续：下一条命令应在 200 ms 后发出')
+  assert.equal(sent.length, 2, '④ 在飞期间每一拍都跳过（覆盖式、不排队）')
+  assert.equal(body.getAttribute('data-ursim-jog-mode'), 'velocity', '★ 忙也不会退回 step')
+
+  pending.shift()() // velocity 落地
+  await tick()
+  timers.advance(100)
+  assert.equal(sent.length, 3, '⑤ 落地后的下一拍必须恢复发送（速度流没被忙掐断）')
 
   button.listeners.pointerup[0]({ pointerId: 7 })
   assert.equal(button.hasPointerCapture(7), false, '★ 松手时必须释放指针捕获')
+  assert.equal(sent.at(-1).mode, 'stop', '★ 松手补 stop')
+  const afterRelease = sent.length
   timers.advance(1000)
-  assert.equal(sent.length, 2, '④ 松手后再推进 1000 ms 不得再有新命令')
+  assert.equal(sent.length, afterRelease, '⑥ 松手后再推进 1000 ms 不得再有新命令')
   assert.equal(timers.pending, 0, '松手后不得留下定时器')
 
   rail.dispose()
+})
+
+/**
+ * 建一条最小的左轨挂载：假文档 + 假时钟 + 记录型 `send`。
+ *
+ * 这五条速度流用例只关心"发了什么、什么时候发"，不需要面板/3D/状态帧。
+ */
+function mountJogRecorder() {
+  const doc = makeDoc()
+  const body = doc.createElement('div')
+  const timers = makeFakeTimers()
+  const sent = []
+  const rail = mountLeftRail(doc, body, {
+    send: (payload) => {
+      sent.push(payload)
+    },
+    setTimeout: timers.setTimeout,
+    clearTimeout: timers.clearTimeout,
+  })
+  rail.sync({ connected: true, simulated: true })
+  const button = (key) => {
+    const found = byAttrValue(body, 'data-ursim-jog', key)
+    assert.ok(found, `必须建出 ${key} 按钮`)
+    return found
+  }
+  return { doc, body, timers, sent, rail, button }
+}
+
+test('★ 左轨·短按：只发一步 cartesian + stop，全程没有 velocity', () => {
+  const { timers, sent, rail, button } = mountJogRecorder()
+  const btn = button('cartesian-x-plus')
+
+  btn.listeners.pointerdown[0]({ pointerId: 11 })
+  assert.equal(sent.length, 1, '短按只发一条命令')
+  assert.deepEqual(sent[0], {
+    mode: 'cartesian',
+    axis: 'x',
+    distance: 0.005,
+    frame: 'tool',
+  }, '短按走的是一步 cartesian（默认 5 mm / 工具系）')
+
+  btn.listeners.pointerup[0]({ pointerId: 11 })
+  assert.equal(sent.length, 2, '松手补一条 stop')
+  assert.deepEqual(sent[1], { mode: 'stop' }, '★ stop 的 body 只有 mode')
+
+  timers.advance(1000)
+  assert.equal(sent.length, 2, '松手后不得再有任何命令')
+  assert.equal(sent.filter((payload) => payload.mode === 'velocity').length, 0,
+    '★ 短按全程不得出现 velocity')
+  assert.equal(timers.pending, 0)
+
+  rail.dispose()
+})
+
+test('★ 左轨·长按：250 ms 切换成 velocity（x 分量 +0.025，其余 0）', () => {
+  const { body, timers, sent, rail, button } = mountJogRecorder()
+  const btn = button('cartesian-x-plus')
+
+  btn.listeners.pointerdown[0]({ pointerId: 12 })
+  assert.equal(sent.length, 1)
+  assert.equal(body.getAttribute('data-ursim-jog-mode'), 'step')
+
+  timers.advance(250)
+  assert.equal(sent.length, 2, '250 ms 时出现第一条 velocity')
+  assert.deepEqual(sent[1], {
+    mode: 'velocity',
+    twist: [0.025, 0, 0, 0, 0, 0],
+    frame: 'tool',
+    ttlMs: 400,
+  }, '★ 平移 25 mm/s 只落在 x 分量，frame 取当前工具系，ttlMs 400')
+
+  assert.equal(body.getAttribute('data-ursim-jog-mode'), 'velocity',
+    '★ 宿主节点 data-ursim-jog-mode 切到 velocity')
+
+  rail.dispose()
+})
+
+test('★ 左轨·长按：每 100 ms 重发同一条 velocity（喂看门狗）', () => {
+  const { timers, sent, rail, button } = mountJogRecorder()
+  const btn = button('cartesian-x-plus')
+
+  btn.listeners.pointerdown[0]({ pointerId: 13 })
+  timers.advance(250)
+  const first = sent[1]
+  assert.equal(first.mode, 'velocity')
+
+  timers.advance(100)
+  assert.equal(sent.length, 3, '100 ms 后重发第二条')
+  assert.equal(sent[2].mode, 'velocity')
+  assert.deepEqual(sent[2].twist, first.twist, '重发的 twist 必须与第一条相同')
+
+  timers.advance(100)
+  assert.equal(sent.length, 4, '再 100 ms 重发第三条')
+  assert.equal(sent[3].mode, 'velocity')
+  assert.deepEqual(sent[3].twist, first.twist)
+  assert.equal(sent[3].ttlMs, 400)
+
+  rail.dispose()
+})
+
+test('★ 左轨·松手即停：pointerup 发 stop，之后 1000 ms 不得再有 velocity', () => {
+  const { body, timers, sent, rail, button } = mountJogRecorder()
+  const btn = button('cartesian-x-plus')
+
+  btn.listeners.pointerdown[0]({ pointerId: 14 })
+  timers.advance(250)
+  assert.equal(sent.filter((payload) => payload.mode === 'velocity').length, 1, '已进入速度流')
+
+  btn.listeners.pointerup[0]({ pointerId: 14 })
+  assert.equal(sent.at(-1).mode, 'stop', '★ 松手必须追上一条 stop')
+  assert.equal(body.getAttribute('data-ursim-jog-mode'), 'step', '松手后回到 step')
+
+  const afterRelease = sent.length
+  timers.advance(1000)
+  assert.equal(sent.length, afterRelease, '★ 松手后不得再发任何命令')
+  assert.equal(sent.slice(afterRelease).filter((payload) => payload.mode === 'velocity').length, 0,
+    '★ 松手后不得再有 velocity')
+  assert.equal(timers.pending, 0, '松手后不得留下定时器')
+
+  rail.dispose()
+})
+
+test('★ 左轨·旋转长按：rz 分量 = 15°/s（rad/s），其余 0', () => {
+  const { timers, sent, rail, button } = mountJogRecorder()
+  const btn = button('rotate-rz-plus')
+
+  btn.listeners.pointerdown[0]({ pointerId: 15 })
+  timers.advance(250)
+
+  const velocity = sent.find((payload) => payload.mode === 'velocity')
+  assert.ok(velocity, '250 ms 后必须出现 velocity')
+  assert.equal(velocity.twist.length, 6)
+  for (let i = 0; i < 5; i++) {
+    assert.equal(velocity.twist[i], 0, `旋转键的第 ${i} 个分量必须为 0`)
+  }
+  assert.ok(Math.abs(velocity.twist[5] - (15 * Math.PI) / 180) < 1e-12,
+    '★ RZ+ = 15 °/s = 15·π/180 rad/s')
+  assert.equal(velocity.frame, 'tool', '默认工具系')
+
+  rail.dispose()
+})
+
+test('★ 左轨·速度流：frame 跟随参考系分段控件（base）', () => {
+  const { timers, sent, rail, button } = mountJogRecorder()
+  byAttrValue(rail.body, 'data-ursim-frame', 'base').listeners.click[0]()
+
+  const btn = button('cartesian-y-minus')
+  btn.listeners.pointerdown[0]({ pointerId: 16 })
+  timers.advance(250)
+
+  const velocity = sent.find((payload) => payload.mode === 'velocity')
+  assert.ok(velocity, '必须进入速度流')
+  assert.equal(velocity.frame, 'base', '★ 长按速度流使用当前参考系')
+  assert.deepEqual(velocity.twist, [0, -0.025, 0, 0, 0, 0], 'Y− 只落在 y 分量且为负')
+
+  rail.dispose()
+})
+
+test('★ 左轨·回零：不参与速度流，按住也只发一条 home', () => {
+  const { body, timers, sent, rail, button } = mountJogRecorder()
+  const btn = button('home')
+
+  btn.listeners.pointerdown[0]({ pointerId: 17 })
+  assert.deepEqual(sent[0], { mode: 'home' })
+  timers.advance(250)
+  timers.advance(1000)
+  assert.equal(sent.filter((payload) => payload.mode === 'home').length, 1,
+    '★ 回零按住不得重复发 home')
+  assert.equal(sent.filter((payload) => payload.mode === 'velocity').length, 0,
+    '★ 回零不参与速度流')
+  assert.equal(body.getAttribute('data-ursim-jog-mode'), 'step')
+
+  btn.listeners.pointerup[0]({ pointerId: 17 })
+  assert.equal(sent.at(-1).mode, 'stop', '松手仍然补 stop')
+  rail.dispose()
+})
+
+test('★ 左轨：pointerleave / pointercancel / lostpointercapture 都发 stop 并停表', () => {
+  for (const type of ['pointerleave', 'pointercancel', 'lostpointercapture']) {
+    const { timers, sent, rail, button } = mountJogRecorder()
+    const btn = button('cartesian-z-plus')
+    btn.listeners.pointerdown[0]({ pointerId: 18 })
+    timers.advance(250)
+    assert.equal(sent.filter((payload) => payload.mode === 'velocity').length, 1)
+
+    btn.listeners[type][0]({ pointerId: 18 })
+    assert.equal(sent.at(-1).mode, 'stop', `★ ${type} 必须补 stop`)
+    const after = sent.length
+    timers.advance(1000)
+    assert.equal(sent.length, after, `★ ${type} 之后不得再有 velocity`)
+    assert.equal(timers.pending, 0)
+    rail.dispose()
+  }
 })
 
 /** 极简假定时器：`advance(ms)` 按到期顺序执行，嵌套调度也按同一时钟推进。 */

@@ -240,10 +240,24 @@ function makeBody(doc, which, deps) {
  * 没有 `send`（或它抛错）时控件保持禁用，**绝不吞掉异常**：错误写到控件区的错误行上。
  * ------------------------------------------------------------------ */
 
-/** 按住多久后开始连续点动（毫秒）。 */
+/** 按住多久后从"一步"切换成速度流（毫秒）。 */
 export const JOG_HOLD_DELAY_MS = 250
-/** 连续点动的间隔（毫秒）。 */
-export const JOG_REPEAT_INTERVAL_MS = 200
+/**
+ * 速度流的**重发间隔**（毫秒）。
+ *
+ * 它不是一个"运动步长"，而是喂服务器看门狗的节奏：宿主对 `{mode:'velocity'}` 的
+ * `ttlMs` 是 400 ms —— 浏览器崩溃 / 切到后台时重发会停，服务器必须在 400 ms 后
+ * 自己把速度归零。100 ms 留了 4 倍余量，运动也比 200 ms 一步的小 `movel` 平滑。
+ */
+export const JOG_VELOCITY_INTERVAL_MS = 100
+/** 每条速度指令的存活时间（毫秒）：服务器超过这么久没收到新指令就把速度归零。 */
+export const JOG_VELOCITY_TTL_MS = 400
+/** 长按速度流的平移速度（m/s）：25 mm/s，**与步长档位无关**。 */
+export const JOG_LINEAR_SPEED_MPS = 0.025
+/** 长按速度流的旋转速度（°/s）：15 °/s，与角度步长档位**无关**。 */
+export const JOG_ANGULAR_SPEED_DEG_S = 15
+/** 15 °/s 对应的弧度值（`twist` 的旋转分量用 rad/s）。 */
+export const JOG_ANGULAR_SPEED_RAD_S = (JOG_ANGULAR_SPEED_DEG_S * Math.PI) / 180
 /** 位置步长档位（毫米）。 */
 export const JOG_STEPS_MM = Object.freeze([1, 5, 10])
 /** 姿态步长档位（度）。 */
@@ -352,13 +366,22 @@ function makeSegment(doc, label, attr, options, initial, onPick) {
 /**
  * 左轨内容：TCP 位置 / TCP 方向 点动盘、步长、参考系、回零。
  *
- * 交互（设计 §6）：
- *   - 按下立即发一步；按住 `JOG_HOLD_DELAY_MS` 后每 `JOG_REPEAT_INTERVAL_MS` 重复一步；
+ * 交互（设计 §6，2026-10-19 改为"短按一步 / 长按速度流"）：
+ *   - **短按**：按下立即发**一步**（`cartesian` / `rotate`），松手补一条 `{mode:'stop'}`；
+ *   - **长按**：按住 `JOG_HOLD_DELAY_MS` 后不再重复小步，切换成**速度流** ——
+ *     发一条 `{mode:'velocity', twist, frame, ttlMs}`，此后每 `JOG_VELOCITY_INTERVAL_MS`
+ *     重发一次（喂服务器看门狗，400 ms 不收就自动归零）；
+ *   - **重发是覆盖式**：上一条还在飞就跳过这一拍，但**绝不停表**（后端立即返回，
+ *     理论上不会忙；容错时也不能让速度流因为一次忙就断掉）；
+ *   - **回零不参与速度流**：它是绝对位形，按住重复没有意义 —— 仍然"点一次走一次"；
  *   - 按下时抓住指针（`setPointerCapture`），松开（`pointerup` / `pointerleave` /
- *     `pointercancel` / `lostpointercapture`）即停，定时器在 `dispose()` 清掉；
+ *     `pointercancel` / `lostpointercapture`）即停，**任何按住结束都发 `{mode:'stop'}`**
+ *     （无论此前处于步进还是速度流阶段），定时器在 `dispose()` 清掉；
+ *   - 宿主节点写 `data-ursim-jog-mode="step"|"velocity"`（空闲/短按时为 `step`）；
  *   - **同一时刻只允许一条命令在飞**（串行）：在途（busy）时**不设 `disabled`**（否则被按住的
  *     按钮收不到 `pointerup`，长按会被自己掐断），只写 `aria-disabled="true"` +
  *     `data-ursim-ctl-state="busy"`；后续命令仍由 `runCommand` 的代码闸门丢弃；
+ *     `{mode:'stop'}` 是**例外**：它不走 busy 闸门，松手必须能立刻打断在途的速度指令。
  *   - 快照 `connected !== true` / `feedStale === true` / `simulated !== true` ⇒ 全部控件禁用。
  *
  * **左轨没有文字原因栏**：这一栏在窄轨时代会把方向盘挤下去，而且"为什么不能点"在右轨
@@ -396,6 +419,12 @@ export function mountLeftRail(doc, body, deps = {}) {
   /** 是否有命令在飞（串行：同一时刻只允许一条）。 */
   let busy = false
   let repeatTimer = null
+  /** 当前是否有一段"按住"仍在进行（松手时据此决定要不要补 stop）。 */
+  let holding = false
+  /** 当前按住的是哪个按钮（速度流据此现算 `twist`）。 */
+  let heldKey = null
+  /** `data-ursim-jog-mode` 的最近写入值：`step`（一步）或 `velocity`（速度流）。 */
+  let lastMode = null
   /** 当前被按住的按钮抓住的指针（`lostpointercapture` / 松开时释放）。 */
   let heldPointer = null
   let lastRenderKey = null
@@ -570,7 +599,8 @@ export function mountLeftRail(doc, body, deps = {}) {
       // 阻止按住时选中文本/触发拖拽手势；假 DOM 的事件参数可能不存在。
       event?.preventDefault?.()
       // 先结束上一段长按（并释放它可能留下的捕获），再抓这一次的指针。
-      stopRepeat()
+      // 上一段若已进入速度流，必须先补 stop：否则它会继续被喂到看门狗超时。
+      if (endHold()) sendStop()
       try {
         button.setPointerCapture?.(event?.pointerId)
         heldPointer = { button, id: event?.pointerId }
@@ -625,11 +655,40 @@ export function mountLeftRail(doc, body, deps = {}) {
     return rotateJog(spec.axis, stepDeg * spec.sign, frame)
   }
 
-  /** 按下：立即走一步，然后开始长按重复（回零只走一步）。 */
+  /** 按下：立即走一步；非回零键随后进入"按住"状态（250 ms 后切速度流）。 */
   function onPress(key) {
     if (disposed || !available || busy || send === null) return
     if (!runCommand(bodyFor(key))) return
+    holding = true
+    heldKey = key
+    setJogMode('step')
     if (JOG_SPECS[key]?.mode !== 'home') startRepeat(key)
+  }
+
+  /**
+   * 由按钮 key + 当前参考系拼出一条**速度指令**（长按用，与步长档位无关）。
+   *
+   * - 平移键：只在对应轴的分量上给 ±25 mm/s，其余 0；
+   * - 旋转键：只在对应轴的分量上给 ±15 °/s（rad/s），其余 0；
+   * - 回零：返回 `null` —— 绝对位形不参与速度流。
+   */
+  function velocityFor(key) {
+    const spec = JOG_SPECS[key]
+    if (!spec || spec.mode === 'home') return null
+    const twist = [0, 0, 0, 0, 0, 0]
+    if (spec.mode === 'cartesian') {
+      const index = spec.axis === 'x' ? 0 : spec.axis === 'y' ? 1 : 2
+      twist[index] = spec.sign * JOG_LINEAR_SPEED_MPS
+    } else {
+      const index = spec.axis === 'rx' ? 3 : spec.axis === 'ry' ? 4 : 5
+      twist[index] = spec.sign * JOG_ANGULAR_SPEED_RAD_S
+    }
+    return {
+      mode: 'velocity',
+      twist,
+      frame: frame === 'base' ? 'base' : 'tool',
+      ttlMs: JOG_VELOCITY_TTL_MS,
+    }
   }
 
   /**
@@ -668,16 +727,32 @@ export function mountLeftRail(doc, body, deps = {}) {
     renderAvailability()
   }
 
-  /** 按住 250 ms 后，每 200 ms 重复一步；在途时这一步跳过（不排队），但节拍继续。 */
+  /** 按住 `JOG_HOLD_DELAY_MS` 后切速度流；此后每 `JOG_VELOCITY_INTERVAL_MS` 重发一次。 */
   function startRepeat(key) {
+    heldKey = key
     // 只清定时器、不碰指针捕获：捕获是刚在 pointerdown 里为这次按住设置的。
     clearRepeatTimer()
-    const repeat = () => {
-      if (disposed) return
-      if (available && !busy) runCommand(bodyFor(key))
-      repeatTimer = setT(repeat, JOG_REPEAT_INTERVAL_MS)
+    const begin = () => {
+      repeatTimer = null
+      if (disposed || !holding) return
+      setJogMode('velocity')
+      streamVelocity()
     }
-    repeatTimer = setT(repeat, JOG_HOLD_DELAY_MS)
+    repeatTimer = setT(begin, JOG_HOLD_DELAY_MS)
+  }
+
+  /**
+   * 速度流的一拍：发一条 velocity（忙就跳过这一拍），然后**无条件**排下一拍。
+   *
+   * 看门狗要的是固定节奏：绝不能因为一次 busy / 一次失败就停表 —— 停表等于松手，
+   * 而用户并没有松手。后台标签页把定时器节流到 > 400 ms 时，服务器看门狗会先停住
+   * 机械臂，这是刻意的失败方向。
+   */
+  function streamVelocity() {
+    if (disposed || !holding) return
+    const payload = velocityFor(heldKey)
+    if (available && payload !== null) runCommand(payload)
+    repeatTimer = setT(streamVelocity, JOG_VELOCITY_INTERVAL_MS)
   }
 
   /** 只清重复定时器（不释放指针捕获）。 */
@@ -687,23 +762,64 @@ export function mountLeftRail(doc, body, deps = {}) {
     repeatTimer = null
   }
 
+  /** 写 `data-ursim-jog-mode`（只在值变化时写，避免每拍碰 DOM）。 */
+  function setJogMode(next) {
+    if (next === lastMode) return
+    lastMode = next
+    host.setAttribute('data-ursim-jog-mode', next)
+  }
+
   /**
-   * 按住结束（松开/移出/取消/捕获丢失/卸载）：清定时器 + 释放指针捕获（幂等）。
+   * 结束"按住"但**不发** stop：清定时器 + 释放指针捕获 + 回到 `step`。
    *
-   * 释放前先 `hasPointerCapture` 判断：浏览器在 `pointerup` 之后会自己释放，
-   * 这里只处理"还抓着"的情况，避免对已释放的指针重复调用。
+   * `pointerdown` 用它收拾上一段按住（紧接着会发新命令，不需要额外的 stop）。
+   *
+   * @returns {boolean} 此前是否真的有一段按住（调用方据此决定要不要补 stop）
    */
-  function stopRepeat() {
+  function endHold() {
+    const wasHolding = holding
+    holding = false
+    heldKey = null
     clearRepeatTimer()
     const captured = heldPointer
     heldPointer = null
-    if (!captured) return
-    try {
-      if (captured.button.hasPointerCapture?.(captured.id) === true) {
-        captured.button.releasePointerCapture(captured.id)
+    if (captured) {
+      try {
+        if (captured.button.hasPointerCapture?.(captured.id) === true) {
+          captured.button.releasePointerCapture(captured.id)
+        }
+      } catch {
+        /* 极端环境：释放失败不影响停止长按 */
       }
+    }
+    setJogMode('step')
+    return wasHolding
+  }
+
+  /**
+   * 松手 / 移出 / 取消 / 捕获丢失 / 卸载：结束按住并补一条 `{mode:'stop'}`。
+   *
+   * - stop **不走 busy 闸门**：一条 velocity 还在飞时松手，也必须能把机械臂停下来；
+   * - 只有"真的有过一段按住"才发：`pointerup` 之后浏览器补发的 `lostpointercapture`
+   *   不会再补第二条 stop。
+   */
+  function stopRepeat() {
+    if (!endHold()) return
+    sendStop()
+  }
+
+  /** 发停止指令（尽力而为：左轨没有错误栏，失败也不改界面）。 */
+  function sendStop() {
+    if (send === null) return
+    let result
+    try {
+      result = send({ mode: 'stop' })
     } catch {
-      /* 极端环境：释放失败不影响停止长按 */
+      return
+    }
+    if (result !== null && typeof result?.then === 'function') {
+      // stop 不参与 busy 状态，也不让失败冒成 unhandledRejection。
+      result.then(() => {}, () => {})
     }
   }
 
@@ -763,6 +879,8 @@ export function mountLeftRail(doc, body, deps = {}) {
 
   // 初始一律禁用：第一帧快照到达前不可能知道连没连上/是不是仿真。
   // 标题在建完按钮后统一派生一次（默认 5 mm / 1° / 工具系）。
+  // 空闲态一律 `step`（速度流只在按住超过 250 ms 之后才出现）。
+  setJogMode('step')
   refreshJogTitles()
   renderAvailability()
 
