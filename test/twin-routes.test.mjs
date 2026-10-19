@@ -1324,30 +1324,90 @@ test('★ jog 路由：只接受 cartesian / rotate / joint / pose / home / spee
     { mode: 'pose', pose: [0.1, -0.2, 0.3, 0, 0, 0] },
     { mode: 'home' },
     { mode: 'speed', fraction: 0.5 },
-  ]
+  ];
   for (const body of cases) {
-    assert.notEqual(parseJogRequest(body), null, `${body.mode} 应被接受`)
+    assert.ok(parseJogRequest(body), `${body.mode} 应被接受`);
   }
   for (const body of [null, {}, { mode: 'nope' }, { mode: 'speed', fraction: '0.5' }]) {
-    assert.equal(parseJogRequest(body), null, `${JSON.stringify(body)} 应被拒绝`)
+    assert.equal(parseJogRequest(body), null, `${JSON.stringify(body)} 应被拒绝`);
   }
-})
+});
 
 test('★ jog 路由：speed 模式把倍率钳到 0.01–1.0，并回显原始值', () => {
-  const low = parseJogRequest({ mode: 'speed', fraction: 0.001 })
-  assert.equal(low.fraction, 0.01)
-  assert.equal(low.requested, 0.001)
-  const high = parseJogRequest({ mode: 'speed', fraction: 9 })
-  assert.equal(high.fraction, 1)
-})
+  const low = parseJogRequest({ mode: 'speed', fraction: 0.001 });
+  assert.equal(low.fraction, 0.01);
+  assert.equal(low.requested, 0.001);
+  const high = parseJogRequest({ mode: 'speed', fraction: 9 });
+  assert.equal(high.fraction, 1);
+});
 
 test('★ jog 路由：cartesian / rotate 的 frame 只接受 tool / base', () => {
-  assert.equal(parseJogRequest({ mode: 'cartesian', axis: 'x', distance: 0.005, frame: 'moon' }), null)
-  assert.notEqual(parseJogRequest({ mode: 'rotate', axis: 'rx', deltaRad: 0.02, frame: 'base' }), null)
-})
+  assert.equal(parseJogRequest({ mode: 'cartesian', axis: 'x', distance: 0.005, frame: 'moon' }), null);
+  assert.ok(parseJogRequest({ mode: 'rotate', axis: 'rx', deltaRad: 0.02, frame: 'base' }));
+});
 
 test('★ jog 路由：joint 必须是 6 个有限数，pose 必须是 6 个有限数', () => {
-  assert.equal(parseJogRequest({ mode: 'joint', q: [0, 0, 0] }), null)
-  assert.equal(parseJogRequest({ mode: 'joint', q: [0, 0, 0, 0, 0, NaN] }), null)
-  assert.equal(parseJogRequest({ mode: 'pose', pose: [0, 0, 0, 0, 0] }), null)
-})
+  assert.equal(parseJogRequest({ mode: 'joint', q: [0, 0, 0] }), null);
+  assert.equal(parseJogRequest({ mode: 'joint', q: [0, 0, 0, 0, 0, NaN] }), null);
+  assert.equal(parseJogRequest({ mode: 'pose', pose: [0, 0, 0, 0, 0] }), null);
+});
+
+/*
+ * axis 白名单（两处**互不相同**的守卫）。
+ *
+ * 为什么值得单独测：白名单是**唯一**拦住"把轴名拼进 op 名"的地方 —— cartesian 的
+ * `move_${axis}` / `move_tool_${axis}` 是字符串拼出来的，一个拼错的轴名会变成一条
+ * worker 不认识的 op；rotate 的轴则直接进 `jog_rotate`。两处白名单各自只能拦自己那一
+ * 半（平移轴 vs 旋转轴），所以两边各要一条反例，否则删掉任一处都不会变红。
+ */
+test('★ jog 路由：cartesian 的 axis 只收 x / y / z（未知轴与旋转轴都拒绝）', () => {
+  // 未知轴：既不是平移也不是旋转。
+  assert.equal(parseJogRequest({ mode: 'cartesian', axis: 'w', distance: 0.005 }), null);
+  // 旋转轴在这个分支里非法：`distance` 单位是米，`rx` 是弧度轴（那是 rotate 的事）。
+  assert.equal(parseJogRequest({ mode: 'cartesian', axis: 'rx', distance: 0.005 }), null);
+});
+
+test('★ jog 路由：rotate 的 axis 只收 rx / ry / rz（平移轴拒绝）', () => {
+  // 平移轴进 `jog_rotate` 会被 Python 侧当非法轴 —— 宿主这一层就该先拒。
+  assert.equal(parseJogRequest({ mode: 'rotate', axis: 'x', deltaRad: 0.02 }), null);
+});
+
+/*
+ * 零值与非法数值（两条独立的守卫）。
+ *
+ * 零位移不是"无害的边界值"：它是面板松手/浮点下溢的产物，放过去就是一条**空转的**
+ * 运动指令 —— worker 是单线程 stdin 队列，那条指令照样占住队列直到自己超时。
+ * 字符串 `'0.005'` 与 `Infinity` 覆盖的是同一条 `Number.isFinite` 判据的另一半：
+ * `typeof v === 'number'` 挡不住 `NaN`，`=== 0` 也挡不住 `Infinity`。
+ */
+test('★ jog 路由：cartesian 的 distance 必须是非零有限数', () => {
+  assert.equal(parseJogRequest({ mode: 'cartesian', axis: 'x', distance: 0 }), null);
+  assert.equal(parseJogRequest({ mode: 'cartesian', axis: 'x', distance: Infinity }), null);
+  assert.equal(parseJogRequest({ mode: 'cartesian', axis: 'x', distance: '0.005' }), null);
+});
+
+test('★ jog 路由：rotate 的 deltaRad 必须是非零有限数', () => {
+  assert.equal(parseJogRequest({ mode: 'rotate', axis: 'rx', deltaRad: 0 }), null);
+  assert.equal(parseJogRequest({ mode: 'rotate', axis: 'rx', deltaRad: -Infinity }), null);
+  assert.equal(parseJogRequest({ mode: 'rotate', axis: 'rx', deltaRad: '0.02' }), null);
+});
+
+/*
+ * 非法数值与顶层形状。
+ *
+ * `NaN` 能通过 `typeof v === 'number'`，所以数值校验必须是 `Number.isFinite`：
+ * 否则 `Math.min(1, Math.max(0.01, NaN))` 仍是 `NaN`，倍率会被原样发给控制器。
+ */
+test('★ jog 路由：speed 的 fraction 必须是有限数，NaN 不能靠"是 number"混过去', () => {
+  assert.equal(parseJogRequest({ mode: 'speed', fraction: NaN }), null);
+  assert.equal(parseJogRequest({ mode: 'speed', fraction: Infinity }), null);
+});
+
+/*
+ * 顶层形状：断言的是 `parseJogRequest` 的**总函数性** —— 请求体被改坏时给 `null`，
+ * 绝不抛 `TypeError`（路由那一层只会把它当 400，不该被一个坏 body 打成 500）。
+ */
+test('★ jog 路由：非对象请求体（[] / 字符串）一律给 null，不抛错', () => {
+  assert.equal(parseJogRequest([]), null);
+  assert.equal(parseJogRequest('x'), null);
+});
