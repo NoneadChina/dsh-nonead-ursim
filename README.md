@@ -217,6 +217,13 @@ npm run verify:models # validate the structural contract of the 14 GLBs
   sides by *parsing* them (the snapshot that carries `op` for every tool, and `ast` for the handler),
   so parameter names, required-ness and types are all cross-checked.
 
+The most recent full run (**2026-10-19**, v0.2.4): `npm run check` green; `npm test` **59/59**
+(48 test files + 11 gates, 0 failed / 0 skipped); `npm run verify:host` reports **87/87** tools
+registered through the host's real DSL; `npm run verify:models` passes 14/14 models; plus a live
+UR12e offline-simulation smoke run (readback, motion, I/O, telemetry, unsupported-command refusal,
+argument validation). The evidence, the reproduction commands and the **true-robot coverage
+boundary** are recorded in [docs/test-report-2026-10-19.md](./docs/test-report-2026-10-19.md).
+
 > New in 0.6.0: `scripts/pdf-extract2.py` extracts text from `ScriptManual/*.pdf` into
 > `ScriptManual/txt/*.txt` using **only the standard library** (the PolyScope manuals encode
 > glyph ids, so the text only comes out through each font's `ToUnicode` CMap). It is the

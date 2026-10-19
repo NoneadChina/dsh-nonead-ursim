@@ -198,6 +198,12 @@ npm run verify:models # 校验 14 个 GLB 的结构契约
   解释器没有 `numpy` 时，依赖 Python 的项会以
   **SKIP + 原因**出现，绝不会显示成通过。
 
+最近一次完整回归（**2026-10-19**，v0.2.4）的实测结论：`npm run check` 全通过；`npm test`
+**59/59**（48 个测试文件 + 11 道门禁，0 失败 0 跳过）；`npm run verify:host` 报告
+**87/87** 工具经宿主真实 DSL 注册；`npm run verify:models` 14/14 模型通过；另做了一轮
+UR12e 离线仿真的端到端冒烟（读回、运动、I/O、遥测、不支持指令拒绝、参数校验）。证据、复现命令
+与**真机未覆盖边界**见 [docs/test-report-2026-10-19.md](./docs/test-report-2026-10-19.md)。
+
 > 0.6.0 新增 `scripts/pdf-extract2.py`：**只用标准库**从 `ScriptManual/*.pdf` 抽文本到
 > `ScriptManual/txt/*.txt`（两个 PolyScope 手册的字符码是 glyph id，必须走字体自带的
 > `ToUnicode` CMap 才能解出文字）。它是本版所有签名/默认值/范围的可复核来源：

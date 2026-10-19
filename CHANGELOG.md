@@ -8,6 +8,19 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [Unreleased]
+
+### Documentation
+
+- Added [`docs/test-report-2026-10-19.md`](./docs/test-report-2026-10-19.md): records the four-layer
+  verification of 0.2.4 — `npm run check` green, `npm test` **59/59** (48 test files + 11 gates,
+  0 failed / 0 skipped), `verify:host` registers **87/87** tools through the host's real DSL,
+  `verify:models` passes 14/14 models, plus a live UR12e offline-simulation smoke run. It also states
+  the reproduction commands and the **true-robot coverage boundary** (force mode, safety status bits,
+  program load/execute, URScript, conveyor).
+- The “Health check / testing” section of README / README.zh now carries the latest regression result
+  and a link to that report, so “how to verify” and “what was verified” live in one place.
+
 ## [0.2.4] - 2026-10-17
 
 A hardening release driven by a full-project audit (four read-only reviewers covering the host half,
