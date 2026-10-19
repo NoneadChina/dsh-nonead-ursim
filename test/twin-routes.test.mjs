@@ -8,8 +8,10 @@
 
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { registerHooks } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -17,6 +19,7 @@ import {
   TWIN_STATE_PATH,
   TWIN_ASSET_PATH,
   TWIN_MODELS_PATH,
+  TWIN_JOG_PATH,
   TWIN_CODES,
   TWIN_MODEL_TTL_MS,
   TWIN_STREAM_FRAME_ERROR_EVENT,
@@ -29,6 +32,44 @@ import {
   parseJogRequest,
   twinStateQuery,
 } from '../lib/twin-routes.js';
+
+/*
+ * ── 路由级用例的装配钩子 ────────────────────────────────────────────────────
+ *
+ * 下面几条 jog 用例要驱动**真实的** `lib/index.js`（`apply()` 挂路由；405 / 403 / 400 /
+ * 503 / 200 的响应契约与**守卫顺序**都只存在于那里的 handler 闭包里，`parseJogRequest`
+ * 的单测一行都摸不到）。这里只桩掉两个 peer 依赖 —— 它们的真实实现不在本仓库。
+ * 手法与 `test/sim-persistence.test.mjs` 的 `drive()` 相同：那个文件的 `registerHooks` 是
+ * 文件内私有的，所以照它的形状内联一份最小版本。
+ */
+registerHooks({
+  resolve(specifier, context, nextResolve) {
+    if (specifier === '@deepseek-ai/dsh-tools') return { url: 'stub:dsh-tools', shortCircuit: true };
+    if (specifier === '@deepseek-ai/schemastery') return { url: 'stub:schemastery', shortCircuit: true };
+    return nextResolve(specifier, context);
+  },
+  load(url, context, nextLoad) {
+    if (url === 'stub:dsh-tools') {
+      return { format: 'module', shortCircuit: true, source: 'export function defineTool(spec) { return spec }' };
+    }
+    if (url === 'stub:schemastery') {
+      return {
+        format: 'module',
+        shortCircuit: true,
+        source: `
+          const chain = new Proxy(function () {}, {
+            get: () => (...a) => chain,
+            apply: () => chain,
+            construct: () => chain,
+          })
+          const z = new Proxy({}, { get: () => chain, apply: () => chain })
+          export default z
+        `,
+      };
+    }
+    return nextLoad(url, context);
+  },
+});
 
 /*
  * ★ 路由那一层到底把哪些查询参数转给了读取逻辑 —— 这一步曾经被漏掉：`/state` 的路由处理器
@@ -1317,21 +1358,65 @@ test('★ P0-2：I/O 某一拍读失败时用上一笔成功读数降级，而�
 // ── 面板控制（jog）路由的请求校验 ───────────────────────────────────────────
 
 test('★ jog 路由：只接受 cartesian / rotate / joint / pose / home / speed 六种 mode', () => {
-  const cases = [
-    { mode: 'cartesian', axis: 'x', distance: 0.005, frame: 'tool' },
-    { mode: 'rotate', axis: 'rz', deltaRad: 0.02, frame: 'tool' },
-    { mode: 'joint', q: [0, -1.5, 0, -1.5, -1.5, 0] },
-    { mode: 'pose', pose: [0.1, -0.2, 0.3, 0, 0, 0] },
-    { mode: 'home' },
-    { mode: 'speed', fraction: 0.5 },
-  ];
-  for (const body of cases) {
-    assert.ok(parseJogRequest(body), `${body.mode} 应被接受`);
-  }
+  /*
+   * ⚠️ 这条负例必须是「**其余字段全部合法、只有 mode 非法**」。
+   *
+   * 裸 `{ mode: 'nope' }` 是**空测**：它连 axis / deltaRad 都没有，下游守卫本来就会
+   * 返回 null —— 把白名单整句删掉（只留 `typeof mode !== 'string'`）它也照样变红，
+   * 于是「六种 mode 的白名单」根本没有用例守护。下面这条带着完整的合法载荷：
+   * 只有去掉 `TWIN_JOG_MODES.has(mode)` 才会返回非 null。
+   */
+  assert.equal(
+    parseJogRequest({ mode: 'nope', axis: 'rx', deltaRad: 0.02 }),
+    null,
+    '★ mode 白名单：其余字段全部合法时也必须拒（这条才能真正钉住白名单）',
+  );
   for (const body of [null, {}, { mode: 'nope' }, { mode: 'speed', fraction: '0.5' }]) {
     assert.equal(parseJogRequest(body), null, `${JSON.stringify(body)} 应被拒绝`);
   }
 });
+
+/*
+ * 六种 mode 各一条**正向**用例，用 `deepEqual` 钉住整形结果。
+ *
+ * 为什么不能用 `assert.ok(x !== null)`：那只证明"没被拒"，证明不了白名单里真的有这一项 ——
+ * 把 `TWIN_JOG_MODES` 里任意一个成员删掉，对应的这一条会立刻变红。返回对象的形状
+ * （缺省 frame、speed 的 requested、数值是否被原样保留）也一并被钉死。
+ */
+const JOG_MODE_POSITIVES = [
+  {
+    mode: 'cartesian',
+    body: { mode: 'cartesian', axis: 'y', distance: 0.02, frame: 'base' },
+    expected: { mode: 'cartesian', axis: 'y', distance: 0.02, frame: 'base' },
+  },
+  {
+    mode: 'rotate',
+    body: { mode: 'rotate', axis: 'ry', deltaRad: -0.03 },
+    expected: { mode: 'rotate', axis: 'ry', deltaRad: -0.03, frame: 'tool' },
+  },
+  {
+    mode: 'joint',
+    body: { mode: 'joint', q: [0, -1.5, 0, -1.5, -1.5, 0] },
+    expected: { mode: 'joint', q: [0, -1.5, 0, -1.5, -1.5, 0] },
+  },
+  {
+    mode: 'pose',
+    body: { mode: 'pose', pose: [0.1, -0.2, 0.3, 0, 0.1, 0] },
+    expected: { mode: 'pose', pose: [0.1, -0.2, 0.3, 0, 0.1, 0] },
+  },
+  { mode: 'home', body: { mode: 'home' }, expected: { mode: 'home' } },
+  {
+    mode: 'speed',
+    body: { mode: 'speed', fraction: 0.5 },
+    expected: { mode: 'speed', fraction: 0.5, requested: 0.5 },
+  },
+];
+
+for (const { mode, body, expected } of JOG_MODE_POSITIVES) {
+  test(`★ jog 路由：${mode} 的整形结果必须精确（白名单删掉这一项就红）`, () => {
+    assert.deepEqual(parseJogRequest(body), expected);
+  });
+}
 
 test('★ jog 路由：speed 模式把倍率钳到 0.01–1.0，并回显原始值', () => {
   const low = parseJogRequest({ mode: 'speed', fraction: 0.001 });
@@ -1361,6 +1446,20 @@ test('★ jog 路由：joint 必须是 6 个有限数，pose 必须是 6 个有�
  * 半（平移轴 vs 旋转轴），所以两边各要一条反例，否则删掉任一处都不会变红。
  */
 test('★ jog 路由：cartesian 的 axis 只收 x / y / z（未知轴与旋转轴都拒绝）', () => {
+  // 正向：三个平移轴都要能派发（只留 'x'、删掉 'y' 或 'z' 会让这条立刻变红）。
+  for (const axis of ['x', 'y', 'z']) {
+    assert.deepEqual(
+      parseJogRequest({ mode: 'cartesian', axis, distance: 0.01 }),
+      { mode: 'cartesian', axis, distance: 0.01, frame: 'tool' },
+      `cartesian 的 ${axis} 轴必须被接受`,
+    );
+  }
+  // 不传 frame ⇒ 缺省必须是 'tool'（面板下拉框的默认，也是"点动一下"最直觉的坐标系）。
+  assert.equal(
+    parseJogRequest({ mode: 'cartesian', axis: 'z', distance: 0.01 }).frame,
+    'tool',
+    '★ 省略 frame 时必须缺省成 tool',
+  );
   // 未知轴：既不是平移也不是旋转。
   assert.equal(parseJogRequest({ mode: 'cartesian', axis: 'w', distance: 0.005 }), null);
   // 旋转轴在这个分支里非法：`distance` 单位是米，`rx` 是弧度轴（那是 rotate 的事）。
@@ -1368,6 +1467,14 @@ test('★ jog 路由：cartesian 的 axis 只收 x / y / z（未知轴与旋转�
 });
 
 test('★ jog 路由：rotate 的 axis 只收 rx / ry / rz（平移轴拒绝）', () => {
+  // 正向：三个旋转轴都要能派发（删掉 'ry' 会被这条抓住）。
+  for (const axis of ['rx', 'ry', 'rz']) {
+    assert.deepEqual(
+      parseJogRequest({ mode: 'rotate', axis, deltaRad: 0.02 }),
+      { mode: 'rotate', axis, deltaRad: 0.02, frame: 'tool' },
+      `rotate 的 ${axis} 轴必须被接受`,
+    );
+  }
   // 平移轴进 `jog_rotate` 会被 Python 侧当非法轴 —— 宿主这一层就该先拒。
   assert.equal(parseJogRequest({ mode: 'rotate', axis: 'x', deltaRad: 0.02 }), null);
 });
@@ -1410,4 +1517,268 @@ test('★ jog 路由：speed 的 fraction 必须是有限数，NaN 不能靠"是
 test('★ jog 路由：非对象请求体（[] / 字符串）一律给 null，不抛错', () => {
   assert.equal(parseJogRequest([]), null);
   assert.equal(parseJogRequest('x'), null);
+});
+
+/* ── 路由级测试：真实 `apply()` 挂载出来的 POST /twin/jog ────────────────────
+ *
+ * 为什么必须有这一层：`a621f72` 的核心改动是「把仿真守卫前移到解析之前」，以及
+ * 405 / 403 / 400 / 503 / 200 各自的响应契约 —— 这些**只**存在于 `lib/index.js` 的
+ * handler 闭包里。`parseJogRequest` 的单测无论怎么写都摸不到它们：把 SIM_ONLY 段挪回
+ * 解析之后、删掉 503、或删掉 `message` 透出，纯函数用例一条都不会红。
+ *
+ * 手法照 `test/sim-persistence.test.mjs` 的 `drive({ mountRoutes:true })`（第 143 行）
+ * 与它的假 req/res（第 301–327 行）：桩掉 `UrWorker.prototype.call`（**绝不起 Python
+ * 子进程**），用假 `hostCtx.webServer` 收集路由，再用假 req/res 驱动 handler。
+ */
+
+/** 让"发起但不等待"的装配跑完（与 sim-persistence 的同名 helper 同义）。 */
+const settleMount = () => new Promise((resolve) => setTimeout(resolve, 20));
+
+/** 浏览器同源写请求的默认形状：回环 Host + 同源 Origin + JSON content-type。 */
+function trustedHeaders(overrides = {}) {
+  return {
+    host: '127.0.0.1:12460',
+    origin: 'http://127.0.0.1:12460',
+    'content-type': 'application/json',
+    ...overrides,
+  };
+}
+
+/**
+ * 挂载真实的 `apply()`（只桩 worker 的 `call` / `stats`）。
+ *
+ * `persistSimState:false`：测试不得把仿真记忆写进开发者本机的 `~/.dsh` —— 这是
+ * `test/sim-persistence.test.mjs` 已经踩过的坑（会弄脏真实配置）。
+ *
+ * `worker()` 返回本次 `apply()` 建出来的 `UrWorker` 实例：实例是**闭包私有**的，这里靠
+ * `stats()` 在 `noteSimEnabled()` 里被调用的时机把 `this` 记下来（自愈登记口会调它）。
+ */
+async function mountTwinRoutes({ replies = {} } = {}) {
+  const { UrWorker } = await import('../lib/worker.js');
+  const mod = await import('../lib/index.js');
+  let instance = null;
+  UrWorker.prototype.stats = function stats() {
+    instance = this;
+    return { respawnCount: 0, running: true, disposed: false, pid: 1234 };
+  };
+  UrWorker.prototype.call = async function call(op, params) {
+    if (typeof replies[op] === 'function') return replies[op](params);
+    return { message: `stub:${op}`, data: { op, params } };
+  };
+  const routes = new Map();
+  const registered = new Map();
+  const hostCtx = {
+    logger: { info() {}, warn() {}, error() {} },
+    effect: (fn) => {
+      const disposer = fn();
+      return typeof disposer === 'function' ? disposer : () => {};
+    },
+    webServer: {
+      register: (route) => {
+        routes.set(route.path, route);
+        return () => {};
+      },
+    },
+  };
+  mod.apply(
+    {
+      logger: { info() {}, warn() {}, error() {} },
+      effect: () => () => {},
+      get: () => undefined,
+      inject: (_deps, callback) => {
+        callback(hostCtx);
+        return () => {};
+      },
+      tools: { register: (tool) => registered.set(tool.name, tool) },
+    },
+    { persistSimState: false },
+  );
+  await settleMount();
+  return { routes, registered, worker: () => instance };
+}
+
+/** 真实 `op_connect` 的响应形状（python 的 connect = 确保仿真在跑 + 返回 sim_status 那一份）。 */
+const SIM_CONNECT_REPLY = () => ({
+  message: '已连接：离线仿真机器人（UR12E）在保留地址 127.0.0.1。',
+  data: {
+    simulated: true,
+    active: true,
+    connected: true,
+    ip: '127.0.0.1',
+    model: 'UR12E',
+    model_id: 'ur12e',
+    preset: 'upright',
+    speed_scaling: 1,
+  },
+});
+
+/** 挂载并"连接"仿真：宿主 `simIps` 登记上保留回环地址后，jog 路由才会放行。 */
+async function mountTwinRoutesWithSim(options = {}) {
+  const mounted = await mountTwinRoutes({
+    replies: { connect: SIM_CONNECT_REPLY, ...(options.replies ?? {}) },
+  });
+  const connectTool = mounted.registered.get('ursim_connect');
+  assert.ok(connectTool, 'ursim_connect 必须已注册（用它打开宿主侧的仿真登记）');
+  await connectTool.execute({}, { agent: {} });
+  return mounted;
+}
+
+/** 假响应：收集状态码、响应头与正文（`sendJson` 只会调 writeHead + end）。 */
+function makeResponseCapture() {
+  const state = { status: null, headers: {}, body: '' };
+  return {
+    state,
+    res: {
+      writeHead(code, headers) {
+        state.status = code;
+        Object.assign(state.headers, headers ?? {});
+      },
+      setHeader(name, value) { state.headers[name] = value; },
+      end(chunk) { state.body = chunk === undefined || chunk === null ? '' : String(chunk); },
+    },
+  };
+}
+
+/**
+ * 用浏览器同源写请求的形状驱动 jog 路由。
+ *
+ * 请求体必须在 handler 挂上 `data` / `end` 监听**之后**再发（`setImmediate`）——
+ * `readJsonBody` 是事件驱动的，同步 emit 会丢事件。
+ */
+async function callJogRoute(route, { method = 'POST', headers = trustedHeaders(), body, rawBody } = {}) {
+  const req = new EventEmitter();
+  req.method = method;
+  req.url = TWIN_JOG_PATH;
+  req.headers = headers;
+  const { state, res } = makeResponseCapture();
+  const done = route.handler(req, res);
+  setImmediate(() => {
+    if (rawBody !== undefined) req.emit('data', Buffer.from(rawBody, 'utf8'));
+    else if (body !== undefined) req.emit('data', Buffer.from(JSON.stringify(body), 'utf8'));
+    req.emit('end');
+  });
+  await done;
+  return state;
+}
+
+test('★ jog 路由（路由级）：非 POST（GET）→ 405，且 allow 头必须是 POST', async () => {
+  const { routes } = await mountTwinRoutes();
+  const route = routes.get(TWIN_JOG_PATH);
+  assert.ok(route, `POST ${TWIN_JOG_PATH} 必须被挂载`);
+
+  const got = await callJogRoute(route, { method: 'GET' });
+  assert.equal(got.status, 405);
+  assert.equal(got.headers.allow, 'POST', '405 必须告诉调用方这条路由只收 POST');
+});
+
+test('★ jog 路由（路由级）：信任栅栏失败（缺 Origin / 非 JSON）一律 403', async () => {
+  const { routes } = await mountTwinRoutesWithSim();
+  const route = routes.get(TWIN_JOG_PATH);
+
+  // 没带 Origin：只有非浏览器客户端（或伪造）才会这样，写路由一律拒绝。
+  const noOrigin = await callJogRoute(route, {
+    headers: trustedHeaders({ origin: '' }),
+    body: { mode: 'home' },
+  });
+  assert.equal(noOrigin.status, 403, '没有 Origin ⇒ 写请求必须被拒');
+  assert.equal(noOrigin.body, 'forbidden');
+
+  // content-type 不是 JSON：同样过不了 isTrustedWrite。
+  const notJson = await callJogRoute(route, {
+    headers: trustedHeaders({ 'content-type': 'text/plain' }),
+    body: { mode: 'home' },
+  });
+  assert.equal(notJson.status, 403, '非 application/json ⇒ 写请求必须被拒');
+  assert.equal(notJson.body, 'forbidden');
+});
+
+test('★ jog 路由（路由级）：仿真未登记时坏 body 也必须先回 403 SIM_ONLY（守卫顺序）', async () => {
+  // 不 connect ⇒ 宿主 simIps 为空（真机模式 / 未开仿真）。
+  // body 同时是"坏 JSON"与"结构非法"：只要把仿真守卫挪回解析之后，这里就会先变成 400。
+  const { routes } = await mountTwinRoutes();
+  const route = routes.get(TWIN_JOG_PATH);
+
+  const badJson = await callJogRoute(route, { rawBody: '{ 这不是 JSON' });
+  assert.equal(badJson.status, 403, '★ 未开仿真时不得出现看起来"只差参数"的 400');
+  assert.equal(JSON.parse(badJson.body).code, 'SIM_ONLY');
+
+  const badCmd = await callJogRoute(route, { body: { mode: 'nope' } });
+  assert.equal(badCmd.status, 403);
+  assert.equal(
+    JSON.parse(badCmd.body).code,
+    'SIM_ONLY',
+    '★ 即使 body 结构也非法，也必须先回 SIM_ONLY（安全判定先于任何内容判断）',
+  );
+});
+
+test('★ jog 路由（路由级）：坏 JSON → 400 + code BAD_JSON', async () => {
+  const { routes } = await mountTwinRoutesWithSim();
+  const route = routes.get(TWIN_JOG_PATH);
+
+  const got = await callJogRoute(route, { rawBody: '{"mode": "joint", ' });
+  assert.equal(got.status, 400);
+  const body = JSON.parse(got.body);
+  assert.equal(body.code, 'BAD_JSON');
+  assert.equal(body.ok, false);
+});
+
+test('★ jog 路由（路由级）：结构非法（joint 只有 3 个关节）→ 400 + code BAD_COMMAND', async () => {
+  const { routes } = await mountTwinRoutesWithSim();
+  const route = routes.get(TWIN_JOG_PATH);
+
+  const got = await callJogRoute(route, { body: { mode: 'joint', q: [0, 0, 0] } });
+  assert.equal(got.status, 400);
+  const body = JSON.parse(got.body);
+  assert.equal(body.code, 'BAD_COMMAND');
+  assert.equal(body.ok, false);
+});
+
+test('★ jog 路由（路由级）：worker 不可派发 → 503 + code WORKER_UNAVAILABLE', async () => {
+  const mounted = await mountTwinRoutesWithSim();
+  const route = mounted.routes.get(TWIN_JOG_PATH);
+  const worker = mounted.worker();
+  assert.ok(worker, 'connect 期间必须能拿到 worker 实例（stats() 会记下它）');
+
+  // 模拟"仿真已登记、但 worker 已经不可派发"（初始化失败 / 已被 dispose 的部署状态）。
+  worker.call = null;
+
+  const got = await callJogRoute(route, { body: { mode: 'home' } });
+  assert.equal(got.status, 503, '部署状态 → 503，而不是让它抛成未捕获异常变成 500');
+  const body = JSON.parse(got.body);
+  assert.equal(body.code, 'WORKER_UNAVAILABLE');
+  assert.equal(body.ok, false);
+});
+
+test('★ jog 路由（路由级）：成功响应透出 worker 的 message，并回显 speed 的 requested', async () => {
+  const calls = [];
+  const mounted = await mountTwinRoutesWithSim({
+    replies: {
+      set_speed_scaling: (params) => {
+        calls.push(params);
+        return { message: '速度倍率已设为 1%', data: { fraction: 0.01 } };
+      },
+    },
+  });
+  const route = mounted.routes.get(TWIN_JOG_PATH);
+
+  const got = await callJogRoute(route, { body: { mode: 'speed', fraction: 0.001 } });
+  assert.equal(got.status, 200);
+  const body = JSON.parse(got.body);
+  assert.equal(body.ok, true);
+  assert.equal(
+    body.message,
+    '速度倍率已设为 1%',
+    '★ worker 的 message 必须原样回给面板（只回 data 的话面板说不出控制器怎么回应）',
+  );
+  assert.equal(body.fraction, 0.01, '派发的是钳位后的实际值');
+  assert.equal(
+    body.requested,
+    0.001,
+    '★ 客户端原始倍率必须回显：面板要能显示「拖到 0.5%，实际 1%」',
+  );
+  assert.deepEqual(
+    calls,
+    [{ ip: '127.0.0.1', fraction: 0.01 }],
+    '派发给 worker 的必须是钳位后的值',
+  );
 });
