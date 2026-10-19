@@ -1927,6 +1927,41 @@ def _rotvec_to_matrix(rotvec):
     return np.eye(3) + math.sin(theta) * skew + (1.0 - math.cos(theta)) * (skew @ skew)
 
 
+def _matrix_to_rotvec(m):
+    """3×3 旋转矩阵 → UR 的 TCP 姿态 (rx,ry,rz)（轴角：方向为旋转轴、模长为旋转角，弧度）。
+
+    与 `_rotvec_to_matrix` 互逆。三档处理：
+      · θ≈0：方向没有定义（任何轴都行）⇒ 返回零向量，这是唯一稳定的答案；
+      · θ≈π：**反对称部分退化**（R−Rᵀ 正比于 sinθ → 0，轴被舍入噪声淹没）⇒ 改由
+        `R = 2kkᵀ − I` 定轴：取对角最大的一维定正号，其余维用 `R_ij = 2k_i·k_j` 解出
+        （与 `ur_sim.axis_angle_from_matrix` 同一思路，只是这里吃的是 numpy 行主序 3×3）；
+      · 一般情形：`(R − Rᵀ)/2 = sinθ·[k]×` ⇒ 直接从反对称部分读出轴 k。
+    """
+    m = np.asarray(m, dtype=float)
+    cos_theta = (float(np.trace(m)) - 1.0) / 2.0
+    # 浮点误差会让 cos 略超 [-1,1]，acos 会得到 nan
+    theta = math.acos(max(-1.0, min(1.0, cos_theta)))
+    if theta < 1e-9:
+        return [0.0, 0.0, 0.0]
+    if math.pi - theta < 1e-6:
+        # θ≈π：sinθ→0，反对称部分只剩舍入噪声 —— 按 R = 2kkᵀ − I 的关系取对角最大分量定轴。
+        diag = [float(m[0, 0]), float(m[1, 1]), float(m[2, 2])]
+        i = max(range(3), key=lambda j: diag[j])
+        axis = [0.0, 0.0, 0.0]
+        axis[i] = math.sqrt(max(0.0, (diag[i] + 1.0) / 2.0))
+        if axis[i] < 1e-8:
+            return [0.0, 0.0, 0.0]
+        for j in range(3):
+            if j != i:
+                axis[j] = float(m[i, j]) / (2.0 * axis[i])
+        norm = math.sqrt(sum(x * x for x in axis)) or 1.0
+        return [axis[j] / norm * theta for j in range(3)]
+    scale = theta / (2.0 * math.sin(theta))
+    return [scale * float(m[2, 1] - m[1, 2]),
+            scale * float(m[0, 2] - m[2, 0]),
+            scale * float(m[1, 0] - m[0, 1])]
+
+
 def _tool_axis_move(p, axis):
     """沿**工具坐标系**的某条轴做直线移动（axis: 0=x, 1=y, 2=z）。
 
@@ -1971,6 +2006,84 @@ def op_move_tool_y(p):
 
 def op_move_tool_z(p):
     return _tool_axis_move(p, 2)
+
+
+# jog_rotate 的轴名 → TCP 姿态向量的分量下标（面板方向盘发的是 rx/ry/rz）
+_JOG_ROTATE_AXES = {"rx": 0, "ry": 1, "rz": 2}
+
+
+def _jog_rotate_args(p):
+    """解析 `jog_rotate` 的参数 → `(轴下标, 轴名, delta_rad, frame)`；不合法一律 ValueError（⇒ BADARG）。
+
+    `axis` **只认 rx/ry/rz**：面板方向盘的三个旋转轴与 TCP 姿态向量 (rx,ry,rz) 的分量名一一对应。
+    刻意不接受 x/y/z —— 那三个名字在别的工具里表示**平移**（move_x 系列），同名的平移/旋转混用
+    会让调用方以为自己在"沿轴移动"，而实际是在"绕轴旋转"。
+    """
+    raw_axis = p.get("axis")
+    axis_name = str(raw_axis).strip().lower() if raw_axis is not None else ""
+    if axis_name not in _JOG_ROTATE_AXES:
+        raise ValueError("jog_rotate 的 axis 必须是 rx、ry 或 rz，收到 %r" % (raw_axis,))
+    raw_delta = p.get("delta_rad")
+    try:
+        delta_rad = float(raw_delta)
+    except (TypeError, ValueError):
+        raise ValueError("jog_rotate 的 delta_rad 必须是数值，收到 %r" % (raw_delta,))
+    if not math.isfinite(delta_rad):
+        raise ValueError("jog_rotate 的 delta_rad 必须是有穷数值，收到 %s" % delta_rad)
+    if delta_rad == 0.0:
+        raise ValueError("jog_rotate 的 delta_rad 不能为 0（增量旋转必须真的转一点）")
+    raw_frame = p.get("frame", "tool")
+    frame = str(raw_frame).strip().lower() if raw_frame is not None else ""
+    if frame not in ("tool", "base"):
+        raise ValueError("jog_rotate 的 frame 必须是 'tool' 或 'base'，收到 %r" % (raw_frame,))
+    return _JOG_ROTATE_AXES[axis_name], axis_name, delta_rad, frame
+
+
+def _jog_rotate_target(pose, axis, delta_rad, frame):
+    """`jog_rotate` 的目标位姿 —— **真机与仿真共用这一份几何**（同一份数学 ⇒ 同一个结果）。
+
+    · `frame='tool'`：轴是**工具自己的**轴 ⇒ 右乘 `R_target = R_current · R_axis(δ)`。
+      左乘会绕基座轴转（"看起来也在转"，但转的不是工具自己那根轴）；
+    · `frame='base'`：轴就是基座轴 ⇒ 姿态轴角在同一个分量上累加（`target[3+axis] += δ`）。
+
+    TCP 位置**原样保留**：绕一条过 TCP 的轴旋转不该把位置带走。
+    """
+    target = [float(x) for x in pose]
+    if frame == "tool":
+        delta = [0.0, 0.0, 0.0]
+        delta[axis] = delta_rad
+        rot = _matrix_to_rotvec(_rotvec_to_matrix(pose[3:6]).dot(_rotvec_to_matrix(delta)))
+        target[3], target[4], target[5] = float(rot[0]), float(rot[1]), float(rot[2])
+    else:
+        target[3 + axis] = target[3 + axis] + delta_rad
+    return target
+
+
+def op_jog_rotate(p):
+    """绕指定轴**增量**旋转 TCP（面板「TCP 方向」方向盘的 rotate 模式）。
+
+    `frame='tool'` 绕工具自身轴、`frame='base'` 绕基座轴；`delta_rad` 为非零有限弧度。
+    目标位姿与当前位姿一起放进 `data.jog_rotate` 返回，便于核对（位置必须不变）。
+    """
+    ip = str(p["ip"])
+    axis, axis_name, delta_rad, frame = _jog_rotate_args(p)
+    what = "绕%s %s 轴旋转 %.4f rad" % ("工具系" if frame == "tool" else "基座系",
+                                       axis_name, delta_rad)
+    robot, _ = ensure_connected(ip)
+    _assert_remote_control(ip, what)
+    pose = [float(x) for x in robot.get_actual_tcp_pose()]
+    if len(pose) != 6:
+        return err("读取当前 TCP 位姿异常（期望 6 维，收到 %d 维），无法%s" % (len(pose), what))
+    target = _jog_rotate_target(pose, axis, delta_rad, frame)
+    robot.movel(target, wait=False)
+    ok_flag, msg = _movel_confirm(ip, target, _budget_ms(p))
+    cmd = "movel(p[%.4f,%.4f,%.4f,%.4f,%.4f,%.4f],0.5,0.25,0,0)" % tuple(target)
+    data = {"ok": ok_flag, "command": cmd, "ip": ip,
+            "jog_rotate": {"axis": axis_name, "delta_rad": delta_rad, "frame": frame,
+                           "from_pose": pose, "target_pose": target}}
+    if not ok_flag:
+        return _motion_failure(what, msg, data)
+    return ok({"message": "命令 %s 已发送（%s），%s" % (cmd, what, msg), "data": data})
 
 
 def _circle_waypoints(center, r, coordinate):
@@ -4247,6 +4360,22 @@ def _sim_tool_axis_move(sim, p, axis):
                             "base_delta": [float(x) for x in delta_base]})
 
 
+def _sim_jog_rotate(sim, p):
+    """仿真侧的增量旋转：与真机共用 `_jog_rotate_target`（同一份几何 ⇒ 同一个目标位姿）。
+
+    运动参数照工具系平移那条（movel 的 a=0.5 / v=0.25），位置必须保持不变。
+    """
+    axis, axis_name, delta_rad, frame = _jog_rotate_args(p)
+    pose = _sim_pose(sim)
+    target = _jog_rotate_target(pose, axis, delta_rad, frame)
+    what = "绕%s %s 轴旋转 %.4f rad" % ("工具系" if frame == "tool" else "基座系",
+                                       axis_name, delta_rad)
+    sim.move_cartesian([target], 0.25, 0.5)
+    return _sim_move_reply(sim, p, what, target, {
+        "jog_rotate": {"axis": axis_name, "delta_rad": delta_rad, "frame": frame,
+                       "from_pose": pose, "target_pose": target}})
+
+
 def _sim_draw_circle(sim, p):
     """圆：走**与真机那条 URScript 同一个圆**（4 个共圆途经点 ⇒ 解析圆参数）。"""
     ur = _sim_module()
@@ -4740,6 +4869,8 @@ SIM_OPS = {
     "move_tool_x": lambda sim, p: _sim_tool_axis_move(sim, p, 0),
     "move_tool_y": lambda sim, p: _sim_tool_axis_move(sim, p, 1),
     "move_tool_z": lambda sim, p: _sim_tool_axis_move(sim, p, 2),
+    # 面板方向盘的 rotate 模式：绕轴增量旋转（与真机同一份几何）。
+    "jog_rotate": _sim_jog_rotate,
     "draw_circle": _sim_draw_circle,
     "draw_square": _sim_draw_square,
     "draw_rectangle": _sim_draw_rectangle,
@@ -4921,6 +5052,8 @@ HANDLERS = {
     "move_tool_x": op_move_tool_x,
     "move_tool_y": op_move_tool_y,
     "move_tool_z": op_move_tool_z,
+    # 面板方向盘的 rotate 模式：绕指定轴增量旋转 TCP（frame=tool/base）
+    "jog_rotate": op_jog_rotate,
     "draw_circle": op_draw_circle,
     "draw_square": op_draw_square,
     "draw_rectangle": op_draw_rectangle,
