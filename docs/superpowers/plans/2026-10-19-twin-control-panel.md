@@ -490,7 +490,7 @@ Expected: FAIL —— `SIM_UNSUPPORTED` 或 op 不存在
 
 ```python
 def op_set_speed_scaling(p):
-    """设置速度倍率（真机走 `set_speed_slider`，并回读 `target_speed_fraction` 校验）。"""
+    """设置速度倍率（真机走 `set_speed_slider`，并读回**实测**倍率 `SpeedScaling()`；`TargetSpeedFraction()` 未实现，拿不到请求值 —— 静止读 0 属正常，不构成「已生效」证据）。"""
     ip = _str(p, "ip")
     requested = _num(p, "fraction", None)
     if requested is None or not math.isfinite(requested):
@@ -570,7 +570,7 @@ git commit -m "feat(sim): 新增 set_speed_scaling（运行中调速，不重建
       op: 'set_speed_scaling',
       toolName: 'ursim_set_speed_scaling',
       description:
-        '设置速度倍率（0.01–1.0，即 1%–100%）。仿真侧**原地修改**运行中实例、不重建；真机侧走速度滑块并回读 target_speed_fraction。面板滑块自己的范围是 10%–100%，这一条与面板无关。⚠️ 影响此后所有运动的速度。',
+        '设置速度倍率（0.01–1.0，即 1%–100%）。仿真侧**原地修改**运行中实例、不重建；真机侧发 `set_speed_slider` 并读回**实测**值（`TargetSpeedFraction()` 未实现，只能读实测；静止读 0 属正常）。面板滑块自己的范围是 10%–100%，这一条与面板无关。⚠️ 影响此后所有运动的速度。',
       parameters: {
         ip: IP(),
         fraction: { type: 'number', description: '速度倍率 0.01–1.0（越界会被钳到该区间）' },

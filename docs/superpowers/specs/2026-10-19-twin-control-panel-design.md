@@ -95,7 +95,7 @@
 |---|---|
 | 新写路由 | `POST /nonead-ursim/twin/jog`，复用 `isTrustedWrite` 信任栅栏；body：`{mode:'cartesian'\|'rotate'\|'joint'\|'pose'\|'home'\|'speed', ...}` |
 | 新 op ① | `jog_rotate` → 工具 `ursim_jog_rotate`：`{axis:'rx'\|'ry'\|'rz', delta_rad, frame:'tool'\|'base'}` → 当前 TCP 位姿 × 小旋转 → `movel`。**两个坐标系都走严格旋转合成，只差乘法顺序**：`frame=tool` 右乘 `R_target = R_current·R_axis(δ)`（轴是工具自己的），`frame=base` 左乘 `R_target = R_axis(δ)·R_current`（轴是基座轴，rx/ry/rz ↔ 基座 x/y/z）；**base 系不得用「轴角同轴累加」**（只在轴对齐时成立，反复点动会累积漂移）。真机与仿真共用同一个目标位姿函数 |
-| 新 op ② | `set_speed_scaling` → 工具 `ursim_set_speed_scaling`：`{fraction:0.01..1.0}`；仿真侧直接改 `VirtualRobot.speed_scaling`（**不重建**），真机侧走 `set_speed_slider` + 回读校验 |
+| 新 op ② | `set_speed_scaling` → 工具 `ursim_set_speed_scaling`：`{fraction:0.01..1.0}`；仿真侧直接改 `VirtualRobot.speed_scaling`（**不重建**），真机侧发 `set_speed_slider` 并读回**实测**倍率 `SpeedScaling()`（`TargetSpeedFraction()` 在 URBasic 里是 `NotImplementedError`，**拿不到请求值**；静止时实测读 0 属正常，不构成「设置失败」的证据） |
 | 复用 op | `move_x/y/z`、`move_tool_x/y/z`（cartesian）、`movej`（joint）、`movel`（pose）、`movej`（home） |
 | 审批 | 两个新 op 都加入 `APPROVAL_OPS`；仿真豁免逻辑不变 |
 | 门禁 | 工具面 87 → **89**（op 88 → **90**）：更新 `docs/tool-schemas.golden.json`、两份 README 的工具表与总数、中英 `check-doc-tools` 计数，`check-worker-ops` / `check-tool-params` / `check-new-ops` / `check-approval-gate` / `tool-matrix` 全部继续通过 |
