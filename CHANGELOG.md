@@ -8,6 +8,27 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.3.0] - 2026-10-19
+
+The release that turns the simulation panel from “read-only” into “controllable”: left-rail jogging, right-rail pose and joints, plus the write route and the two tools behind them. Every control applies **only to the offline simulation**; real-robot control still goes exclusively through the approval-gated tools.
+
+### Added
+
+- **Live controls in the panel.** The left rail offers TCP position/orientation jogging (one step per click), steps of 1/5/10 mm and 1/2/5°, homing, and a speed-scaling control from 10% to 100%; the right rail offers numeric TCP pose inputs and six joint sliders. Dragging a slider runs forward kinematics **locally** for the preview and sends nothing until release — otherwise one drag would become dozens of motion commands, smooth in simulation but dozens of start/stops on a real arm.
+- **Host write route `POST /nonead-ursim/twin/jog`** carrying six modes (`axis` translation, `rotate` incremental rotation about an axis, `pose` absolute pose, `joint` joint targets, `home`, `speed`). It shares the trust fence with the existing write route, and the **simulation guard is decided by the host itself** (`isOfflineSimTarget`), never by any client-supplied field: a non-simulation target always gets 403 `SIM_ONLY`. The guard deliberately runs **before** body parsing — on a real-robot deployment a malformed body answered with 400 would read as “wrong parameters, fix and retry” instead of “this channel does not write here”.
+- **`ursim_jog_rotate`** rotates the TCP incrementally about rx/ry/rz, with a finite non-zero `delta_rad` and `frame` of `tool` (default) or `base`. The real and simulated paths share one geometry implementation; the base frame composes rotations strictly by left-multiplication — repeated jogs accumulate, so approximating with angle addition drifts by degrees after a few clicks.
+- **`ursim_set_speed_scaling`** takes a fraction of 0.01–1.0 (the panel additionally clamps to 10%–100%). The simulation changes controller state **in place** without rebuilding the instance, so changing speed mid-run does not snap the arm back to its initial pose; the real path sends `set_speed_slider` and reads the applied value back. A reading of 0 while the robot is stationary is normal and does not mean the setting failed.
+
+### Fixed
+
+- **`_matrix_to_rotvec`'s general branch amplified error near π.** The old `θ/(2 sinθ)` form drives its denominator to zero as θ→π, inflating orientation error to the 1e-4 range (worse the larger the jog); it is now “normalize the antisymmetric vector, multiply by θ”, so the same inputs no longer depend on the denominator's numerical health.
+- **Large pure-rotation increments in the simulation failed spuriously.** A rotation beyond 0.5 rad hit `MAX_IK_STEP_RAD` point by point and was reported `SIM_UNREACHABLE` — a reachable target rejected by the continuity gate. Pure rotations are now split into ≤0.4 rad segments: the gate still enforces “every step is small” rather than “the whole move must be small”.
+
+### Changed
+
+- Tool surface 87 → **89**, ops 88 → **90**, approval-gated ops 48 → **50**: both new ops can move the arm (`jog_rotate` also rewrites the reference orientation of every later motion), so both are in `APPROVAL_OPS`.
+- The “offline simulation” dropdown is renamed **starting speed scaling**: it only applies when the simulation is **created** and rebuilds the instance, which is not the same thing as the live speed-scaling control on the left rail — sharing the name made users expect it to re-speed the running robot.
+
 ## [0.2.5] - 2026-10-19
 
 A declaration-only release: runtime behaviour is unchanged from 0.2.4, but the package now declares
