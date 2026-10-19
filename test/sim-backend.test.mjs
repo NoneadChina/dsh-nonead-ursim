@@ -307,9 +307,12 @@ out["caps_motion"] = ur_worker.sim_capabilities()["motion"]
 
 # ── 5d. jog_rotate：绕指定轴**增量**旋转 TCP（面板方向盘的 rotate 模式）─────────
 #
-# 关键不变量是"只改姿态、不改位置"：绕一条过 TCP 的轴旋转，位置一动就说明轴系或乘法搞错了
-# （工具系必须右乘，左乘会绕基座轴转）。比对用 get_target_values —— 它给的是 target_q 的
-# 正解，运动走完后就是实际位姿，且是**位姿**读数（不是只有关节角）。
+# 关键不变量是"只改姿态、不改位置"：本 op 是**绕 TCP 的姿态重定向**（不搬位置），位置一动就
+# 说明轴系或乘法搞错了（工具系必须右乘、基座系必须左乘）。比对用 get_target_values —— 它给的是
+# target_q 的正解，运动走完后就是实际位姿，且是**位姿**读数（不是只有关节角）。
+#
+# 姿态一律走**矩阵**：(rx,ry,rz) 是轴角，同一姿态有等价表示（轴取反、角 2π−θ），本用例执行到
+# 这一步时 |rotvec| 就在 π 附近 —— 逐分量比较会得出"转错了"的假象。
 def target_pose():
     return ur_worker.route_op("get_target_values", {"ip": IP})["data"]["target_tcp_pose"]
 
@@ -324,17 +327,28 @@ def jog_effect(axis, delta_rad, frame):
     data = reply.get("data") or {}
     info = data.get("jog_rotate") or {}
     from_pose, target = info.get("from_pose"), info.get("target_pose")
+    delta_vec = [0.0, 0.0, 0.0]
+    delta_vec[ur_worker._JOG_ROTATE_AXES[axis]] = delta_rad
+    composed = None
+    if target:
+        r_from = ur_worker._rotvec_to_matrix(from_pose[3:6])
+        r_delta = ur_worker._rotvec_to_matrix(delta_vec)
+        r_target = ur_worker._rotvec_to_matrix(target[3:6])
+        # 工具系右乘 R_from·R_δ、基座系左乘 R_δ·R_from —— 用**矩阵等价**判合成对不对，
+        # 绝不逐分量比 δ（严格合成下三个分量会一起变）。
+        composed = (r_from.dot(r_delta) if frame == "tool" else r_delta.dot(r_from))
     return {"code": reply.get("code"), "ok": data.get("ok"),
             "d_pos": max(abs(after[i] - before[i]) for i in range(3)),
-            "d_rot": [after[i] - before[i] for i in range(3, 6)],
-            # 位姿比较**不能逐分量**：轴角在 |v|=π 附近有等价的另一种表示（轴取反、角取 2π−θ）。
-            # 本用例执行到这一步时的旋转向量模长恰好就在 π 附近 —— 累加 0.05 会跨过这个球边界，
-            # 读回的 rx/ry/rz 变成等价表示，逐分量相减会得到 −3.7 rad 这种"看起来转错了"的假象。
-            # 用旋转夹角比姿态、用回包里 target−from 的增量比"步长"。
+            # from→target 的旋转夹角必须恰好是 |δ|：合成后的**相对**旋转就是 R_axis(δ)
+            # （工具系的 R_from·R_δ·R_fromᵀ 是它的共轭，夹角不变）。from→after 是"真的转到了"。
+            "angle_target": (ur_worker._rotation_angle_between(from_pose[3:6], target[3:6])
+                             if target else None),
+            "angle_after": (ur_worker._rotation_angle_between(from_pose[3:6], after[3:6])
+                            if target else None),
+            "matrix_err": (float(max(abs(float(x)) for x in (composed - r_target).flatten()))
+                           if target else None),
             "target_err": (ur_worker._rotation_angle_between(target[3:6], after[3:6])
                            if target else None),
-            "rot_step": ([target[3 + i] - from_pose[3 + i] for i in range(3)]
-                         if target else None),
             "jog": info}
 
 out["jog_rotate_tool"] = jog_effect("rz", 0.1, "tool")
@@ -575,11 +589,16 @@ test('关闭仿真：幂等且随即退出仿真路径（之后走真机路径�
 
 // ── jog_rotate：绕轴增量旋转（面板方向盘的 rotate 模式）────────────────────────
 //
-// 语义：`frame='tool'` 绕**工具自身**轴（右乘 R_target = R_current · R_axis(δ)）、
-// `frame='base'` 绕**基座**轴（姿态轴角在同一分量上累加）。
-// 绕一条过 TCP 的轴旋转，**位置必须不动** —— 一动就说明轴系或乘法搞错了（左乘会绕基座轴转）。
+// 语义：**严格旋转合成**，两个坐标系同一套数学、只差乘法顺序：
+//   · `frame='tool'` 绕**工具自身**轴 ⇒ 右乘 `R_target = R_current · R_δ`；
+//   · `frame='base'` 绕**基座**轴   ⇒ 左乘 `R_target = R_δ · R_current`（δ 的 rx/ry/rz
+//     分别对应基座 x/y/z 轴）。
+// 本 op 是**绕 TCP 的姿态重定向**：只改姿态、不搬位置（若真绕基座原点转，位置会动；这里刻意
+// 不搬 —— 面板点动方向盘要的是"原地改朝向"）。因此位置必须保持不变。
+// 姿态一律用**矩阵等价**判定：严格合成下 rx/ry/rz 三个分量会一起变，且 |rotvec| 在 π 附近时
+// 轴角有等价表示，逐分量比较既会误报也会漏报。
 
-test('★ jog_rotate：绕工具 Z 轴增量旋转只改姿态、TCP 位置不变', () => {
+test('★ jog_rotate：绕工具 Z 轴 = R_from·R_δ（右乘），且 TCP 位置不变', () => {
   const r = out.jog_rotate_tool
   assert.ok(!r.code, `jog_rotate(frame=tool) 不该报错：${r.code}`)
   assert.equal(r.ok, true)
@@ -588,27 +607,29 @@ test('★ jog_rotate：绕工具 Z 轴增量旋转只改姿态、TCP 位置不�
   assert.ok(Math.abs(r.jog.delta_rad - 0.1) < 1e-12, `delta_rad 必须原样回报，实测 ${r.jog.delta_rad}`)
   assert.equal(r.jog.from_pose.length, 6)
   assert.equal(r.jog.target_pose.length, 6)
-  assert.ok(r.d_pos < 1e-6, `绕工具 Z 轴旋转后 TCP 位置必须不变，实测位移 ${r.d_pos}`)
+  assert.ok(r.d_pos < 1e-6, `绕工具系轴改姿态后 TCP 位置必须不变，实测位移 ${r.d_pos}`)
+  assert.ok(r.matrix_err < 1e-6,
+    `工具系必须右乘 R_from·R_δ ≈ R_target，实测矩阵最大偏差 ${r.matrix_err}`)
+  assert.ok(Math.abs(r.angle_target - 0.1) < 1e-9,
+    `from→target 的旋转夹角必须恰好是 δ=0.1，实测 ${r.angle_target}`)
   assert.ok(r.target_err < 1e-3, `运动必须到达 jog_rotate 回报的目标姿态，夹角 ${r.target_err}`)
-  const drot = Math.max(...r.d_rot.map(Math.abs))
-  assert.ok(drot > 1e-3, `姿态必须真的改变（实测最大分量变化 ${drot}）`)
+  assert.ok(Math.abs(r.angle_after - 0.1) < 1e-3,
+    `实际姿态相对起点必须真的转了 0.1 rad，实测 ${r.angle_after}`)
 })
 
-test('★ jog_rotate：绕基座 X 轴增量旋转，且非法轴必须 BADARG', () => {
+test('★ jog_rotate：绕基座 X 轴 = R_δ·R_from（左乘），且非法轴必须 BADARG', () => {
   const r = out.jog_rotate_base
   assert.ok(!r.code, `jog_rotate(frame=base) 不该报错：${r.code}`)
   assert.equal(r.ok, true)
   assert.equal(r.jog.frame, 'base')
-  assert.ok(r.d_pos < 1e-6, `绕基座 X 轴旋转后 TCP 位置必须不变，实测位移 ${r.d_pos}`)
+  assert.ok(r.d_pos < 1e-6, `绕基座系轴改姿态后 TCP 位置必须不变，实测位移 ${r.d_pos}`)
+  assert.ok(r.matrix_err < 1e-6,
+    `基座系必须左乘 R_δ·R_from ≈ R_target，实测矩阵最大偏差 ${r.matrix_err}`)
+  assert.ok(Math.abs(r.angle_target - 0.05) < 1e-9,
+    `from→target 的旋转夹角必须恰好是 δ=0.05，实测 ${r.angle_target}`)
   assert.ok(r.target_err < 1e-3, `运动必须到达 jog_rotate 回报的目标姿态，夹角 ${r.target_err}`)
-  // 基座系：轴就是基座轴 ⇒ 目标位姿的姿态轴角在 rx 上累加 0.05，另外两维不动。
-  // ⚠️ 这里比的是回包里**目标 − 当前**的增量，而不是读回值的逐分量差：本用例执行到这一步时
-  //    旋转向量模长就在 π 附近，累加 0.05 会跨过 π 球边界，读回的 rx/ry/rz 是**等价表示**
-  //    （轴取反、角取 2π−θ），逐分量相减会得到 −3.7 rad 这种"看起来转错了"的假象。
-  assert.ok(Math.abs(r.rot_step[0] - 0.05) < 1e-12,
-    `基座 rx 必须累加 0.05，实测 ${r.rot_step[0]}`)
-  assert.equal(r.rot_step[1], 0, `绕基座 X 轴旋转不该改动 ry，实测增量 ${r.rot_step[1]}`)
-  assert.equal(r.rot_step[2], 0, `绕基座 X 轴旋转不该改动 rz，实测增量 ${r.rot_step[2]}`)
+  assert.ok(Math.abs(r.angle_after - 0.05) < 1e-3,
+    `实际姿态相对起点必须真的转了 0.05 rad，实测 ${r.angle_after}`)
   assert.equal(out.jog_rotate_bad_axis, 'BADARG', '未知轴必须当场拒绝（不能"尽力而为"地挑一条轴）')
 })
 

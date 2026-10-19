@@ -2042,20 +2042,28 @@ def _jog_rotate_args(p):
 def _jog_rotate_target(pose, axis, delta_rad, frame):
     """`jog_rotate` 的目标位姿 —— **真机与仿真共用这一份几何**（同一份数学 ⇒ 同一个结果）。
 
+    两个坐标系走**同一套严格旋转合成**，只差乘法顺序：
+
     · `frame='tool'`：轴是**工具自己的**轴 ⇒ 右乘 `R_target = R_current · R_axis(δ)`。
       左乘会绕基座轴转（"看起来也在转"，但转的不是工具自己那根轴）；
-    · `frame='base'`：轴就是基座轴 ⇒ 姿态轴角在同一个分量上累加（`target[3+axis] += δ`）。
+    · `frame='base'`：轴是**基座**轴 ⇒ 左乘 `R_target = R_axis(δ) · R_current`。
+      `axis` 的 rx/ry/rz 分别对应基座 x/y/z 轴，即 `delta = [δ,0,0] / [0,δ,0] / [0,0,δ]`。
 
-    TCP 位置**原样保留**：绕一条过 TCP 的轴旋转不该把位置带走。
+    ⚠️ base 系**不能**写成"姿态轴角在同一分量上累加"（`target[3+axis] += δ`）：那只在当前
+    旋转向量恰好与该基座轴对齐时才等价于 `R_axis(δ) · R_current`，一般情形会漏掉 BCH
+    交叉项（量级约 δ·|rotvec|），反复点动会累积漂移。两个坐标系都必须走矩阵合成。
+
+    TCP 位置**原样保留**：这里只做**绕 TCP 自身**的姿态重定向（轴方向按所选坐标系取），
+    不是绕基座原点的刚体旋转 —— 面板点动方向盘要的是"原地改朝向"，位置不动。
     """
     target = [float(x) for x in pose]
+    delta = [0.0, 0.0, 0.0]
+    delta[axis] = delta_rad
     if frame == "tool":
-        delta = [0.0, 0.0, 0.0]
-        delta[axis] = delta_rad
         rot = _matrix_to_rotvec(_rotvec_to_matrix(pose[3:6]).dot(_rotvec_to_matrix(delta)))
-        target[3], target[4], target[5] = float(rot[0]), float(rot[1]), float(rot[2])
     else:
-        target[3 + axis] = target[3 + axis] + delta_rad
+        rot = _matrix_to_rotvec(_rotvec_to_matrix(delta).dot(_rotvec_to_matrix(pose[3:6])))
+    target[3], target[4], target[5] = float(rot[0]), float(rot[1]), float(rot[2])
     return target
 
 
