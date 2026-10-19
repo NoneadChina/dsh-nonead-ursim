@@ -323,7 +323,7 @@
     },
     "speedl": {
       "gated": true,
-      "sim": "unsupported"
+      "sim": "simulated"
     },
     "status": {
       "gated": false,
