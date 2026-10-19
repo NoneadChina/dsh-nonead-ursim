@@ -26,6 +26,7 @@ import {
   createTwinModelsHandler,
   createTwinStreamHandler,
   normalizeModelEntry,
+  parseJogRequest,
   twinStateQuery,
 } from '../lib/twin-routes.js';
 
@@ -1312,3 +1313,41 @@ test('★ P0-2：I/O 某一拍读失败时用上一笔成功读数降级，而�
   assert.equal(second.body.io.digital_out.length, 16, '★ 失败的一拍必须带上上一笔成功读数');
   assert.equal(second.body.io.digital_out[0], true, '缓存里的值必须原样保留');
 });
+
+// ── 面板控制（jog）路由的请求校验 ───────────────────────────────────────────
+
+test('★ jog 路由：只接受 cartesian / rotate / joint / pose / home / speed 六种 mode', () => {
+  const cases = [
+    { mode: 'cartesian', axis: 'x', distance: 0.005, frame: 'tool' },
+    { mode: 'rotate', axis: 'rz', deltaRad: 0.02, frame: 'tool' },
+    { mode: 'joint', q: [0, -1.5, 0, -1.5, -1.5, 0] },
+    { mode: 'pose', pose: [0.1, -0.2, 0.3, 0, 0, 0] },
+    { mode: 'home' },
+    { mode: 'speed', fraction: 0.5 },
+  ]
+  for (const body of cases) {
+    assert.notEqual(parseJogRequest(body), null, `${body.mode} 应被接受`)
+  }
+  for (const body of [null, {}, { mode: 'nope' }, { mode: 'speed', fraction: '0.5' }]) {
+    assert.equal(parseJogRequest(body), null, `${JSON.stringify(body)} 应被拒绝`)
+  }
+})
+
+test('★ jog 路由：speed 模式把倍率钳到 0.01–1.0，并回显原始值', () => {
+  const low = parseJogRequest({ mode: 'speed', fraction: 0.001 })
+  assert.equal(low.fraction, 0.01)
+  assert.equal(low.requested, 0.001)
+  const high = parseJogRequest({ mode: 'speed', fraction: 9 })
+  assert.equal(high.fraction, 1)
+})
+
+test('★ jog 路由：cartesian / rotate 的 frame 只接受 tool / base', () => {
+  assert.equal(parseJogRequest({ mode: 'cartesian', axis: 'x', distance: 0.005, frame: 'moon' }), null)
+  assert.notEqual(parseJogRequest({ mode: 'rotate', axis: 'rx', deltaRad: 0.02, frame: 'base' }), null)
+})
+
+test('★ jog 路由：joint 必须是 6 个有限数，pose 必须是 6 个有限数', () => {
+  assert.equal(parseJogRequest({ mode: 'joint', q: [0, 0, 0] }), null)
+  assert.equal(parseJogRequest({ mode: 'joint', q: [0, 0, 0, 0, 0, NaN] }), null)
+  assert.equal(parseJogRequest({ mode: 'pose', pose: [0, 0, 0, 0, 0] }), null)
+})
