@@ -1,6 +1,6 @@
-# 仿真面板实时控制（点动 + 位姿 + 关节）· 设计
+# 仿真面板实时控制（点动 + 位姿 + 关节 + 速度倍率）· 设计
 
-- 日期：2026-10-19
+- 日期：2026-10-19（2026-10-19 追加「速度倍率」控件）
 - 基线：`dsh-nonead-ursim` **v0.2.5**（`f6b8752`）
 - 状态：待评审（评审通过后进入实施计划）
 
@@ -8,7 +8,7 @@
 
 在现有的**只读** 3D 数字仿真面板里，加一套能在 3D 视图左右两侧实时操控机器人的控件：
 
-- 左侧：TCP 位置点动（X/Y/Z）、TCP 方向点动（RX/RY/RZ）
+- 左侧：TCP 位置点动（X/Y/Z）、TCP 方向点动（RX/RY/RZ）、**速度倍率**
 - 右侧：TCP 位姿数值输入（X/Y/Z mm、RX/RY/RZ rad）+ 六关节滑块与角度输入
 
 参考图只提供**功能清单**，不采用其尺寸；控件尺寸由本文定义。
@@ -18,7 +18,7 @@
 - 不做真机（`motionMode:'real'`）的实时控制 —— 见 §7 安全边界。
 - 不做连续速度点动（`speedl` / `servoj` 流式下发）。仿真侧没有伺服环，浏览器端也不可能维持 100 Hz 命令流。
 - 不做碰撞检测、不做动力学告警（运动学级仿真本身没有这些）。
-- 不改现有工具面的语义，只新增一个 op。
+- 不改现有工具面的语义，只新增两个 op（§8）。
 
 ## 3. 版式与尺寸
 
@@ -38,7 +38,7 @@
 - `grid-template-columns: 128px 1fr 176px`，中列 `min-width: 280px`；两条侧轨各有一个 24 px 收起把手，收起时列宽 24 px，3D 自动占满。
 - 收起状态存 `localStorage`，跨会话保持。
 
-## 4. 左轨（128 px）：点动
+## 4. 左轨（128 px）：点动 + 速度倍率
 
 | 区块 | 布局 | 尺寸 |
 |---|---|---|
@@ -50,9 +50,14 @@
 | `TCP 方向` 标题 | 同位置标题 | 18 |
 | RXY 方向盘 | 3×3 grid（上/左/右/下 = RX±/RY±） | 40×40，gap 4 |
 | RZ | 一行两枚 40×40（RZ+ / RZ−） | 44 |
+| **速度倍率** | 一行：滑块自适应 + 百分比文本 40 | 行高 28 |
 
 - 位置点动的参考系**可切换**（基座系 / 工具系），用一个 28 px 分段控件；默认工具系。
 - 回零按钮使用用户级规则里定义的位姿：`[0, -π/2, 0, -π/2, -π, 0]`（与型号无关的关节角）。
+- **速度倍率（运行中）**：范围 0.01–1.0、默认 100%；拖动只更新本地显示，**松手**才调 `set_speed_scaling` —— 直接改运行中仿真的倍率，**不重建仿真**、不会把机器人推回起始位姿。
+- 面板「离线仿真」区原有的「速度倍率」下拉是**创建时的初始倍率**（改它会按新配置重建仿真）。为避免两个同名控件混淆：新控件标「速度倍率（运行中）」，原下拉文案改为「起始倍率」（中英两份 strings 同步改）。
+
+左轨高度预算：18 + 128 + 44 + 28 + 18 + 128 + 44 + 28 ≈ **436 px**，700 px 可用高度内富余。
 
 ## 5. 右轨（176 px）：精确输入
 
@@ -73,6 +78,7 @@
 4. **同一组只允许 1 条命令在飞**：在途时该组按钮置灰，返回后再解禁；被拒（`WORKER_BUSY`）时提示并保持可用。
 5. 位姿输入回车/失焦下发 `movel`；不可达（`SIM_UNREACHABLE`）→ 输入框标红、回滚为最新帧值。
 6. `connected:false` 或 `simulated:false` → 整块控件禁用，并在控件区顶部显示原因。
+7. 速度倍率**即时生效但不重算已下发的那一段**：仿真在每段运动开始时取用倍率，拖动后要等下一段才看到效果（这一点写进控件 `title`）。
 
 ## 7. 安全边界（本设计的默认取值）
 
@@ -87,11 +93,12 @@
 
 | 项 | 内容 |
 |---|---|
-| 新写路由 | `POST /nonead-ursim/twin/jog`，复用 `isTrustedWrite` 信任栅栏；body：`{mode:'cartesian'\|'rotate'\|'joint'\|'pose'\|'home', ...}` |
-| 新 op | `jog_rotate`：`{axis:'rx'\|'ry'\|'rz', delta_rad, frame:'tool'\|'base'}` → 当前 TCP 位姿 × 小旋转 → `movel`。与现有 `move_tool_*` 用同一套基座/工具换算 |
+| 新写路由 | `POST /nonead-ursim/twin/jog`，复用 `isTrustedWrite` 信任栅栏；body：`{mode:'cartesian'\|'rotate'\|'joint'\|'pose'\|'home'\|'speed', ...}` |
+| 新 op ① | `jog_rotate` → 工具 `ursim_jog_rotate`：`{axis:'rx'\|'ry'\|'rz', delta_rad, frame:'tool'\|'base'}` → 当前 TCP 位姿 × 小旋转 → `movel`。与现有 `move_tool_*` 用同一套基座/工具换算 |
+| 新 op ② | `set_speed_scaling` → 工具 `ursim_set_speed_scaling`：`{fraction:0.01..1.0}`；仿真侧直接改 `VirtualRobot.speed_scaling`（**不重建**），真机侧走 `set_speed_slider` + 回读校验 |
 | 复用 op | `move_x/y/z`、`move_tool_x/y/z`（cartesian）、`movej`（joint）、`movel`（pose）、`movej`（home） |
-| 审批 | `jog_rotate` 加入 `APPROVAL_OPS`；仿真豁免逻辑不变 |
-| 门禁 | 更新 `docs/tool-schemas.golden.json`；`check-worker-ops` / `check-tool-params` / `check-new-ops` 必须继续通过 |
+| 审批 | 两个新 op 都加入 `APPROVAL_OPS`；仿真豁免逻辑不变 |
+| 门禁 | 工具面 87 → **89**（op 88 → **90**）：更新 `docs/tool-schemas.golden.json`、两份 README 的工具表与总数、中英 `check-doc-tools` 计数，`check-worker-ops` / `check-tool-params` / `check-new-ops` / `check-approval-gate` / `tool-matrix` 全部继续通过 |
 
 ## 9. 数据流
 
@@ -99,6 +106,7 @@
 点击/松手 ──POST /twin/jog──▶ 宿主路由（信任栅栏 + 仿真守卫）
                                    │
                                    ├─ 复用 op 直接派发 / jog_rotate 先算目标位姿
+                                   ├─ speed 模式 → set_speed_scaling（改运行中实例）
                                    ▼
                               worker（Python）──▶ 仿真后端
                                    │
@@ -115,25 +123,26 @@
 | `403`（非仿真目标） | 控件组禁用 + 显示原因 |
 | `WORKER_BUSY` | 短暂节流后重试一次；仍失败则提示，本轮点击丢弃 |
 | `SIM_UNREACHABLE` | 输入回滚 + 标红 |
+| 倍率越界（<0.01 / >1.0） | 客户端钳位，服务端二次钳位并回读实际值 |
 | 状态流停滞（>3 s） | 控件置灰并提示「数据通道停滞」，恢复后自动解禁 |
 
 ## 11. 测试计划
 
-- `test/twin-routes.test.mjs`：新路由的信任栅栏、仿真守卫（非仿真 → 403）、body 校验、方法校验。
-- `test/twin-panel.test.mjs`：控件在 `connected/simulated` 变化时的禁用；滑块拖动只预览不下发；松手下发一次；在途置灰；位姿失败回滚。
-- `test/sim-backend.test.mjs`：`jog_rotate` 的几何正确性（绕轴增量旋转后位姿符合期望，误差 < 1e-6）。
-- 门禁：`check-worker-ops`、`check-tool-params`、`check-new-ops`、`tool-matrix`、`check-approval-gate` 全绿；`docs/tool-schemas.golden.json` 更新为 88 个工具。
+- `test/twin-routes.test.mjs`：新路由的信任栅栏、仿真守卫（非仿真 → 403）、body 校验（含 `speed` 模式的越界值）、方法校验。
+- `test/twin-panel.test.mjs`：控件在 `connected/simulated` 变化时的禁用；滑块拖动只预览不下发；松手下发一次；在途置灰；位姿失败回滚；速度滑块松手才发一条。
+- `test/sim-backend.test.mjs`：`jog_rotate` 的几何正确性（绕轴增量旋转后位姿符合期望，误差 < 1e-6）；`set_speed_scaling` 改倍率后**不重建仿真**（位姿与关节不变）、越界值被钳到 0.01–1.0。
+- 门禁：`check-worker-ops`、`check-tool-params`、`check-new-ops`、`tool-matrix`、`check-approval-gate`、`check-doc-tools` 全绿；`docs/tool-schemas.golden.json` 更新为 **89** 个工具。
 
 ## 12. 验收判据
 
-1. `npm run check` exit 0；`npm test` 全绿；`verify:host` 88/88 工具注册成功。
+1. `npm run check` exit 0；`npm test` 全绿；`verify:host` **89/89** 工具注册成功。
 2. 仿真里点「X+」一次，TCP 位移的**模长等于一个步长**（1/5/10 mm），姿态不变（旋转分量变化 < 1e-6）。
 3. 拖关节滑块松手后，机器人转到目标关节角；拖动过程中 3D 有预览但**不发命令**（用 worker 日志/在飞计数验证）。
 4. 点「回零」→ 六关节等于 `[0,-90,0,-90,-180,0]`。
 5. 真机模式（`motionMode:'real'` + 白名单）下控件禁用且宿主路由返回 403。
 6. 面板收起/展开、侧轨收起后 3D 正常重绘（尺寸变化不糊）。
+7. **速度倍率**：把滑块从 100% 拖到 50% 松手后，`ursim_get_speed_scaling` 读回 0.5，且机器人位姿与关节角**完全不变**（证明没有重建仿真）。
 
 ## 13. 未决项
 
 - **安全边界方案**（§7）：默认取方案 1；若要真机也能点动，需另立设计。
-- 是否需要「速度倍率」控件（仿真侧有 `speed_scaling`，可作为后续增强）。
