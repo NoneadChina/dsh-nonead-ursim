@@ -115,15 +115,20 @@ out["joint_limit"] = ur_worker.sim_dispatch("movej", {"ip": IP, "q": [0.0, 0.0, 
 vr = ur_worker.SIMS[IP]
 
 def dispatch(op, params):
-    """像 main() 那样把异常映射成错误码。
+    """像 main() 那样把结果/异常收敛成**协议信封**（成功仍原样返回 handler 的 payload）。
 
     sim_dispatch 只把带 SIM_ 前缀的异常转成错误结果；参数类异常（ValueError ⇒ BADARG）会照常
     抛出 —— main() 在协议层接住它们，探针也必须接住，否则断言 code 就会变成"探针崩了"。
+    失败一律补上 ok: False：main() 的失败信封就是 ok/data/error/code 四件套，探针据此能同时
+    钉住"拒绝"与"不是假装成功"。
     """
     try:
         data = ur_worker.route_op(op, params)
     except Exception as exc:
-        return {"error": str(exc), "code": ur_worker._error_code_for(exc)}
+        return {"error": str(exc), "code": ur_worker._error_code_for(exc), "ok": False}
+    if isinstance(data, dict) and "error" in data:
+        return {"error": data["error"], "code": data.get("code", "HUGE"),
+                "ok": False, "data": data.get("data")}
     return data or {}
 
 def planned_s():
@@ -316,6 +321,30 @@ out["caps_motion"] = ur_worker.sim_capabilities()["motion"]
 def target_pose():
     return ur_worker.route_op("get_target_values", {"ip": IP})["data"]["target_tcp_pose"]
 
+# 轴映射**硬写在测试里**：绝不从被测实现借 _JOG_ROTATE_AXES。借用的话，把被测映射改成
+# {rx:2, ry:1, rz:0}，测试会跟着用错映射，两条用例仍然全绿（实测 matrix_err 2e-14）——
+# 等于自己证自己。rx ⇒ [δ,0,0]、ry ⇒ [0,δ,0]、rz ⇒ [0,0,δ] 是这份契约的一部分。
+JOG_AXES = {"rx": 0, "ry": 1, "rz": 2}
+
+def jog_delta(axis, delta_rad):
+    v = [0.0, 0.0, 0.0]
+    v[JOG_AXES[axis]] = delta_rad
+    return v
+
+def rel_axis_offset(rel, axis):
+    """相对旋转 R_rel 的轴与单位轴 e_axis 的夹角（弧度）—— **测试侧独立**算。
+
+    只取反对称部分 (R−Rᵀ)/2 = sinθ·[k]× 再归一化；**不借用**被测 _matrix_to_rotvec
+    （那个函数有自己的 π 分支，拿它来验轴映射等于让被测实现给自己打分）。
+    方向取绝对值：δ 为负时轴自然是 −e_i，"绕哪条轴"与符号无关。
+    """
+    v = [float(rel[2][1] - rel[1][2]), float(rel[0][2] - rel[2][0]),
+         float(rel[1][0] - rel[0][1])]
+    n = math.sqrt(sum(x * x for x in v))
+    if n < 1e-12:
+        return None  # θ≈0/π：反对称部分退化，轴没有定义
+    return math.acos(min(1.0, abs(v[axis] / n)))
+
 def jog(axis, delta_rad, frame):
     return dispatch("jog_rotate", {"ip": IP, "axis": axis, "delta_rad": delta_rad,
                                    "frame": frame, "_timeout_ms": 60000})
@@ -327,16 +356,20 @@ def jog_effect(axis, delta_rad, frame):
     data = reply.get("data") or {}
     info = data.get("jog_rotate") or {}
     from_pose, target = info.get("from_pose"), info.get("target_pose")
-    delta_vec = [0.0, 0.0, 0.0]
-    delta_vec[ur_worker._JOG_ROTATE_AXES[axis]] = delta_rad
-    composed = None
+    composed, axis_offset = None, None
     if target:
         r_from = ur_worker._rotvec_to_matrix(from_pose[3:6])
-        r_delta = ur_worker._rotvec_to_matrix(delta_vec)
+        r_delta = ur_worker._rotvec_to_matrix(jog_delta(axis, delta_rad))
         r_target = ur_worker._rotvec_to_matrix(target[3:6])
         # 工具系右乘 R_from·R_δ、基座系左乘 R_δ·R_from —— 用**矩阵等价**判合成对不对，
         # 绝不逐分量比 δ（严格合成下三个分量会一起变）。
         composed = (r_from.dot(r_delta) if frame == "tool" else r_delta.dot(r_from))
+        # 独立断言：把"相对旋转"单独拎出来看轴。
+        #   工具系：R_fromᵀ·R_target = R_δ（在**工具系**基下表达）；
+        #   基座系：R_target·R_fromᵀ = R_δ（在**基座系**基下表达）。
+        # 两种情形的旋转轴都必须是所选坐标系的单位轴 e_i —— 轴映射写错时这里必红。
+        rel = r_from.T.dot(r_target) if frame == "tool" else r_target.dot(r_from.T)
+        axis_offset = rel_axis_offset(rel, JOG_AXES[axis])
     return {"code": reply.get("code"), "ok": data.get("ok"),
             "d_pos": max(abs(after[i] - before[i]) for i in range(3)),
             # from→target 的旋转夹角必须恰好是 |δ|：合成后的**相对**旋转就是 R_axis(δ)
@@ -347,17 +380,43 @@ def jog_effect(axis, delta_rad, frame):
                             if target else None),
             "matrix_err": (float(max(abs(float(x)) for x in (composed - r_target).flatten()))
                            if target else None),
+            "axis_offset": axis_offset,
             "target_err": (ur_worker._rotation_angle_between(target[3:6], after[3:6])
                            if target else None),
             "jog": info}
 
 out["jog_rotate_tool"] = jog_effect("rz", 0.1, "tool")
 out["jog_rotate_base"] = jog_effect("rx", 0.05, "base")
-out["jog_rotate_bad_axis"] = jog("nope", 0.1, "tool").get("code")
+# 大增量：δ=0.6 超过 ur_sim.MAX_IK_STEP_RAD（0.5 rad）。仿真对纯旋转只做一次逆解，不拆段
+# 就会被判成"构型分支跳变"并回 SIM_UNREACHABLE，而同样的 movel 真机能执行 —— 拆段后必须
+# 成功，且总旋转角仍≈0.6（每段从上一段的**实际**位姿续算，误差不累加）。
+out["jog_rotate_large"] = jog_effect("rz", 0.6, "tool")
+
+# BADARG 回归：未知轴 / 平移轴名 / 缺 delta / NaN / 0 / 未知 frame —— 一律当场拒绝，
+# 既不"尽力而为"挑一条轴，也不把 0 当成"转了 0 度"当成功返回。
+def jog_bad(params):
+    reply = dispatch("jog_rotate", dict({"ip": IP, "_timeout_ms": 60000}, **params))
+    return {"code": reply.get("code"), "ok": reply.get("ok")}
+
+out["jog_rotate_badargs"] = {
+    "unknown_axis": jog_bad({"axis": "nope", "delta_rad": 0.1, "frame": "tool"}),
+    "translation_axis": jog_bad({"axis": "x", "delta_rad": 0.1, "frame": "tool"}),
+    "missing_delta": jog_bad({"axis": "rz", "frame": "tool"}),
+    "nan_delta": jog_bad({"axis": "rz", "delta_rad": float("nan"), "frame": "tool"}),
+    "zero_delta": jog_bad({"axis": "rz", "delta_rad": 0.0, "frame": "tool"}),
+    "world_frame": jog_bad({"axis": "rz", "delta_rad": 0.1, "frame": "world"}),
+}
 
 # _matrix_to_rotvec 是 _rotvec_to_matrix 的逆。θ≈π 时反对称部分退化（sinθ→0），是整个转换里
 # 唯一需要单独定轴的分支 —— 必须用往返把它钉死，否则"看起来能转"的实现在 π 附近会翻向。
 # 先探测函数是否存在：缺它时探针仍要出结果，好让断言说清是"没实现"而不是"探针崩了"。
+#
+# 用例的取舍：
+#   · pi_mixed：轴分量**带负号**（[-0.6, 0.8, 0]·π）。π 分支靠 m[i,j] 的**符号**解出其余维，
+#     只取对角/只取绝对值、丢掉交叉项的假实现会在这一条翻向（全正的三条反而是它的舒适区）。
+#   · band / band_tilted：π−θ 落在 (1e-6, 4e-6) —— 旧的 scale = θ/(2 sinθ) 在这个窄带里把
+#     acos 的绝对误差放大 1/sinθ，往返矩阵误差到 1.7e-4（超出本用例自称的 1e-6）。改法：
+#     反对称向量归一化后乘 θ，不再除以 sinθ。
 _reverse = getattr(ur_worker, "_matrix_to_rotvec", None)
 if _reverse is None:
     out["rotvec_roundtrip"] = None
@@ -368,7 +427,10 @@ else:
                         ("generic", [0.6, -1.1, 2.0]),
                         ("near_pi", [0.0, 0.0, math.pi - 1e-9]),
                         ("pi", [0.0, 0.0, math.pi]),
-                        ("pi_tilted", [math.pi * 0.6, math.pi * 0.8, 0.0])):
+                        ("pi_tilted", [math.pi * 0.6, math.pi * 0.8, 0.0]),
+                        ("pi_mixed", [-math.pi * 0.6, math.pi * 0.8, 0.0]),
+                        ("band", [0.0, 0.0, math.pi - 2e-6]),
+                        ("band_tilted", [math.pi * 0.6 - 2e-6, math.pi * 0.8 - 2e-6, 0.0])):
         _m = ur_worker._rotvec_to_matrix(_rv)
         _back = _reverse(_m)
         out["rotvec_roundtrip"][_label] = {
@@ -668,6 +730,11 @@ test('★ jog_rotate：绕工具 Z 轴 = R_from·R_δ（右乘），且 TCP 位�
   assert.equal(r.jog.from_pose.length, 6)
   assert.equal(r.jog.target_pose.length, 6)
   assert.ok(r.d_pos < 1e-6, `绕工具系轴改姿态后 TCP 位置必须不变，实测位移 ${r.d_pos}`)
+  // ★ 独立断言：R_fromᵀ·R_target 就是 R_δ（工具系基），其旋转轴必须落在**工具系单位轴 e_z**
+  // 上。轴映射写错（rx/rz 互换）时这里必红 —— 不依赖被测的 _JOG_ROTATE_AXES 或 _matrix_to_rotvec。
+  // （先判 not null：rel_axis_offset 在轴退化时回 null，而 JS 里 null < 1e-6 会静默为 true。）
+  assert.ok(r.axis_offset !== null && r.axis_offset < 1e-6,
+    `相对旋转的轴必须落在工具系 e_z 上，实测与 e_z 的夹角 ${r.axis_offset} rad`)
   assert.ok(r.matrix_err < 1e-6,
     `工具系必须右乘 R_from·R_δ ≈ R_target，实测矩阵最大偏差 ${r.matrix_err}`)
   assert.ok(Math.abs(r.angle_target - 0.1) < 1e-9,
@@ -677,12 +744,16 @@ test('★ jog_rotate：绕工具 Z 轴 = R_from·R_δ（右乘），且 TCP 位�
     `实际姿态相对起点必须真的转了 0.1 rad，实测 ${r.angle_after}`)
 })
 
-test('★ jog_rotate：绕基座 X 轴 = R_δ·R_from（左乘），且非法轴必须 BADARG', () => {
+test('★ jog_rotate：绕基座 X 轴 = R_δ·R_from（左乘），相对旋转轴落在基座 e_x 上', () => {
   const r = out.jog_rotate_base
   assert.ok(!r.code, `jog_rotate(frame=base) 不该报错：${r.code}`)
   assert.equal(r.ok, true)
   assert.equal(r.jog.frame, 'base')
   assert.ok(r.d_pos < 1e-6, `绕基座系轴改姿态后 TCP 位置必须不变，实测位移 ${r.d_pos}`)
+  // ★ 独立断言：基座系左乘时 R_target·R_fromᵀ = R_δ（基座系基），旋转轴必须是基座 e_x。
+  // 这条与下面那条 matrix_err 相互独立：它只看"绕的是哪条轴"，不看矩阵是否整体相等。
+  assert.ok(r.axis_offset !== null && r.axis_offset < 1e-6,
+    `相对旋转的轴必须落在基座 e_x 上，实测与 e_x 的夹角 ${r.axis_offset} rad`)
   assert.ok(r.matrix_err < 1e-6,
     `基座系必须左乘 R_δ·R_from ≈ R_target，实测矩阵最大偏差 ${r.matrix_err}`)
   assert.ok(Math.abs(r.angle_target - 0.05) < 1e-9,
@@ -690,7 +761,38 @@ test('★ jog_rotate：绕基座 X 轴 = R_δ·R_from（左乘），且非法轴
   assert.ok(r.target_err < 1e-3, `运动必须到达 jog_rotate 回报的目标姿态，夹角 ${r.target_err}`)
   assert.ok(Math.abs(r.angle_after - 0.05) < 1e-3,
     `实际姿态相对起点必须真的转了 0.05 rad，实测 ${r.angle_after}`)
-  assert.equal(out.jog_rotate_bad_axis, 'BADARG', '未知轴必须当场拒绝（不能"尽力而为"地挑一条轴）')
+})
+
+test('★ jog_rotate：δ=0.6 的大增量在仿真里必须成功（拆段绕过 MAX_IK_STEP_RAD），总转角仍≈0.6', () => {
+  // 为什么单列一条：仿真对"纯旋转 movel"只做一次逆解，δ=0.6 的关节跳变超过
+  // ur_sim.MAX_IK_STEP_RAD=0.5，会被判成"收敛到另一个构型分支"而回 SIM_UNREACHABLE；
+  // 而同样的 movel 真机能执行。实现把 |δ| 按 ≤0.4 rad 拆段、每段从上一段的实际位姿续算。
+  const r = out.jog_rotate_large
+  assert.ok(!r.code, `δ=0.6 不该报错（拆段后应成功）：${r.code}`)
+  assert.equal(r.ok, true)
+  assert.equal(r.jog.axis, 'rz')
+  assert.ok(Math.abs(r.jog.delta_rad - 0.6) < 1e-12, 'delta_rad 必须原样回报 0.6')
+  assert.ok(r.jog.segments >= 2, `0.6 rad 必须拆成多段（每段 ≤0.4），实测 ${r.jog.segments} 段`)
+  assert.ok(r.d_pos < 1e-6, `大增量旋转同样不得搬动 TCP 位置，实测位移 ${r.d_pos}`)
+  // 总旋转角：from→target（报告的目标）与 from→after（真的转到了）都必须≈0.6。
+  assert.ok(Math.abs(r.angle_target - 0.6) < 1e-3,
+    `from→target 的总旋转角必须≈0.6，实测 ${r.angle_target}`)
+  assert.ok(Math.abs(r.angle_after - 0.6) < 1e-3,
+    `实际总旋转角必须≈0.6（夹角差 < 1e-3），实测 ${r.angle_after}`)
+  assert.ok(r.target_err < 1e-3, `运动必须到达回报的目标姿态，夹角 ${r.target_err}`)
+  // 矩阵等价（容差 1e-4 而不是 1e-6）：每段都从**实际**位姿续算，逐段 IK 的舍入会留下
+  // 1e-6 量级的合成偏差（实测 ~4.6e-6）—— 那是"不累积误差"换来的代价，不是轴/顺序错误。
+  assert.ok(r.matrix_err < 1e-4,
+    `拆段后的合成仍必须等价于 R_from·R_δ，实测矩阵最大偏差 ${r.matrix_err}`)
+})
+
+test('★ jog_rotate：未知轴 / 平移轴名 / 缺 delta / NaN / 0 / 未知 frame 一律 BADARG（ok:false）', () => {
+  const rows = Object.entries(out.jog_rotate_badargs)
+  assert.equal(rows.length, 6, '六个非法输入必须逐个覆盖')
+  for (const [label, r] of rows) {
+    assert.equal(r.ok, false, `${label} 的失败信封必须是 ok:false（不能假装成功）`)
+    assert.equal(r.code, 'BADARG', `${label} 必须报 BADARG，实际 ${r.code}`)
+  }
 })
 
 test('★ _matrix_to_rotvec 与 _rotvec_to_matrix 互逆（含 θ≈π 的退化分支）', () => {

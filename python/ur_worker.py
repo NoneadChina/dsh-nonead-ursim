@@ -1927,15 +1927,39 @@ def _rotvec_to_matrix(rotvec):
     return np.eye(3) + math.sin(theta) * skew + (1.0 - math.cos(theta)) * (skew @ skew)
 
 
+def _near_pi_unit_axis(m):
+    """θ≈π 时的**单位**旋转轴，或 None（矩阵退化到定不出方向）。
+
+    此时 **反对称部分退化**（R−Rᵀ 正比于 sinθ → 0，轴被舍入噪声淹没）⇒ 改由
+    `R = 2kkᵀ − I` 定轴：取对角最大的一维定正号（`k_i = √((R_ii+1)/2)`），其余维用
+    `R_ij = 2k_i·k_j` 解出（与 `ur_sim.axis_angle_from_matrix` 同一思路，只是这里吃的是
+    numpy 行主序 3×3）。θ≈π 分支与一般分支的兜底共用这一份公式，避免两处走样。
+    """
+    diag = [float(m[0, 0]), float(m[1, 1]), float(m[2, 2])]
+    i = max(range(3), key=lambda j: diag[j])
+    axis = [0.0, 0.0, 0.0]
+    axis[i] = math.sqrt(max(0.0, (diag[i] + 1.0) / 2.0))
+    if axis[i] < 1e-8:
+        return None
+    for j in range(3):
+        if j != i:
+            axis[j] = float(m[i, j]) / (2.0 * axis[i])
+    norm = math.sqrt(sum(x * x for x in axis)) or 1.0
+    return [axis[j] / norm for j in range(3)]
+
+
 def _matrix_to_rotvec(m):
     """3×3 旋转矩阵 → UR 的 TCP 姿态 (rx,ry,rz)（轴角：方向为旋转轴、模长为旋转角，弧度）。
 
     与 `_rotvec_to_matrix` 互逆。三档处理：
       · θ≈0：方向没有定义（任何轴都行）⇒ 返回零向量，这是唯一稳定的答案；
-      · θ≈π：**反对称部分退化**（R−Rᵀ 正比于 sinθ → 0，轴被舍入噪声淹没）⇒ 改由
-        `R = 2kkᵀ − I` 定轴：取对角最大的一维定正号，其余维用 `R_ij = 2k_i·k_j` 解出
-        （与 `ur_sim.axis_angle_from_matrix` 同一思路，只是这里吃的是 numpy 行主序 3×3）；
-      · 一般情形：`(R − Rᵀ)/2 = sinθ·[k]×` ⇒ 直接从反对称部分读出轴 k。
+      · θ≈π：轴由 `_near_pi_unit_axis` 的 `R = 2kkᵀ − I` 关系定出；
+      · 一般情形：`(R − Rᵀ)/2 = sinθ·[k]×` ⇒ 取反对称向量，**归一化后乘 θ**。
+
+    ⚠️ 一般分支刻意**不除以 sinθ**（旧写法 `scale = θ/(2 sinθ)`）：π−θ 落在 (1e-6, 4e-6)
+    这个窄带时 `theta` 来自 `acos`（在 ±1 附近绝对误差 ~1e-8），再被 1/sinθ（≈1e6）放大，
+    往返矩阵误差实测到 1.7e-4；归一化只乘 θ，误差不被放大（实测 ~1e-11）。反对称部分若
+    退化到 norm≈0（只可能出现在 θ≈0/π，而那两个分支已在前面接走），退回 π 分支的定轴公式。
     """
     m = np.asarray(m, dtype=float)
     cos_theta = (float(np.trace(m)) - 1.0) / 2.0
@@ -1944,22 +1968,15 @@ def _matrix_to_rotvec(m):
     if theta < 1e-9:
         return [0.0, 0.0, 0.0]
     if math.pi - theta < 1e-6:
-        # θ≈π：sinθ→0，反对称部分只剩舍入噪声 —— 按 R = 2kkᵀ − I 的关系取对角最大分量定轴。
-        diag = [float(m[0, 0]), float(m[1, 1]), float(m[2, 2])]
-        i = max(range(3), key=lambda j: diag[j])
-        axis = [0.0, 0.0, 0.0]
-        axis[i] = math.sqrt(max(0.0, (diag[i] + 1.0) / 2.0))
-        if axis[i] < 1e-8:
-            return [0.0, 0.0, 0.0]
-        for j in range(3):
-            if j != i:
-                axis[j] = float(m[i, j]) / (2.0 * axis[i])
-        norm = math.sqrt(sum(x * x for x in axis)) or 1.0
-        return [axis[j] / norm * theta for j in range(3)]
-    scale = theta / (2.0 * math.sin(theta))
-    return [scale * float(m[2, 1] - m[1, 2]),
-            scale * float(m[0, 2] - m[2, 0]),
-            scale * float(m[1, 0] - m[0, 1])]
+        axis = _near_pi_unit_axis(m)
+        return [0.0, 0.0, 0.0] if axis is None else [axis[j] * theta for j in range(3)]
+    v = np.array([m[2][1] - m[1][2], m[0][2] - m[2][0], m[1][0] - m[0][1]],
+                 dtype=float) / 2.0
+    n = float(np.linalg.norm(v))
+    if n < 1e-12:
+        axis = _near_pi_unit_axis(m)
+        return [0.0, 0.0, 0.0] if axis is None else [axis[j] * theta for j in range(3)]
+    return [float(x) for x in (v / n) * theta]
 
 
 def _tool_axis_move(p, axis):
@@ -4477,20 +4494,52 @@ def _sim_tool_axis_move(sim, p, axis):
                             "base_delta": [float(x) for x in delta_base]})
 
 
+# 仿真侧增量旋转的**单段上限**（弧度）。理由见 `_sim_jog_rotate` 的文档：真机 movel 在
+# 笛卡尔空间插补姿态，一次大角度旋转是连续的；仿真对"纯旋转"只做一次逆解，跳变一旦超过
+# `ur_sim.MAX_IK_STEP_RAD`（0.5 rad）就被判成"收敛到另一个构型分支"而拒绝。
+SIM_JOG_ROTATE_STEP_RAD = 0.4
+
+
 def _sim_jog_rotate(sim, p):
     """仿真侧的增量旋转：与真机共用 `_jog_rotate_target`（同一份几何 ⇒ 同一个目标位姿）。
 
     运动参数照工具系平移那条（movel 的 a=0.5 / v=0.25），位置必须保持不变。
+
+    与真机路径的**唯一**差异：`|delta_rad|` 超过 `SIM_JOG_ROTATE_STEP_RAD` 时拆成多段，
+    每段都从「上一段**走完之后**的实际位姿」重新算目标（不拿上一段的理想目标累加）。
+    不拆段的话，δ=0.6 在仿真里会回 `SIM_UNREACHABLE`，而同样的 movel 在真机上能执行 ——
+    那是**仿真的表示能力**（纯旋转只做一次逆解）问题，不是目标不可达，不该让"同一句话在
+    仿真里失败、在真机上成功"。
+
+    ⚠️ 真机路径 `op_jog_rotate` **不拆段**：movel 本身能处理大旋转，拆段会改变真机语义
+    （多次 movel 各自起停，而不是一条连续轨迹）。
     """
     axis, axis_name, delta_rad, frame = _jog_rotate_args(p)
-    pose = _sim_pose(sim)
-    target = _jog_rotate_target(pose, axis, delta_rad, frame)
+    from_pose = _sim_pose(sim)
     what = "绕%s %s 轴旋转 %.4f rad" % ("工具系" if frame == "tool" else "基座系",
                                        axis_name, delta_rad)
-    sim.move_cartesian([target], 0.25, 0.5)
+    count = max(1, int(math.ceil(abs(delta_rad) / SIM_JOG_ROTATE_STEP_RAD)))
+    step = delta_rad / count
+    target = from_pose
+    for index in range(count):
+        # 每段的起点是**上一段走完后的实际位姿**（`_sim_pose` 由当前 q 正解而来），
+        # 不是上一段的理想目标 —— IK 的舍入误差因此不会沿着段数累加。
+        current = _sim_pose(sim)
+        target = _jog_rotate_target(current, axis, step, frame)
+        sim.move_cartesian([target], 0.25, 0.5)
+        if index + 1 < count:
+            # 段间必须等它真的走完：`move_cartesian` 从"当前实际姿态"起算，不等就等于
+            # 每段都从原地重排，整次点动只会走完最后一段。
+            done, why = _sim_settle(sim, p)
+            if not done:
+                return _motion_failure(what, why, {
+                    "jog_rotate": {"axis": axis_name, "delta_rad": delta_rad, "frame": frame,
+                                   "from_pose": from_pose, "target_pose": target,
+                                   "segments": count, "segment": index + 1}})
     return _sim_move_reply(sim, p, what, target, {
         "jog_rotate": {"axis": axis_name, "delta_rad": delta_rad, "frame": frame,
-                       "from_pose": pose, "target_pose": target}})
+                       "from_pose": from_pose, "target_pose": target,
+                       "segments": count}})
 
 
 def _sim_draw_circle(sim, p):
