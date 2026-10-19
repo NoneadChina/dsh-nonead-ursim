@@ -72,6 +72,20 @@ function makeEl(tag) {
     id: '',
     _text: '',
     listeners: Object.create(null),
+    /**
+     * 指针捕获：左轨在 `pointerdown` 里抓住指针，长按期间手指滑出按钮也不丢事件。
+     * 真实 DOM 的这三个方法由浏览器实现；假 DOM 用集合模拟，便于断言"抓住 / 放掉"。
+     */
+    capturedPointers: new Set(),
+    setPointerCapture(id) {
+      this.capturedPointers.add(id)
+    },
+    hasPointerCapture(id) {
+      return this.capturedPointers.has(id)
+    },
+    releasePointerCapture(id) {
+      this.capturedPointers.delete(id)
+    },
     get firstChild() {
       return this.children[0] ?? null
     },
@@ -2545,7 +2559,7 @@ test('★ 控制面板骨架：localStorage 不可用（隐私模式）时静默
 })
 
 /* ================================================================== *
- * 左轨控件（feat/twin-control-panel · 点动 / 步长 / 回零 / 速度倍率）
+ * 左轨控件（feat/twin-control-panel · 点动 / 步长 / 回零）
  * ================================================================== */
 
 /** 处于"可点动"状态的快照：连接 + 仿真 + 数据在流动。 */
@@ -2553,7 +2567,6 @@ const LIVE = { connected: true, simulated: true, model: 'ur12e', q: Q0, tcp: TCP
 
 const jogButton = (ctx, key) => byAttrValue(ctx.container, 'data-ursim-jog', key)
 const allJogButtons = (ctx) => byAttr(ctx.container, 'data-ursim-jog')
-const speedSlider = (ctx) => byAttr(ctx.container, 'data-ursim-speed')[0]
 const leftBody = (ctx) => byAttrValue(ctx.container, 'data-ursim-twin-rail-body', 'left')
 const rightBody = (ctx) => byAttrValue(ctx.container, 'data-ursim-twin-rail-body', 'right')
 const postedBodies = (ctx) => ctx.request.posts().map((p) => JSON.parse(p.body))
@@ -2661,40 +2674,6 @@ test('★ 左轨：点一次 X+ 只发一条 cartesian 命令，body 形状正�
   ctx.panel.dispose()
 })
 
-test('★ 左轨：速度滑块 10%–100%，input 不下发、change 才发一条 speed', async () => {
-  const ctx = boot({ initial: LIVE, autoSim: false })
-  ctx.clock.flush()
-  await tick()
-
-  const slider = speedSlider(ctx)
-  assert.ok(slider, '必须有速度倍率滑块（data-ursim-speed）')
-  assert.equal(slider.min, '10', '面板层下限是 10%（产品约束，不是 op 的 0.01）')
-  assert.equal(slider.max, '100')
-  assert.equal(slider.step, '1')
-  assert.equal(slider.value, '100', '默认 100%')
-
-  slider.value = '50'
-  slider.listeners.input[0]()
-  const percent = byAttr(ctx.container, 'data-ursim-speed-value')[0]
-  assert.equal(percent.textContent, '50%', 'input 只改本地百分比文字')
-  assert.equal(ctx.request.posts().length, 0, '★ 拖动期间（input）绝不下发命令')
-
-  slider.listeners.change[0]()
-  const posts = ctx.request.posts()
-  assert.equal(posts.length, 1, '★ 松手（change）才发一条')
-  assert.deepEqual(JSON.parse(posts[0].body), { mode: 'speed', fraction: 0.5 })
-
-  // 越界值在面板层就被夹回 10%–100%（设计 §10）。
-  await tick() // 等上一条落地（在途时后续命令会被丢弃）
-  slider.value = '5'
-  slider.listeners.change[0]()
-  await tick()
-  assert.equal(slider.value, '10', '5% 必须被夹到 10%')
-  assert.deepEqual(JSON.parse(ctx.request.posts()[1].body), { mode: 'speed', fraction: 0.1 })
-
-  ctx.panel.dispose()
-})
-
 test('★ 左轨：simulated=false / connected=false 时所有点动按钮 disabled', async () => {
   const ctx = boot({
     initial: { ...LIVE, simulated: false },
@@ -2708,7 +2687,6 @@ test('★ 左轨：simulated=false / connected=false 时所有点动按钮 disab
   for (const button of buttons) {
     assert.equal(button.disabled, true, `${button.getAttribute('data-ursim-jog')} 在非仿真时必须禁用`)
   }
-  assert.equal(speedSlider(ctx).disabled, true, '速度滑块同样要禁用')
   assert.equal(leftBody(ctx).getAttribute('data-ursim-ctl-state'), 'disabled', '★ 整块状态由属性表达')
   // 左轨的原因栏已删除：不可用只置灰，不再有文字节点（右轨保留那一对）。
   assert.equal(byAttr(leftBody(ctx), 'data-ursim-ctl-note').length, 0,
@@ -2807,7 +2785,7 @@ test('★ 左轨：旋转点动发 rotate（角度→弧度），参考系切换
   ctx.panel.dispose()
 })
 
-test('★ 左轨：命令在途时整组置灰、后续点击被丢弃，返回后解禁', async () => {
+test('★ 左轨：命令在途时按钮不禁用（aria-disabled 表达 busy）、后续点击被丢弃', async () => {
   const calls = []
   let releasePost = null
   const request = (url, init = {}) => {
@@ -2826,8 +2804,11 @@ test('★ 左轨：命令在途时整组置灰、后续点击被丢弃，返回�
 
   tapJog(ctx, 'cartesian-x-plus')
   ctx.clock.flush(16)
-  assert.equal(jogButton(ctx, 'cartesian-x-plus').disabled, true, '★ 在途时必须置灰')
-  assert.equal(jogButton(ctx, 'cartesian-y-plus').disabled, true, '同一时刻只允许一条命令在飞')
+  const held = jogButton(ctx, 'cartesian-x-plus')
+  assert.equal(held.disabled, false, '★ 在途期间绝不能让被按住的按钮 disabled（否则收不到 pointerup）')
+  assert.equal(held.getAttribute('aria-disabled'), 'true', '★ busy 用 aria-disabled 表达')
+  assert.equal(leftBody(ctx).getAttribute('data-ursim-ctl-state'), 'busy', '★ 宿主节点状态是 busy')
+  assert.equal(jogButton(ctx, 'cartesian-y-plus').disabled, false, '其它按钮同样保持可点（闸门在代码里）')
 
   tapJog(ctx, 'cartesian-y-plus')
   assert.equal(calls.filter((c) => c.method === 'POST').length, 1, '★ 在途时后续点击必须丢弃')
@@ -2835,7 +2816,9 @@ test('★ 左轨：命令在途时整组置灰、后续点击被丢弃，返回�
   releasePost()
   await tick()
   ctx.clock.flush(16)
-  assert.equal(jogButton(ctx, 'cartesian-x-plus').disabled, false, '★ 返回后必须解禁')
+  assert.equal(held.disabled, false, '返回后仍然不禁用')
+  assert.equal(held.getAttribute('aria-disabled'), 'false', '★ 落地后解除 busy 标记')
+  assert.equal(leftBody(ctx).getAttribute('data-ursim-ctl-state'), 'ready')
 
   ctx.panel.dispose()
 })
@@ -2874,6 +2857,52 @@ test('★ 左轨：按住 250 ms 后每 200 ms 重复一步，松开/卸载即�
   timers.advance(2000)
   assert.equal(sent.length, 4, '★ 卸载必须清掉重复定时器')
   assert.equal(timers.pending, 0)
+})
+
+test('★ 左轨：长按中某一步在飞时按钮不被禁用，长按继续（busy 只跳过这一拍）', async () => {
+  const doc = makeDoc()
+  const body = doc.createElement('div')
+  const timers = makeFakeTimers()
+  const sent = []
+  /** 可控 promise：每次 send 都挂着，直到测试手动 resolve。 */
+  const pending = []
+  const rail = mountLeftRail(doc, body, {
+    send: (payload) => {
+      sent.push(payload)
+      return new Promise((resolve) => pending.push(resolve))
+    },
+    setTimeout: timers.setTimeout,
+    clearTimeout: timers.clearTimeout,
+  })
+  rail.sync({ connected: true, simulated: true })
+
+  const button = byAttrValue(body, 'data-ursim-jog', 'cartesian-x-plus')
+  assert.ok(button, '必须建出 X+ 按钮')
+  button.listeners.pointerdown[0]({ pointerId: 7 })
+  assert.equal(sent.length, 1, '① 按下立即发一条')
+  assert.equal(button.hasPointerCapture(7), true, '★ 按下时必须抓住指针（滑出按钮也不丢事件）')
+  assert.equal(button.disabled, false, '★ 在途期间按钮绝不能被 disabled')
+  assert.equal(button.getAttribute('aria-disabled'), 'true', '★ busy 只由 aria-disabled 表达')
+
+  timers.advance(250)
+  assert.equal(sent.length, 1, '② 第一条还在飞：这一拍必须跳过（不排队）')
+  assert.equal(button.disabled, false, '★ 仍在途，按钮仍不得 disabled')
+
+  pending.shift()() // 第一条落地
+  await tick()
+  assert.equal(button.disabled, false, '落地后按钮仍然可用')
+  assert.equal(button.getAttribute('aria-disabled'), 'false', '★ 落地后解除 busy 标记')
+
+  timers.advance(200)
+  assert.equal(sent.length, 2, '③ 长按继续：下一条命令应在 200 ms 后发出')
+
+  button.listeners.pointerup[0]({ pointerId: 7 })
+  assert.equal(button.hasPointerCapture(7), false, '★ 松手时必须释放指针捕获')
+  timers.advance(1000)
+  assert.equal(sent.length, 2, '④ 松手后再推进 1000 ms 不得再有新命令')
+  assert.equal(timers.pending, 0, '松手后不得留下定时器')
+
+  rail.dispose()
 })
 
 /** 极简假定时器：`advance(ms)` 按到期顺序执行，嵌套调度也按同一时钟推进。 */

@@ -3,7 +3,7 @@
  *
  * ## 分工（为什么单独一个文件）
  * `twin-panel.js` 已经背了画布、HUD、I/O、仿真开关、模型、主题、截图七件事；两条控制轨
- * （左轨点动 + 速度倍率 / 右轨位姿 + 关节）是**另一个职责**。放在这里才能被单独测试，
+ * （左轨点动 / 右轨位姿 + 关节）是**另一个职责**。放在这里才能被单独测试，
  * `twin-panel.js` 只负责三件事：
  *   ① 把 `stage`（三栏 grid）插进布局，把画布夹在两条轨中间；
  *   ② 把最新快照喂给 `mountLeftRail` / `mountRightRail` 返回的 `sync(snapshot)`；
@@ -230,7 +230,7 @@ function makeBody(doc, which, deps) {
 }
 
 /* ------------------------------------------------------------------ *
- * 左轨控件（点动 + 步长 + 参考系 + 回零 + 速度倍率）
+ * 左轨控件（点动 + 步长 + 参考系 + 回零）
  *
  * 这一层的职责边界：**只把一次点击整形为宿主 `/twin/jog` 的 body**，不自己发请求、
  * 不读运动学、不做乐观更新（下一帧状态才是唯一真源）。命令出口与快照都是注入的：
@@ -251,22 +251,6 @@ export const JOG_STEPS_DEG = Object.freeze([1, 2, 5])
 /** 默认步长：位置 5 mm、姿态 1°（保守起步，误触的位移最小）。 */
 export const JOG_DEFAULT_STEP_MM = 5
 export const JOG_DEFAULT_STEP_DEG = 1
-/** 速度倍率滑块的上下限（百分比）—— 面板这一层的产品约束（设计 §4 / §10）。 */
-export const SPEED_MIN_PERCENT = 10
-export const SPEED_MAX_PERCENT = 100
-export const SPEED_DEFAULT_PERCENT = 100
-
-/**
- * 把滑块的百分比夹到 10%–100%（整数）。
- *
- * @param {number|string} value
- * @returns {number}
- */
-export function clampSpeedPercent(value) {
-  const n = Number(value)
-  if (!Number.isFinite(n)) return SPEED_DEFAULT_PERCENT
-  return Math.min(SPEED_MAX_PERCENT, Math.max(SPEED_MIN_PERCENT, Math.round(n)))
-}
 
 /**
  * 位置点动命令 body（**直接**是宿主 `/twin/jog` 的路由 body）。
@@ -295,16 +279,6 @@ export function rotateJog(axis, deltaDeg, frame) {
     deltaRad: (deltaDeg * Math.PI) / 180,
     frame: frame === 'base' ? 'base' : 'tool',
   }
-}
-
-/**
- * 速度倍率命令 body：面板层先把百分比夹到 10%–100%，再交给宿主。
- *
- * @param {number|string} percent
- * @returns {{mode: 'speed', fraction: number}}
- */
-export function speedCommand(percent) {
-  return { mode: 'speed', fraction: clampSpeedPercent(percent) / 100 }
 }
 
 /** 每个点动按钮的命令语义（`sign` 决定方向；`mode` 决定这是哪种命令）。 */
@@ -376,13 +350,15 @@ function makeSegment(doc, label, attr, options, initial, onPick) {
 }
 
 /**
- * 左轨内容：TCP 位置 / TCP 方向 点动盘、步长、参考系、回零、速度倍率。
+ * 左轨内容：TCP 位置 / TCP 方向 点动盘、步长、参考系、回零。
  *
  * 交互（设计 §6）：
  *   - 按下立即发一步；按住 `JOG_HOLD_DELAY_MS` 后每 `JOG_REPEAT_INTERVAL_MS` 重复一步；
- *   - 松开（`pointerup` / `pointerleave` / `pointercancel`）即停，定时器在 `dispose()` 清掉；
- *   - **同一时刻只允许一条命令在飞**（串行）：在途时所有点动按钮置灰、后续点击丢弃；
- *   - 速度滑块 `input` 只改本地百分比文字，`change`（松手）才下发一条 `speed`；
+ *   - 按下时抓住指针（`setPointerCapture`），松开（`pointerup` / `pointerleave` /
+ *     `pointercancel` / `lostpointercapture`）即停，定时器在 `dispose()` 清掉；
+ *   - **同一时刻只允许一条命令在飞**（串行）：在途（busy）时**不设 `disabled`**（否则被按住的
+ *     按钮收不到 `pointerup`，长按会被自己掐断），只写 `aria-disabled="true"` +
+ *     `data-ursim-ctl-state="busy"`；后续命令仍由 `runCommand` 的代码闸门丢弃；
  *   - 快照 `connected !== true` / `feedStale === true` / `simulated !== true` ⇒ 全部控件禁用。
  *
  * **左轨没有文字原因栏**：这一栏在窄轨时代会把方向盘挤下去，而且"为什么不能点"在右轨
@@ -415,12 +391,13 @@ export function mountLeftRail(doc, body, deps = {}) {
   let stepMm = JOG_DEFAULT_STEP_MM
   let stepDeg = JOG_DEFAULT_STEP_DEG
   let frame = 'tool'
-  let speedPercent = SPEED_DEFAULT_PERCENT
   /** 整块控件是否可用（连接 + 仿真 + 数据在流动）。 */
   let available = false
   /** 是否有命令在飞（串行：同一时刻只允许一条）。 */
   let busy = false
   let repeatTimer = null
+  /** 当前被按住的按钮抓住的指针（`lostpointercapture` / 松开时释放）。 */
+  let heldPointer = null
   let lastRenderKey = null
 
   /** 卸载时要摘掉的 DOM 监听（元素会被移出文档，但显式解绑更干净）。 */
@@ -573,48 +550,6 @@ export function mountLeftRail(doc, body, deps = {}) {
 
   host.appendChild(stepSection)
 
-  /* ---- 速度倍率（运行中）---- */
-  const speedSection = makeEl(doc, 'div', 'ursim-twin-ctl-section', 'data-ursim-ctl-section', 'speed')
-  const speedLabel = makeEl(doc, 'div', 'ursim-twin-ctl-label')
-  speedLabel.textContent = S.controlsSpeed
-  speedSection.appendChild(speedLabel)
-
-  const speedRow = makeEl(doc, 'div', 'ursim-twin-ctl-speed', 'data-ursim-ctl-row', 'speed')
-  const slider = doc.createElement('input')
-  slider.setAttribute('type', 'range')
-  slider.setAttribute('data-ursim-speed', '')
-  slider.className = 'ursim-twin-ctl-range'
-  slider.setAttribute('aria-label', S.controlsSpeed)
-  slider.setAttribute('title', S.controlsSpeedTitle)
-  // 真假 DOM 都写：属性是样式/可访问性的真源，property 是测试与自定义宿主读的那一面
-  // （测试里的假 DOM 不会把 `min` attribute 反射成 property）。
-  slider.setAttribute('min', String(SPEED_MIN_PERCENT))
-  slider.setAttribute('max', String(SPEED_MAX_PERCENT))
-  slider.setAttribute('step', '1')
-  slider.min = String(SPEED_MIN_PERCENT)
-  slider.max = String(SPEED_MAX_PERCENT)
-  slider.step = '1'
-  slider.value = String(speedPercent)
-  const percentEl = makeEl(doc, 'span', 'ursim-twin-ctl-percent', 'data-ursim-speed-value')
-  percentEl.textContent = S.controlsSpeedValue(speedPercent)
-  speedRow.appendChild(slider)
-  speedRow.appendChild(percentEl)
-  speedSection.appendChild(speedRow)
-  host.appendChild(speedSection)
-
-  bind(slider, 'input', () => {
-    // 拖动只改本地文字：**不下发**（设计 §6.7：松手才生效）。
-    speedPercent = clampSpeedPercent(slider.value)
-    percentEl.textContent = S.controlsSpeedValue(speedPercent)
-  })
-  bind(slider, 'change', () => {
-    speedPercent = clampSpeedPercent(slider.value)
-    slider.value = String(speedPercent)
-    percentEl.textContent = S.controlsSpeedValue(speedPercent)
-    if (!available || busy) return
-    runCommand(speedCommand(speedPercent))
-  })
-
   /* ---------------- 行为 ---------------- */
 
   /**
@@ -622,6 +557,10 @@ export function mountLeftRail(doc, body, deps = {}) {
    *
    * 只认 pointer 事件：`click` 会在"按住拖出按钮再松手"时也触发，于是一次拖拽可能
    * 多走一步；pointerdown 的语义与"按住"完全一致。
+   *
+   * `pointerdown` 里同时抓住指针：手指/鼠标轻微滑出按钮时事件仍回到这个按钮，
+   * 长按不会因为边界判定丢事件而中断。`lostpointercapture` 与 `pointerup` /
+   * `pointerleave` / `pointercancel` 并列，任何一种"按住结束"都停表。
    */
   function makeJogButton(key) {
     const spec = JOG_SPECS[key]
@@ -630,11 +569,22 @@ export function mountLeftRail(doc, body, deps = {}) {
     bind(button, 'pointerdown', (event) => {
       // 阻止按住时选中文本/触发拖拽手势；假 DOM 的事件参数可能不存在。
       event?.preventDefault?.()
+      // 先结束上一段长按（并释放它可能留下的捕获），再抓这一次的指针。
+      stopRepeat()
+      try {
+        button.setPointerCapture?.(event?.pointerId)
+        heldPointer = { button, id: event?.pointerId }
+      } catch {
+        // 极端环境（不支持 pointer capture / pointerId 已失效）：退化为普通事件，
+        // 长按仍可用，只是滑出按钮会丢事件。
+        heldPointer = null
+      }
       onPress(key)
     })
     bind(button, 'pointerup', stopRepeat)
     bind(button, 'pointerleave', stopRepeat)
     bind(button, 'pointercancel', stopRepeat)
+    bind(button, 'lostpointercapture', stopRepeat)
     jogButtons.push({ button, key })
     return button
   }
@@ -718,9 +668,10 @@ export function mountLeftRail(doc, body, deps = {}) {
     renderAvailability()
   }
 
-  /** 按住 250 ms 后，每 200 ms 重复一步；在途时这一步跳过，但节拍继续。 */
+  /** 按住 250 ms 后，每 200 ms 重复一步；在途时这一步跳过（不排队），但节拍继续。 */
   function startRepeat(key) {
-    stopRepeat()
+    // 只清定时器、不碰指针捕获：捕获是刚在 pointerdown 里为这次按住设置的。
+    clearRepeatTimer()
     const repeat = () => {
       if (disposed) return
       if (available && !busy) runCommand(bodyFor(key))
@@ -729,11 +680,31 @@ export function mountLeftRail(doc, body, deps = {}) {
     repeatTimer = setT(repeat, JOG_HOLD_DELAY_MS)
   }
 
-  /** 松开/卸载：清掉重复定时器（幂等）。 */
-  function stopRepeat() {
+  /** 只清重复定时器（不释放指针捕获）。 */
+  function clearRepeatTimer() {
     if (repeatTimer === null) return
     if (typeof clearT === 'function') clearT(repeatTimer)
     repeatTimer = null
+  }
+
+  /**
+   * 按住结束（松开/移出/取消/捕获丢失/卸载）：清定时器 + 释放指针捕获（幂等）。
+   *
+   * 释放前先 `hasPointerCapture` 判断：浏览器在 `pointerup` 之后会自己释放，
+   * 这里只处理"还抓着"的情况，避免对已释放的指针重复调用。
+   */
+  function stopRepeat() {
+    clearRepeatTimer()
+    const captured = heldPointer
+    heldPointer = null
+    if (!captured) return
+    try {
+      if (captured.button.hasPointerCapture?.(captured.id) === true) {
+        captured.button.releasePointerCapture(captured.id)
+      }
+    } catch {
+      /* 极端环境：释放失败不影响停止长按 */
+    }
   }
 
   /** 只有"可用性/在途"变化时才写 DOM —— 每帧（60 Hz）重写 disabled 是浪费。 */
@@ -741,9 +712,13 @@ export function mountLeftRail(doc, body, deps = {}) {
     const key = `${available ? '1' : '0'}${busy ? '1' : '0'}`
     if (key === lastRenderKey) return
     lastRenderKey = key
-    const controlsDisabled = !available || busy
-    for (const entry of jogButtons) entry.button.disabled = controlsDisabled
-    slider.disabled = controlsDisabled
+    for (const entry of jogButtons) {
+      // 只有"能不能用"才落真 disabled。busy 绝不能设 disabled：被禁用的元素不再接收
+      // 指针事件，浏览器会补一个 pointercancel，正在被按住的按钮当场丢长按定时器。
+      // busy 只写 aria-disabled + 宿主节点状态，按钮仍然收得到 pointerup。
+      entry.button.disabled = !available
+      entry.button.setAttribute('aria-disabled', busy ? 'true' : 'false')
+    }
     for (const button of segmentButtons) button.disabled = !available
     host.setAttribute('data-ursim-ctl-state', !available ? 'disabled' : (busy ? 'busy' : 'ready'))
   }
@@ -758,7 +733,7 @@ export function mountLeftRail(doc, body, deps = {}) {
   }
 
   /**
-   * 每帧喂最新快照：只更新可用性（置灰/解禁），从不回写用户正在操作的步长/滑块
+   * 每帧喂最新快照：只更新可用性（置灰/解禁），从不回写用户正在操作的步长
    * （那会把手指还按着的控件抢回去），也不写任何文字原因（左轨没有原因栏）。
    */
   function sync(snapshot) {

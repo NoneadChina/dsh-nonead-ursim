@@ -402,6 +402,9 @@ body[data-ds-dark-theme] .ursim-twin-panel {
 }
 .ursim-twin-ctl-button:active:not(:disabled) { background: var(--ursim-hover-bg); }
 .ursim-twin-ctl-button:disabled { opacity: 0.45; cursor: not-allowed; }
+/* busy（命令在途）不落 disabled —— 被禁用的按钮收不到 pointerup，会把长按掐断。
+   这里只用 aria-disabled 把"这一拍不会发出去"表达出来，按钮仍可接收指针事件。 */
+.ursim-twin-ctl-button[aria-disabled='true'] { opacity: 0.55; cursor: progress; }
 /* Z / RZ 行：两枚按钮各占一半宽（168 = 2×81 + 6），高度比圆盘钮矮，避免整列过长。 */
 .ursim-twin-ctl-row {
   display: flex;
@@ -441,25 +444,6 @@ body[data-ds-dark-theme] .ursim-twin-panel {
   background: var(--ursim-accent);
 }
 .ursim-twin-ctl-seg-button:disabled { opacity: 0.45; cursor: not-allowed; }
-.ursim-twin-ctl-speed {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 28px;
-}
-.ursim-twin-ctl-range {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-.ursim-twin-ctl-range:disabled { opacity: 0.45; }
-/* 右侧百分比数字固定 44 px 并右对齐：数值变化时滑块的可用长度不会跟着抖。 */
-.ursim-twin-ctl-percent {
-  flex: 0 0 44px;
-  font-size: 12px;
-  text-align: right;
-  color: var(--ursim-text-secondary);
-  font-variant-numeric: tabular-nums;
-}
 /* ── 右轨位姿 / 关节控件（feat/twin-control-panel · 设计 §5）────────────────
    350 px 轨：位姿 3 列 × 2 行（第一行 X/Y/Z mm、第二行 RX/RY/RZ rad；每格 =
    28 px 标签 + 最小 76 px 输入框，列宽 (350 − 1 − 16 − 12) / 3 ≈ 107）；关节 6 行

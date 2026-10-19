@@ -174,12 +174,9 @@ export const zh = {
   simUnsupported: '仿真只实现运动学（运动类工具 + 位姿读回）；其余指令会明确回报「无仿真语义」。',
   simActiveStatus: (model) => `离线仿真 · ${model}`,
   simWatermark: '离线仿真（非真机）',
-  /* ---- 左轨点动控件（feat/twin-control-panel）----
-     面板层的速度倍率与「离线仿真」区那个下拉不是一回事：那个是**创建时**的初始倍率
-     （改了会重建仿真），这里的滑块改的是**运行中**实例。所以两处文案必须能区分开。 */
+  /* ---- 左轨点动控件（feat/twin-control-panel）---- */
   controlsTcpPosition: 'TCP 位置（mm）',
   controlsTcpOrientation: 'TCP 方向（°）',
-  controlsSpeed: '速度倍率',
   controlsHome: '回零',
   controlsHomeTitle: '回零：六关节到 [0°, -90°, 0°, -90°, -180°, 0°]',
   controlsStepMm: '步长 mm',
@@ -194,8 +191,6 @@ export const zh = {
     `沿${frame} ${axis} 轴${sign > 0 ? '正' : '负'}方向移动 ${mm} mm`,
   controlsJogRotateTitle: (frame, axis, sign, deg) =>
     `绕${frame} ${axis} 轴${sign > 0 ? '正' : '负'}方向旋转 ${deg}°`,
-  controlsSpeedTitle: '拖动后松手才生效；从下一段运动开始起作用，不会重建仿真',
-  controlsSpeedValue: (percent) => `${percent}%`,
   controlsDisabledDisconnected: '未连接机器人：点动控件不可用',
   controlsDisabledSimOnly: '仅离线仿真可点动：真机请用工具调用（受审批门禁保护）',
   controlsDisabledStale: '数据通道停滞：控件已暂停，恢复后自动解禁',
@@ -373,7 +368,6 @@ export const en = {
   /* ---- left-rail jog controls (feat/twin-control-panel) ---- */
   controlsTcpPosition: 'TCP position (mm)',
   controlsTcpOrientation: 'TCP orientation (°)',
-  controlsSpeed: 'Speed scaling',
   controlsHome: 'Home',
   controlsHomeTitle: 'Home: all six joints to [0°, -90°, 0°, -90°, -180°, 0°]',
   controlsStepMm: 'Step mm',
@@ -388,9 +382,6 @@ export const en = {
     `Move ${mm} mm along the ${frame} ${axis} axis (${sign > 0 ? 'positive' : 'negative'} direction)`,
   controlsJogRotateTitle: (frame, axis, sign, deg) =>
     `Rotate ${deg}° about the ${frame} ${axis} axis (${sign > 0 ? 'positive' : 'negative'} direction)`,
-  controlsSpeedTitle:
-    'Takes effect when you release the slider, from the next motion segment on; the simulation is not rebuilt',
-  controlsSpeedValue: (percent) => `${percent}%`,
   controlsDisabledDisconnected: 'Robot not connected: jog controls are unavailable',
   controlsDisabledSimOnly:
     'Jogging works in the offline simulation only: use the tools for a real robot (guarded by approval)',
