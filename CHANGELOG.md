@@ -8,10 +8,19 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
-## [Unreleased]
+## [0.2.5] - 2026-10-19
+
+A declaration-only release: runtime behaviour is unchanged from 0.2.4, but the package now declares
+the host version family it is actually installed against.
 
 ### Fixed
 
+- **Peer ranges now cover the host version family actually installed.** The running host (Nonead DSH
+  Desktop 2.1.6) ships `@deepseek-ai/dsh` / `dsh-tools` `0.2.1-alpha.5`, `cordis` `4.0.5-alpha.2` and
+  `schemastery` `3.18.5-alpha.2`, and none of them matched the previous `^0.2.0-rc.2` / `^4.0.2` /
+  `^3.18.2` ranges — semver only lets a pre-release satisfy a comparator carrying the same
+  `major.minor.patch` tuple. `verify:host` against the installed host now reports 4/4 peer checks plus
+  87/87 tool registrations; the functional checks were green all along, only the declarations were stale.
 - Two messages that promised something the plugin cannot do are corrected: the "no simulation
   semantics" refusal used to tell users to point `ursim_connect` at a URSim IP (which is rejected in
   sim mode), it now points at `motionMode=real` + the `realRobotIps` allow-list; `ursim_sim_stop` no
