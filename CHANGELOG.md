@@ -8,6 +8,11 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.3.7] - 2026-10-20
+
+### Changed
+
+- **Panel defaults follow shop-floor habits** (user request): the `坐标系` segmented control starts on **基座系** (base frame) instead of the tool frame, the position jog step starts at **1 mm** instead of 5 mm, and the `基座系` layer button under the 3D view starts **pressed**. Both the button's `aria-pressed` and the scene object's visibility now come from one module-level `LAYER_DEFAULTS`, so the button can no longer say "off" while the frame is actually drawn; `幽灵臂` (ghost arm) keeps its previous default-on state and `可达范围` / `受力` stay off. The derived jog-button titles follow the new defaults, e.g. `沿基座系 X 轴正方向移动 1 mm`.
 ## [0.3.6] - 2026-10-20
 
 ### Changed

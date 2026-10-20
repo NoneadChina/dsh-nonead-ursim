@@ -542,6 +542,18 @@ function detach(scene, obj) {
 const ROBOT_ROOT_NAME = 'ursim-twin-robot'
 
 /**
+ * 工程辅助图层的**默认开关状态**（单一真源）。
+ *
+ * 「基座系」默认开：用户要求 3D 界面底部那颗 `基座系` 按钮默认就是选中态（一眼看清基座
+ * 坐标系朝向，才读得懂 TCP 位姿的正负）。「幽灵臂」保持默认开（目标与当前不一致时才显现）。
+ * 「可达范围」「受力」默认关 —— 一次全画出来会看不清真臂。
+ *
+ * 按钮的 `aria-pressed` 与场景里各对象的 `visible` 都从这里出发，避免"按钮看着没按、
+ * 场景里其实画着"这种表里不一（`layers` 在场景构建里定义，比 HUD 按钮晚）。
+ */
+const LAYER_DEFAULTS = Object.freeze({ reach: false, base: true, force: false, ghost: true })
+
+/**
  * 摘掉场景里**除 `keep` 之外**的所有本插件机器人根节点。
  *
  * 正常路径由 `detach(handle.root)` + `handle.dispose()` 负责；这一层是兜底：异常路径（加载
@@ -812,10 +824,12 @@ export function mountTwinPanel({
   hudIdentity.appendChild(hudFeed)
   // 控制轨的报错栏紧跟在数据停滞提示之后：同一行、独立槽位（见 `hudIdentityError` 的说明）。
   hudIdentity.appendChild(hudIdentityError)
-  // 工程辅助图层的开关（清单第 9 条）。四个图层默认全关：一次全画出来会看不清真臂。
+  // 工程辅助图层的开关（清单第 9 条）。默认状态见 `LAYER_DEFAULTS`：`基座系` 与 `幽灵臂` 默认开，
+  // 其余默认关（一次全画出来会看不清真臂）。
   //
   // 这里引用后面才定义的 `layers` 与 `invalidate` 是安全的：`layers` 只在**点击回调**里
-  // 求值（那时早已初始化），`invalidate` 是函数声明、会提升。
+  // 求值（那时早已初始化），`invalidate` 是函数声明、会提升。初始的 `aria-pressed` 直接取
+  // `LAYER_DEFAULTS`，所以按钮的初始外观与场景里实际画着的对象始终一致。
   const hudLayers = makeEl(doc, 'div', 'ursim-twin-hud-row', 'data-ursim-twin-layers')
   /** 图层按钮句柄：可达范围那颗要顺带显示当前型号的可达上界（见 `loadModel`）。 */
   const layerButtons = {}
@@ -831,7 +845,7 @@ export function mountTwinPanel({
     const button = makeEl(doc, 'button', 'ursim-twin-layer-toggle', `data-ursim-twin-layer-${layerKey}`)
     button.type = 'button'
     button.textContent = layerLabel
-    button.setAttribute('aria-pressed', 'false')
+    button.setAttribute('aria-pressed', LAYER_DEFAULTS[layerKey] === true ? 'true' : 'false')
     layerButtons[layerKey] = button
     button.addEventListener('click', () => {
       layers[layerKey] = !layers[layerKey]
@@ -1227,7 +1241,8 @@ export function mountTwinPanel({
   baseAxes.name = 'ursim-twin-base-axes'
   const cogMarker = createCogMarker()
   const forceArrow = createForceArrow(null)
-  const layers = { reach: false, base: false, force: false, cog: false, ghost: true }
+  // 图层默认状态取 `LAYER_DEFAULTS`（`基座系` 默认开），`cog` 没有对应按钮、恒关。
+  const layers = { ...LAYER_DEFAULTS, cog: false }
 
   /** 幽灵臂的**唯一**可见性入口（图层开关 + 目标差异两个条件都满足才显示）。 */
   function syncGhost() {

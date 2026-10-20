@@ -298,8 +298,8 @@ export const JOG_ANGULAR_SPEED_RAD_S = (JOG_ANGULAR_SPEED_DEG_S * Math.PI) / 180
 export const JOG_STEPS_MM = Object.freeze([1, 5, 10])
 /** 姿态步长档位（度）。 */
 export const JOG_STEPS_DEG = Object.freeze([1, 2, 5])
-/** 默认步长：位置 5 mm、姿态 1°（保守起步，误触的位移最小）。 */
-export const JOG_DEFAULT_STEP_MM = 5
+/** 默认步长：位置 **1 mm**、姿态 1°（用户要求位置默认取最小档；误触的位移最小）。 */
+export const JOG_DEFAULT_STEP_MM = 1
 export const JOG_DEFAULT_STEP_DEG = 1
 
 /**
@@ -455,7 +455,7 @@ export function createJogControls(doc, deps = {}) {
   let disposed = false
   let stepMm = JOG_DEFAULT_STEP_MM
   let stepDeg = JOG_DEFAULT_STEP_DEG
-  let frame = 'tool'
+  let frame = 'base'
   /** 整块控件是否可用（连接 + 仿真 + 数据在流动）。 */
   let available = false
   let repeatTimer = null

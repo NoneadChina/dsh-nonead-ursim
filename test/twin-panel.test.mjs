@@ -2626,13 +2626,14 @@ test('★ 控制轨尺寸：单条轨 500 px，按钮 54×54、位姿 3 列、�
     const title = button.getAttribute('title')
     assert.ok(title && title.length >= 4, `${button.getAttribute('data-ursim-jog')} 必须有可读 title`)
   }
-  // title 是派生的：改步长 / 切参考系后必须跟着重算，不能停留在建按钮时的 5 mm / 工具系。
-  assert.match(jogButton(ctx, 'cartesian-x-plus').getAttribute('title'), /工具系.*X.*5 mm/u)
+  // title 是派生的：改步长 / 切参考系后必须跟着重算，不能停留在建按钮时的 1 mm / 基座系。
+  // 默认档位由用户指定：参考系取基座系、位置步长取最小档 1 mm。
+  assert.match(jogButton(ctx, 'cartesian-x-plus').getAttribute('title'), /基座系.*X.*1 mm/u)
   byAttrValue(ctx.container, 'data-ursim-step-mm', '10').listeners.click[0]()
   assert.match(jogButton(ctx, 'cartesian-x-plus').getAttribute('title'), /10 mm/u,
     '★ 改步长后 title 必须重算')
-  byAttrValue(ctx.container, 'data-ursim-frame', 'base').listeners.click[0]()
-  assert.match(jogButton(ctx, 'cartesian-x-plus').getAttribute('title'), /基座系/u,
+  byAttrValue(ctx.container, 'data-ursim-frame', 'tool').listeners.click[0]()
+  assert.match(jogButton(ctx, 'cartesian-x-plus').getAttribute('title'), /工具系/u,
     '★ 切参考系后 title 必须重算')
 
   // 轨内所有按钮（点动 / 步长 / 参考系 / 关节 ±）都必须有可读 title：
@@ -2699,9 +2700,9 @@ test('★ 控制轨：点一次 X+ 只发一条 cartesian + 一条 stop，body �
   assert.deepEqual(JSON.parse(posts[0].body), {
     mode: 'cartesian',
     axis: 'x',
-    distance: 0.005,
-    frame: 'tool',
-  }, '默认 5 mm 步长 + 工具系')
+    distance: 0.001,
+    frame: 'base',
+  }, '默认 1 mm 步长 + 基座系')
   assert.deepEqual(JSON.parse(posts[1].body), { mode: 'stop' }, '★ 松手立即发 stop')
   assert.equal(postedBodies(ctx).filter((body) => body.mode === 'velocity').length, 0,
     '★ 短按全程不得出现 velocity')
@@ -2779,7 +2780,7 @@ test('★ 控制轨：回零按钮发 {mode:"home"}；步长切换后距离随�
     mode: 'cartesian',
     axis: 'x',
     distance: 0.01,
-    frame: 'tool',
+    frame: 'base',
   })
 
   ctx.panel.dispose()
@@ -2795,19 +2796,19 @@ test('★ 控制轨：旋转点动发 rotate（角度→弧度），参考系切
   const first = postedCommands(ctx)[0]
   assert.equal(first.mode, 'rotate')
   assert.equal(first.axis, 'rx')
-  assert.equal(first.frame, 'tool', '默认工具系')
+  assert.equal(first.frame, 'base', '默认基座系')
   assert.ok(Math.abs(first.deltaRad - Math.PI / 180) < 1e-12, '默认 1° = π/180 rad')
 
-  const base = byAttrValue(ctx.container, 'data-ursim-frame', 'base')
-  assert.ok(base, '必须有基座系选项')
-  base.listeners.click[0]()
-  assert.equal(base.getAttribute('aria-pressed'), 'true')
+  const tool = byAttrValue(ctx.container, 'data-ursim-frame', 'tool')
+  assert.ok(tool, '必须有工具系选项')
+  tool.listeners.click[0]()
+  assert.equal(tool.getAttribute('aria-pressed'), 'true')
 
   tapJog(ctx, 'rotate-rz-minus')
   await tick()
   const second = postedCommands(ctx)[1]
   assert.equal(second.axis, 'rz')
-  assert.equal(second.frame, 'base', '切到基座系后 frame 必须跟着变')
+  assert.equal(second.frame, 'tool', '切到工具系后 frame 必须跟着变')
   assert.ok(Math.abs(second.deltaRad + Math.PI / 180) < 1e-12, 'RZ− = -1°')
 
   tapJog(ctx, 'cartesian-z-minus')
@@ -2815,8 +2816,8 @@ test('★ 控制轨：旋转点动发 rotate（角度→弧度），参考系切
   assert.deepEqual(postedCommands(ctx)[2], {
     mode: 'cartesian',
     axis: 'z',
-    distance: -0.005,
-    frame: 'base',
+    distance: -0.001,
+    frame: 'tool',
   }, '位置点动同样使用当前参考系')
 
   ctx.panel.dispose()
@@ -3001,9 +3002,9 @@ test('★ 控制轨·短按：只发一步 cartesian + stop，全程没有 veloc
   assert.deepEqual(sent[0], {
     mode: 'cartesian',
     axis: 'x',
-    distance: 0.005,
-    frame: 'tool',
-  }, '短按走的是一步 cartesian（默认 5 mm / 工具系）')
+    distance: 0.001,
+    frame: 'base',
+  }, '短按走的是一步 cartesian（默认 1 mm / 基座系）')
 
   btn.listeners.pointerup[0]({ pointerId: 11 })
   assert.equal(sent.length, 2, '松手补一条 stop')
@@ -3031,9 +3032,9 @@ test('★ 控制轨·长按：250 ms 切换成 velocity（x 分量 +0.025，其�
   assert.deepEqual(sent[1], {
     mode: 'velocity',
     twist: [0.025, 0, 0, 0, 0, 0],
-    frame: 'tool',
+    frame: 'base',
     ttlMs: 400,
-  }, '★ 平移 25 mm/s 只落在 x 分量，frame 取当前工具系，ttlMs 400')
+  }, '★ 平移 25 mm/s 只落在 x 分量，frame 取当前基座系，ttlMs 400')
 
   assert.equal(body.getAttribute('data-ursim-jog-mode'), 'velocity',
     '★ 宿主节点 data-ursim-jog-mode 切到 velocity')
@@ -3101,14 +3102,14 @@ test('★ 控制轨·旋转长按：rz 分量 = 15°/s（rad/s），其余 0', (
   }
   assert.ok(Math.abs(velocity.twist[5] - (15 * Math.PI) / 180) < 1e-12,
     '★ RZ+ = 15 °/s = 15·π/180 rad/s')
-  assert.equal(velocity.frame, 'tool', '默认工具系')
+  assert.equal(velocity.frame, 'base', '默认基座系')
 
   rail.dispose()
 })
 
-test('★ 控制轨·速度流：frame 跟随参考系分段控件（base）', () => {
+test('★ 控制轨·速度流：frame 跟随参考系分段控件（tool）', () => {
   const { timers, sent, rail, button } = mountJogRecorder()
-  byAttrValue(rail.body, 'data-ursim-frame', 'base').listeners.click[0]()
+  byAttrValue(rail.body, 'data-ursim-frame', 'tool').listeners.click[0]()
 
   const btn = button('cartesian-y-minus')
   btn.listeners.pointerdown[0]({ pointerId: 16 })
@@ -3116,7 +3117,7 @@ test('★ 控制轨·速度流：frame 跟随参考系分段控件（base）', (
 
   const velocity = sent.find((payload) => payload.mode === 'velocity')
   assert.ok(velocity, '必须进入速度流')
-  assert.equal(velocity.frame, 'base', '★ 长按速度流使用当前参考系')
+  assert.equal(velocity.frame, 'tool', '★ 长按速度流使用当前参考系')
   assert.deepEqual(velocity.twist, [0, -0.025, 0, 0, 0, 0], 'Y− 只落在 y 分量且为负')
 
   rail.dispose()
@@ -3402,6 +3403,21 @@ test('★ 控制轨：禁用条件与控制轨一致（connected / simulated / f
   ctx.clock.flush()
   for (const el of controls()) assert.equal(el.disabled, true, '断连必须禁用')
   assert.match(rightNote(ctx).textContent, /未连接/)
+
+  ctx.panel.dispose()
+})
+/* ---- 图层默认态：`基座系` 默认选中（用户指定），`幽灵臂` 维持原本的默认开 ---- */
+
+test('★ 3D 图层默认态：基座系与幽灵臂默认开，可达范围与受力默认关', async () => {
+  const ctx = boot({ initial: LIVE, autoSim: false })
+  ctx.clock.flush()
+  await tick()
+
+  const pressed = (key) => byAttr(ctx.container, `data-ursim-twin-layer-${key}`)[0].getAttribute('aria-pressed')
+  assert.equal(pressed('base'), 'true', '★ 基座系按钮默认必须选中（用户指定）')
+  assert.equal(pressed('ghost'), 'true', '幽灵臂原本就默认开，不能被这次改动带掉')
+  assert.equal(pressed('reach'), 'false', '可达范围默认关')
+  assert.equal(pressed('force'), 'false', '受力默认关')
 
   ctx.panel.dispose()
 })
