@@ -123,7 +123,7 @@ host 侧路由（均限定 loopback 调用方）：
    // C:\Users\<you>\.dsh\profiles\web\package.json
    {
      "dependencies": {
-       "dsh-nonead-ursim": "^0.3.5"
+       "dsh-nonead-ursim": "^0.3.6"
      },
      "dsh": {
        "profile": {
@@ -201,7 +201,7 @@ npm run verify:models # 校验 14 个 GLB 的结构契约
   解释器没有 `numpy` 时，依赖 Python 的项会以
   **SKIP + 原因**出现，绝不会显示成通过。
 
-最近一次完整回归（**2026-10-20**，v0.3.5）的实测结论：`npm run check` 全通过；`npm test`
+最近一次完整回归（**2026-10-20**，v0.3.6）的实测结论：`npm run check` 全通过；`npm test`
 **59/59**（48 个测试文件 + 11 道门禁，0 失败 0 跳过）；`npm run verify:host` 报告
 **89/89** 工具经宿主真实 DSL 注册；`npm run verify:models` 14/14 模型通过；另做了一轮
 UR12e 离线仿真的端到端冒烟（读回、运动、面板点动/位姿/关节控制、带看门狗的速度流、I/O、

@@ -269,6 +269,22 @@ body[data-ds-dark-theme] .ursim-twin-panel {
 }
 /* flex 项默认可收缩，但要 min-width: 0 才会真的省略，而不是把整行撑破。 */
 .ursim-twin-hud-row[data-ursim-twin-identity] > [data-ursim-twin-feed] { min-width: 0; }
+/* 控制轨报错栏（0.3.6）：用户要求把它从右轨顶部挪到身份行右侧、与系统报错栏**各占一个槽位**共存。
+   槽位可收缩（超长省略而不是撑破身份行）；里面的错误节点去掉轨内的下外边距、改单行显示，
+   空的时候仍靠 .ursim-twin-ctl-error:empty 那条规则整个消失。 */
+.ursim-twin-hud-row[data-ursim-twin-identity] > [data-ursim-twin-identity-error] {
+  display: inline-flex;
+  min-width: 0;
+  overflow: hidden;
+}
+.ursim-twin-identity-error > .ursim-twin-ctl-error {
+  margin: 0;
+  font-size: 11px;
+  line-height: inherit;
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 /* 数据通道健康度（0.6.6）：停滞/重连必须一眼可见 —— 画面停住时用户要能分清
    "机器人停了"与"数据停了"，所以这一行用警示色（黄=停滞/重连中，红=通道不可用）。 */
 .ursim-twin-hud-row[data-ursim-twin-feed-state='stale'] { color: var(--ursim-warn); }

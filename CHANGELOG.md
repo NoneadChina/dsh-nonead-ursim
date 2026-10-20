@@ -8,6 +8,12 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.3.6] - 2026-10-20
+
+### Changed
+
+- **The control rail's error line moved out of the rail, next to the HUD identity row** (user request). A rejected or failed panel command no longer writes its red message at the top of the right rail; it now appears to the right of the `机器人 UR12e · 127.0.0.1` line under the 3D view, **sharing that line with the panel's own system error row** — each keeps its own slot, so a plugin-level fault and a control-rail command failure can be read at the same time. The mount point is decided by a new optional `errorHost` argument of `mountRightRail` (when omitted the node still goes back inside the rail, so existing callers and tests are unaffected); the HUD slot shrinks instead of stretching the row and ends long text with an ellipsis.
+
 ## [0.3.5] - 2026-10-20
 
 ### Changed

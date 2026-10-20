@@ -2667,9 +2667,20 @@ test('★ 控制轨尺寸：单条轨 500 px，按钮 54×54、位姿 3 列、�
   assert.deepEqual(axes, ['x', 'y', 'z', 'rx', 'ry', 'rz'],
     '★ 位姿单元格顺序必须是 X/Y/Z + RX/RY/RZ')
 
-  // 合并后这条轨自己带 note / error（不可用原因写在同一条轨顶部）。
+  // 提示栏仍在轨内顶部（整块不可用的原因写在那里）；**报错栏 0.3.6 起搬到 HUD 身份行**，
+  // 与"机器人 <型号> · <IP>"同一行、和系统级错误行各占一个槽位（用户要求：移到身份行右侧、与系统报错栏共存）。
   assert.equal(byAttr(rightBody(ctx), 'data-ursim-ctl-note').length, 1, '右轨的提示栏必须保留')
-  assert.equal(byAttr(rightBody(ctx), 'data-ursim-ctl-error').length, 1, '右轨的错误栏必须保留')
+  assert.equal(byAttr(rightBody(ctx), 'data-ursim-ctl-error').length, 0,
+    '★ 报错栏不再占轨内顶部（已移到身份行）')
+  const identityRow = byAttr(ctx.container, 'data-ursim-twin-identity')[0]
+  const errorSlot = byAttr(ctx.container, 'data-ursim-twin-identity-error')[0]
+  assert.ok(errorSlot, '★ 身份行必须有报错栏槽位（data-ursim-twin-identity-error）')
+  assert.equal(errorSlot.parentNode, identityRow, '★ 报错栏槽位必须挂在身份行里')
+  assert.equal(byAttr(errorSlot, 'data-ursim-ctl-error').length, 1,
+    '★ 报错栏节点（data-ursim-ctl-error）挂在身份行槽位内')
+  // 与系统级错误行**共存**：两条链路各自的节点都在，互不覆盖。
+  assert.equal(byAttr(ctx.container, 'data-ursim-twin-error').length, 1, '★ 系统级错误行必须保留')
+  assert.equal(byAttr(ctx.container, 'data-ursim-twin-feed').length, 1, '★ 数据停滞提示必须保留')
 
   ctx.panel.dispose()
 })
@@ -2712,11 +2723,13 @@ test('★ 控制轨：simulated=false / connected=false 时所有点动按钮 di
     assert.equal(button.disabled, true, `${button.getAttribute('data-ursim-jog')} 在非仿真时必须禁用`)
   }
   assert.equal(railBody(ctx).getAttribute('data-ursim-ctl-state'), 'disabled', '★ 整块状态由属性表达')
-  // 合并成一条轨后，提示/错误栏就长在同一条轨上（不可用时仍靠置灰 + 文字两类信号）。
+  // 提示栏仍在轨内（不可用原因）；报错栏已在身份行（0.3.6），这里只断言"轨内不再有它"。
   assert.equal(byAttr(railBody(ctx), 'data-ursim-ctl-note').length, 1,
     '★ 控制轨必须保留提示栏（data-ursim-ctl-note）')
-  assert.equal(byAttr(railBody(ctx), 'data-ursim-ctl-error').length, 1,
-    '★ 控制轨必须保留错误栏（data-ursim-ctl-error）')
+  assert.equal(byAttr(railBody(ctx), 'data-ursim-ctl-error').length, 0,
+    '★ 报错栏必须已移出控制轨（移到 HUD 身份行）')
+  assert.equal(byAttr(byAttr(ctx.container, 'data-ursim-twin-identity-error')[0], 'data-ursim-ctl-error').length, 1,
+    '★ 报错栏在身份行槽位里（不可用时同样可用它报原因）')
 
   // 仿真来了 ⇒ 解禁
   ctx.state.set({ simulated: true, ts: 1100 })
@@ -3191,7 +3204,11 @@ const jointValueEl = (ctx, index) =>
 const jointInc = (ctx, index) => byAttrValue(ctx.container, 'data-ursim-joint-inc', String(index))
 const jointDec = (ctx, index) => byAttrValue(ctx.container, 'data-ursim-joint-dec', String(index))
 const rightNote = (ctx) => byAttr(rightBody(ctx), 'data-ursim-ctl-note')[0]
-const rightError = (ctx) => byAttr(rightBody(ctx), 'data-ursim-ctl-error')[0]
+/**
+ * 报错栏（0.3.6 起在 HUD 身份行里，不再在轨内）：全局只有一个，按属性直接取。
+ * 取不到时返回 `undefined`，调用方的断言会立刻报错而不是静默通过。
+ */
+const rightError = (ctx) => byAttr(ctx.container, 'data-ursim-ctl-error')[0]
 
 const KIN12 = resolveKinematics('ur12e')
 const degToRad = (deg) => (deg * Math.PI) / 180
