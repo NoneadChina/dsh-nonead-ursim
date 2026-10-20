@@ -405,10 +405,11 @@ body[data-ds-dark-theme] .ursim-twin-panel {
   text-overflow: ellipsis;
 }
 .ursim-twin-ctl-summary:empty { display: none; }
-/* 主区两列：左 = 位姿 + 方向盘，右 = 坐标系 + 步长。 */
+/* 主区两列：左 = 位姿 + 方向盘，右 = 坐标系 + 步长。
+   右列收窄到 96 px：位姿六格因此多出 8 px 给输入框（参考图里边框明显宽于标签）。 */
 .ursim-twin-ctl-main {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 104px;
+  grid-template-columns: minmax(0, 1fr) 96px;
   gap: 10px;
   align-items: start;
   margin: 0 0 8px;
@@ -441,7 +442,7 @@ body[data-ds-dark-theme] .ursim-twin-panel {
 .ursim-twin-ctl-pad {
   display: grid;
   /* 3 × 54 + 2 × 6 = 174：两盘并排 2 × 174 + 10 = 358 ≤ 左列可用宽度（500 − 1 边框 −
-     20 内边距 − 104 右列 − 10 列间距 = 365）。 */
+     20 内边距 − 96 右列 − 10 列间距 = 373）。 */
   grid-template-columns: repeat(3, 54px);
   grid-template-rows: repeat(3, 54px);
   gap: 6px;
@@ -480,8 +481,9 @@ body[data-ds-dark-theme] .ursim-twin-panel {
 }
 .ursim-twin-ctl-row .ursim-twin-ctl-button {
   flex: 1 1 0;
+  min-width: 0;
   width: auto;
-  height: 38px;
+  height: 44px;
 }
 /* 分段控件：横向（步长在右侧列时改为竖排，见下面 .ursim-twin-ctl-stepcol）。 */
 .ursim-twin-ctl-seg {
@@ -519,19 +521,31 @@ body[data-ds-dark-theme] .ursim-twin-panel {
   height: auto;
 }
 .ursim-twin-ctl-frame .ursim-twin-ctl-seg-button {
-  flex: 0 0 34px;
-  height: 34px;
+  flex: 0 0 32px;
+  height: 32px;
   border-right: 0;
   border-bottom: 1px solid var(--ursim-border-subtle);
 }
-/* 步长：两块（mm 在上、° 在下）上下堆叠，每块内部竖排三档。
-   用户明确要求"不要左右结构，改成上下结构"——所以这里不是两列 grid，而是纵向 flex。 */
+/* 步长：两块（mm 在上、° 在下）上下堆叠，每块内部再「标签在左 + 竖排三档」。
+   用户明确要求"不要左右结构，改成上下结构"——两块之间是上下；块内标签与按钮的左右
+   关系照参考图（标签列窄到 40 px 时「步长 mm」自然折成两行）。 */
 .ursim-twin-ctl-steps {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
 }
-.ursim-twin-ctl-stepcol { min-width: 0; }
+.ursim-twin-ctl-stepcol {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.ursim-twin-ctl-stepcol > .ursim-twin-ctl-label {
+  margin: 0;
+  line-height: 1.3;
+  white-space: normal;
+}
 .ursim-twin-ctl-stepcol .ursim-twin-ctl-seg {
   flex-direction: column;
   height: auto;
@@ -546,7 +560,7 @@ body[data-ds-dark-theme] .ursim-twin-panel {
 .ursim-twin-ctl-pose {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px 8px;
+  gap: 6px;
   margin: 0;
 }
 .ursim-twin-ctl-pose-cell {
@@ -557,7 +571,7 @@ body[data-ds-dark-theme] .ursim-twin-panel {
   min-width: 0;
 }
 .ursim-twin-ctl-pose-label {
-  flex: 0 0 26px;
+  flex: 0 0 22px;
   font-size: 11px;
   color: var(--ursim-text-secondary);
 }
@@ -577,13 +591,14 @@ body[data-ds-dark-theme] .ursim-twin-panel {
   border-radius: 4px;
 }
 .ursim-twin-ctl-pose-input:disabled { opacity: 0.45; cursor: not-allowed; }
-/* 关节：名称 56 + ◀ 32 + 滑块 + ▶ 32 + 角度 64，行高 34。 */
+/* 关节：名称 44 + ◀ 30 + 滑块 + ▶ 30 + 角度 52，行高 34、列间距 6。
+   宽度从 500 px 里抠：固定列 156 + 间距 24 = 180，滑块拿剩下的 ~299 px。 */
 .ursim-twin-ctl-joint-row {
   display: grid;
-  grid-template-columns: 52px 30px minmax(0, 1fr) 30px 60px;
+  grid-template-columns: 44px 30px minmax(0, 1fr) 30px 52px;
   align-items: center;
-  /* 间隙 8px：◀ / ▶ 每枚都真下发 1°，贴太近时误触一次机械臂就动。 */
-  gap: 8px;
+  /* 间隙 6px：◀ / ▶ 每枚都真下发 1°，贴太近时误触一次机械臂就动；30×30 命中区不再缩小。 */
+  gap: 6px;
   height: 34px;
 }
 .ursim-twin-ctl-joint-name {

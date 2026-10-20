@@ -8,6 +8,12 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.3.5] - 2026-10-20
+
+### Changed
+
+- **The control rail was re-aligned to the teach-pendant reference** (user feedback with a screenshot of the running panel). Four adjustments, none of which removed a control: the `步长 mm` / `步长 °` labels moved to the **left** of their button column (a fixed 40 px label column, so the text wraps to two lines exactly like the pendant); `Z+` / `Z−` and `RZ+` / `RZ−` grew to 44 px tall so they read as wide buttons rather than pad cells; the joint row went 52 / 30 / 1fr / 30 / 60 with an 8 px gap → **44 / 30 / 1fr / 30 / 52 with a 6 px gap**, which gives the slider ~24 px more room while keeping the 30 × 30 hit area on the ± buttons; and the right column narrowed 104 → **96 px** with the pose axis labels 26 → **22 px**, so each of the six pose inputs is ~8 px wider. The rail is still 500 px wide.
+
 ## [0.3.4] - 2026-10-20
 
 ### Changed

@@ -2587,7 +2587,7 @@ function tapJog(ctx, key) {
   button.listeners.pointerup[0]()
 }
 
-test('★ 控制轨尺寸：单条轨 500 px，按钮 54×54、位姿 3 列、关节列 52/30/60、步长上下堆叠', async () => {
+test('★ 控制轨尺寸：单条轨 500 px，按钮 54×54、位姿 3 列、关节列 44/30/52、步长标签在左', async () => {
   const ctx = boot({ initial: LIVE, autoSim: false })
   ctx.clock.flush()
   await tick()
@@ -2597,12 +2597,12 @@ test('★ 控制轨尺寸：单条轨 500 px，按钮 54×54、位姿 3 列、�
     '★ 展开态：控制轨固定 500 px（RAIL_W）')
 
   /* ---- 点动盘：3×3、每格 54×54、gap 6 ----
-     算术：500 − 1（边框）− 20（body 左右各 10）− 104（右列）− 10（列间距）= 365 可用；
-     两盘并排 2 × 174 + 10 = 358 ≤ 365。 */
+     算术：500 − 1（边框）− 20（body 左右各 10）− 96（右列）− 10（列间距）= 373 可用；
+     两盘并排 2 × 174 + 10 = 358 ≤ 373。 */
   assert.match(TWIN_CSS, /\.ursim-twin-rail-body\[data-ursim-twin-rail-body='right'\]\s*\{\s*padding:\s*8px\s*10px/,
     '★ 控制轨 body 上下 8 / 左右 10')
-  assert.match(TWIN_CSS, /\.ursim-twin-ctl-main\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+104px/,
-    '★ 主区两列：左自适应 + 右 104 px（坐标系 / 步长）')
+  assert.match(TWIN_CSS, /\.ursim-twin-ctl-main\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+96px/,
+    '★ 主区两列：左自适应 + 右 96 px（坐标系 / 步长）')
   assert.match(TWIN_CSS, /\.ursim-twin-ctl-pad\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*54px\)/,
     '★ 3×3 盘必须是 3 列 54 px')
   assert.match(TWIN_CSS, /\.ursim-twin-ctl-pad\s*\{[^}]*gap:\s*6px/,
@@ -2615,6 +2615,9 @@ test('★ 控制轨尺寸：单条轨 500 px，按钮 54×54、位姿 3 列、�
     '★ 步长 mm / 步长 ° 必须上下堆叠（display:flex + column）')
   assert.doesNotMatch(TWIN_CSS, /\.ursim-twin-ctl-steps\s*\{[^}]*grid-template-columns/,
     '★ 步长容器不得回到左右 grid 两列')
+  // 块内布局照参考图：标签在左（窄列自然折成「步长 / mm」两行）、按钮在右竖排三档。
+  assert.match(TWIN_CSS, /\.ursim-twin-ctl-stepcol\s*\{[^}]*grid-template-columns:\s*40px\s+minmax\(0,\s*1fr\)/,
+    '★ 步长块内必须是「标签列 40 px + 按钮列」两列，标签在左')
 
   // 每个点动按钮都有可读 title（中文说明轴与方向，不是空串/"按钮"）。
   const buttons = allJogButtons(ctx)
@@ -2646,12 +2649,16 @@ test('★ 控制轨尺寸：单条轨 500 px，按钮 54×54、位姿 3 列、�
   /* ---- 位姿 3 列 × 2 行、关节五列固定宽度 ---- */
   assert.match(TWIN_CSS, /\.ursim-twin-ctl-pose\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/,
     '★ 位姿必须是 3 列网格')
-  assert.match(TWIN_CSS, /\.ursim-twin-ctl-pose-label\s*\{[^}]*flex:\s*0\s+0\s+26px/,
-    '★ 位姿轴标签固定 26 px')
+  assert.match(TWIN_CSS, /\.ursim-twin-ctl-pose-label\s*\{[^}]*flex:\s*0\s+0\s+22px/,
+    '★ 位姿轴标签固定 22 px（腾出宽度给输入框）')
   assert.match(TWIN_CSS, /\.ursim-twin-ctl-pose-input\s*\{[^}]*min-width:\s*0[^}]*height:\s*30px/,
     '★ 位姿输入框随列宽收缩、高 30 px')
-  assert.match(TWIN_CSS, /\.ursim-twin-ctl-joint-row\s*\{[^}]*grid-template-columns:\s*52px\s+30px\s+minmax\(0,\s*1fr\)\s+30px\s+60px/,
-    '★ 关节行 = 名称 52 + ◀ 30 + 滑块 + ▶ 30 + 数值 60')
+  assert.match(TWIN_CSS, /\.ursim-twin-ctl-joint-row\s*\{[^}]*grid-template-columns:\s*44px\s+30px\s+minmax\(0,\s*1fr\)\s+30px\s+52px/,
+    '★ 关节行 = 名称 44 + ◀ 30 + 滑块 + ▶ 30 + 数值 52')
+  assert.match(TWIN_CSS, /\.ursim-twin-ctl-joint-row\s*\{[^}]*gap:\s*6px/,
+    '★ 关节行列间距 6 px')
+  assert.match(TWIN_CSS, /\.ursim-twin-ctl-row \.ursim-twin-ctl-button\s*\{[^}]*height:\s*44px/,
+    '★ Z± / RZ± 宽按钮高 44 px（各占半条盘宽）')
 
   // 3 列网格靠 DOM 顺序折行：X/Y/Z 第一行、RX/RY/RZ 第二行。
   const poseGrid = byAttr(rightBody(ctx), 'data-ursim-ctl-grid')[0]
