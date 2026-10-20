@@ -1858,8 +1858,9 @@ test('★ jog 路由（路由级）：成功响应透出 worker 的 message，�
 });
 
 test('★ jog 路由（路由级）：八种 mode 的 body → worker op 与参数（含 deltaRad 改名、home 常量、速度流）', async () => {
-  // 用户 2026-10-17 裁定的回零位形；与型号无关的关节角。
-  const HOME_Q = [0, -Math.PI / 2, 0, -Math.PI / 2, -Math.PI, 0];
+  // 用户 2026-10-20 裁定的回零位形（机座 0°、肩部 −90°、肘部 0°、手腕1 −90°、手腕2 0°、手腕3 0°）；
+  // 与型号无关的关节角，真源在 lib/index.js 的 `HOME_JOINTS`。
+  const HOME_Q = [0, -Math.PI / 2, 0, -Math.PI / 2, 0, 0];
 
   /**
    * 这张表把「面板发的 body」到「真正派给 worker 的 op + 参数」的映射钉死。

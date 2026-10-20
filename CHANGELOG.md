@@ -8,6 +8,12 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.3.9] - 2026-10-20
+
+### Changed
+
+- **Home pose redefined** (user request): the panel `回零` (Home) button now brings the six joints to **0°, -90°, 0°, -90°, 0°, 0°** (base, shoulder, elbow, wrist 1, wrist 2, wrist 3) instead of the previous `[0°, -90°, 0°, -90°, -180°, 0°]`. The angle list now lives in exactly one place: a frozen module-level `HOME_JOINTS` constant in `lib/index.js` (radians), next to the `home` branch that uses it. The panel still sends only `{mode:"home"}`, so the simulated and the real path resolve the same pose; the button tooltip (`controlsHomeTitle`, zh and en) was updated in the same commit, so the hint can no longer describe a pose the arm does not go to.
+
 ## [0.3.8] - 2026-10-20
 
 ### Changed
