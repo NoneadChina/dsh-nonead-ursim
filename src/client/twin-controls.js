@@ -2,11 +2,11 @@
  * src/client/twin-controls.js — 面板控制轨的骨架与状态机。
  *
  * ## 分工（为什么单独一个文件）
- * `twin-panel.js` 已经背了画布、HUD、I/O、仿真开关、模型、主题、截图七件事；两条控制轨
- * （左轨点动 / 右轨位姿 + 关节）是**另一个职责**。放在这里才能被单独测试，
- * `twin-panel.js` 只负责三件事：
- *   ① 把 `stage`（三栏 grid）插进布局，把画布夹在两条轨中间；
- *   ② 把最新快照喂给 `mountLeftRail` / `mountRightRail` 返回的 `sync(snapshot)`；
+ * `twin-panel.js` 已经背了画布、HUD、I/O、仿真开关、模型、主题、截图七件事；控制轨
+ * （2026-10-20 起合并为**单条右轨**：只读读数 + 位姿输入 + 坐标系 + 点动盘/步长 + 六关节）
+ * 是**另一个职责**。放在这里才能被单独测试，`twin-panel.js` 只负责三件事：
+ *   ① 把 `stage`（两栏 grid：3D + 控制轨）插进布局；
+ *   ② 把最新快照喂给 `mountRightRail` 返回的 `sync(snapshot)`；
  *   ③ 用 `deps.send(body)` 把控件产生的命令交回宿主（body 就是 `/twin/jog` 路由的 body）。
  *
  * 本模块**零 Node 依赖**（浏览器 bundle 直接打包）：只用注入进来的 `doc`，不 import `node:*`，
@@ -29,67 +29,65 @@
 
 import { activeStrings } from './strings.js'
 
-/**
- * 左轨控件的文案表（标签 / 禁用原因 / 错误行）。
- *
- * 模块级只取一次：面板是长期驻留的，运行期不换语言；与 `twin-panel.js` 用的是同一个
- * `activeStrings()`，所以两边的语言一定一致。
- */
+/** 当前语言的文案表（模块级：`JOG_SPECS` 的标签在建表时就要用到）。 */
 const S = activeStrings()
 
 /**
- * 侧轨宽度（px）—— 与 `stageColumns()` 同一份真源。
+ * 控制轨宽度（px）—— 与 `stageColumns()` 同一份真源。
  *
- * 180 / 350 是控件尺寸反推出来的，不是随手定的：
- *   - 左轨 3×3 盘用 52×52 按钮 + gap 6（3×52 + 2×6 = 168），加左右各 6 px 内边距正好 180；
- *   - 右轨位姿 3 列 × 2 行（每格 = 28 px 标签 + 最小 76 px 输入框），加左右各 8 px 内边距
- *     正好放得下 3×107 + 2×6 的网格。
- * 改这两个常量时，`styles.js` 里对应的格宽/内边距**必须一起重算**（否则会溢出或留白）。
+ * 2026-10-20 起面板只有**一条**控制轨（原来左/右两条，用户要求合并到右侧），宽度 700 是按
+ * 附件布局反推出来的，不是随手定的：
+ *   - 位姿行 = 3 列输入（每列 26 px 标签 + 输入框） + 10 px 间隙 + 150 px「坐标系」竖排分段；
+ *   - 点动行 = 两个 3×3 方向盘（各约 265 px）+ 10 px 间隙 + 136 px 步长列（两档竖排）；
+ *   - 关节行 = 40 名称 + ◀ + 滑块 + ▶ + 70 数值。
+ * 改这个常量时，`styles.js` 里对应的格宽/内边距**必须一起重算**（否则会溢出或留白）。
  */
-export const RAIL_W_LEFT = 180
-export const RAIL_W_RIGHT = 350
+export const RAIL_W = 700
 /** 收起后的列宽（px）：只留一个把手。 */
 export const RAIL_W_COLLAPSED = 24
-/** 中列最小宽度（px）：低于它 3D 就失去可读性。 */
+/** 舞台（3D）列最小宽度（px）：低于它 3D 就失去可读性。 */
 export const RAIL_MIN_STAGE = 280
-/** localStorage 键：记住两条轨的收起状态。 */
+/**
+ * localStorage 键：记住控制轨的收起状态。
+ *
+ * 键名沿用两轨时代的名字（`{left,right}`）；现在只认 `right`，旧数据里的 `left` 被忽略 ——
+ * 这样升级后不会因为键名变化把用户的"收起"偏好重置成展开。
+ */
 export const RAIL_STATE_KEY = 'dsh-nonead-ursim.rails'
 
 /**
- * 某一侧在某状态下应有的宽度（px）。
+ * 控制轨在某状态下应有的宽度（px）。
  *
- * @param {'left'|'right'} side 哪条轨
  * @param {boolean} collapsed 是否收起
  * @returns {number}
  */
-export function railWidth(side, collapsed) {
-  if (collapsed === true) return RAIL_W_COLLAPSED
-  return side === 'right' ? RAIL_W_RIGHT : RAIL_W_LEFT
+export function railWidth(collapsed) {
+  return collapsed === true ? RAIL_W_COLLAPSED : RAIL_W
 }
 
 /**
- * 拼出三栏 grid 的 `grid-template-columns`（**唯一**拼法，面板与测试都读它）。
+ * 拼出两栏 grid 的 `grid-template-columns`（**唯一**拼法，面板与测试都读它）。
  *
- * @param {{left?: boolean, right?: boolean}} state 两条轨是否收起
+ * 顺序是"舞台 + 控制轨"：3D 视图在左、控制轨在右（与旧的三栏时代一致，只是少了左轨）。
+ *
+ * @param {{right?: boolean}} state 控制轨是否收起
  * @returns {string}
  */
 export function stageColumns(state) {
-  const left = railWidth('left', state?.left === true)
-  const right = railWidth('right', state?.right === true)
-  return `${left}px minmax(${RAIL_MIN_STAGE}px, 1fr) ${right}px`
+  return `minmax(${RAIL_MIN_STAGE}px, 1fr) ${railWidth(state?.right === true)}px`
 }
 
 /**
- * 读两条轨的收起状态（**容错解析，永不抛错**）。
+ * 读控制轨的收起状态（**容错解析，永不抛错**）。
  *
  * 任何一步失败（没有 storage、隐私模式抛错、值不是合法 JSON、字段类型不对）都退回
- * "两条都展开"—— 这是唯一不会让控件消失的安全默认值。
+ * "展开"—— 这是唯一不会让控件消失的安全默认值。
  *
  * @param {{getItem?: Function}|null|undefined} storage `localStorage`（或假实现）
- * @returns {{left: boolean, right: boolean}}
+ * @returns {{right: boolean}}
  */
 export function readRailState(storage) {
-  const fallback = { left: false, right: false }
+  const fallback = { right: false }
   let raw = null
   try {
     raw = storage?.getItem?.(RAIL_STATE_KEY) ?? null
@@ -104,19 +102,19 @@ export function readRailState(storage) {
     return fallback
   }
   if (!parsed || typeof parsed !== 'object') return fallback
-  // 只认布尔 `true`：字符串 "true" / 1 之类都不算，避免手改过的存储把两侧全收起来。
-  return { left: parsed.left === true, right: parsed.right === true }
+  // 只认布尔 `true`：字符串 "true" / 1 之类都不算，避免手改过的存储把控制轨收起来。
+  return { right: parsed.right === true }
 }
 
 /**
- * 写两条轨的收起状态（**写失败静默**）。
+ * 写控制轨的收起状态（**写失败静默**）。
  *
  * @param {{setItem?: Function}|null|undefined} storage
- * @param {{left?: boolean, right?: boolean}} state
- * @returns {{left: boolean, right: boolean}|null} 真正写下去的状态；写失败返回 null
+ * @param {{right?: boolean}} state
+ * @returns {{right: boolean}|null} 真正写下去的状态；写失败返回 null
  */
 export function writeRailState(storage, state) {
-  const next = { left: state?.left === true, right: state?.right === true }
+  const next = { right: state?.right === true }
   try {
     storage?.setItem?.(RAIL_STATE_KEY, JSON.stringify(next))
     return next
@@ -126,15 +124,14 @@ export function writeRailState(storage, state) {
 }
 
 /**
- * 建一侧的轨（把手 + 空 body），并把初始收起状态从 storage 恢复。
+ * 建控制轨（把手 + 空 body），并把初始收起状态从 storage 恢复。
  *
  * 结构样式**不在这里写**：`.ursim-twin-rail` / `.ursim-twin-rail-toggle` / `.ursim-twin-rail-body`
  * 三条规则住在 `styles.js` 的 `TWIN_CSS` 里（见文件头）。本函数只建 DOM、挂 `data-*`、管状态。
  *
  * @param {Document} doc 文档（测试注入假 document）
- * @param {'left'|'right'} side 哪一侧
  * @param {{getItem?: Function,setItem?: Function}|null} storage localStorage 或假实现
- * @param {{onChange?: (side: 'left'|'right', collapsed: boolean) => void}} [options]
+ * @param {{onChange?: (collapsed: boolean) => void}} [options]
  *   `onChange` 只在**用户点击**之后触发（初始恢复不触发）：面板据此重算 grid 列宽并重量画布。
  * @returns {{
  *   rail: HTMLElement, toggle: HTMLElement, body: HTMLElement,
@@ -142,23 +139,21 @@ export function writeRailState(storage, state) {
  *   isCollapsed: () => boolean,
  * }}
  */
-export function buildRail(doc, side, storage, options = {}) {
-  const which = side === 'right' ? 'right' : 'left'
+export function buildRail(doc, storage, options = {}) {
   const onChange = typeof options.onChange === 'function' ? options.onChange : null
-  const sideLabel = which === 'left' ? '左侧' : '右侧'
 
   const rail = doc.createElement('div')
   rail.className = 'ursim-twin-rail'
-  rail.setAttribute('data-ursim-twin-rail', which)
+  rail.setAttribute('data-ursim-twin-rail', 'right')
 
   const toggle = doc.createElement('button')
   toggle.setAttribute('type', 'button')
   toggle.className = 'ursim-twin-rail-toggle'
-  toggle.setAttribute('data-ursim-twin-rail-toggle', which)
+  toggle.setAttribute('data-ursim-twin-rail-toggle', 'right')
 
   const body = doc.createElement('div')
   body.className = 'ursim-twin-rail-body'
-  body.setAttribute('data-ursim-twin-rail-body', which)
+  body.setAttribute('data-ursim-twin-rail-body', 'right')
 
   rail.appendChild(toggle)
   rail.appendChild(body)
@@ -169,12 +164,9 @@ export function buildRail(doc, side, storage, options = {}) {
   function syncChrome() {
     rail.setAttribute('data-collapsed', collapsed ? 'true' : 'false')
     toggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true')
-    // 箭头指向"点下去会发生什么"：左轨展开时朝左（收起），收起后朝右（展开）。
-    const arrow = which === 'left'
-      ? (collapsed ? '›' : '‹')
-      : (collapsed ? '‹' : '›')
-    toggle.textContent = arrow
-    const hint = `${collapsed ? '展开' : '收起'}${sideLabel}控制轨`
+    // 箭头指向"点下去会发生什么"：展开时朝右（收起），收起后朝左（展开）。
+    toggle.textContent = collapsed ? '‹' : '›'
+    const hint = collapsed ? '展开控制轨' : '收起控制轨'
     toggle.setAttribute('title', hint)
     toggle.setAttribute('aria-label', hint)
   }
@@ -191,13 +183,8 @@ export function buildRail(doc, side, storage, options = {}) {
     if (want === collapsed) return collapsed
     collapsed = want
     syncChrome()
-    if (opts.persist !== false) {
-      // 每次都以存储里的现值为底再改自己这一侧：两条轨各自写、互不覆盖。
-      const saved = readRailState(storage)
-      saved[which] = collapsed
-      writeRailState(storage, saved)
-    }
-    onChange?.(which, collapsed)
+    if (opts.persist !== false) writeRailState(storage, { right: collapsed })
+    onChange?.(collapsed)
     return collapsed
   }
 
@@ -206,7 +193,7 @@ export function buildRail(doc, side, storage, options = {}) {
   })
 
   // 初始状态来自存储（读失败 = 展开），恢复过程**不**触发 onChange：面板此时会自己算一次列宽。
-  collapsed = readRailState(storage)[which] === true
+  collapsed = readRailState(storage).right === true
   syncChrome()
 
   return {
@@ -218,26 +205,75 @@ export function buildRail(doc, side, storage, options = {}) {
   }
 }
 
-/** 建一个空 body（占位）：后续任务只在这里填控件，不改骨架。 */
-function makeBody(doc, which, deps) {
+/** 建一个空 body（占位）：控件由 `mountRightRail` 填，不改骨架。 */
+function makeBody(doc, deps) {
   const body = doc?.createElement?.('div') ?? null
   if (!body) return null
   body.className = 'ursim-twin-rail-body'
-  body.setAttribute('data-ursim-twin-rail-body', which)
-  // 供后续任务的控件读取：命令出口与最新快照。
+  body.setAttribute('data-ursim-twin-rail-body', 'right')
+  // 供控件读取：命令出口与最新快照。
   body.__deps = deps ?? {}
   return body
 }
 
+/**
+ * 运动命令的**全局闸门**：点动盘与位姿/关节输入共用同一把锁。
+ *
+ * 合并成一条轨之后，两类控件在同一屏上、都属于"让机械臂动"的命令，而宿主 `/twin/jog` 一次
+ * 只该执行一条运动：以前左右两轨各有一个 `busy` 标志，用户一只手按住点动盘、另一只手拖关节
+ * 滑块时，两条命令会同时下发。这里把它收成一个持有者模型（相当于互斥量）：
+ *   - `tryAcquire(owner)` 成功才允许发命令，失败表示"别人正在动"，调用方按忙处理；
+ *   - `subscribe(fn)` 让"锁的持有状态变了"成为唯一的重绘信号（两边的按钮态、body 状态都靠它）。
+ *
+ * @returns {{
+ *   tryAcquire: (owner: string) => boolean,
+ *   release: (owner: string) => void,
+ *   isHeld: () => boolean,
+ *   subscribe: (fn: (held: boolean) => void) => () => void,
+ * }}
+ */
+export function createMotionLock() {
+  let holder = null
+  const listeners = new Set()
+  const notify = () => {
+    for (const fn of [...listeners]) {
+      try {
+        fn(holder !== null)
+      } catch {
+        /* 订阅者异常不得让别的控件发不出命令 */
+      }
+    }
+  }
+  return {
+    tryAcquire(owner) {
+      if (holder !== null) return false
+      holder = owner
+      notify()
+      return true
+    },
+    release(owner) {
+      if (holder !== owner) return
+      holder = null
+      notify()
+    },
+    isHeld: () => holder !== null,
+    subscribe(fn) {
+      if (typeof fn !== 'function') return () => {}
+      listeners.add(fn)
+      return () => listeners.delete(fn)
+    },
+  }
+}
+
 /* ------------------------------------------------------------------ *
- * 左轨控件（点动 + 步长 + 参考系 + 回零）
+ * 点动控件（TCP 位置 / TCP 方向两个盘 + 步长 mm / ° 两档 + 参考系 + 回零）
  *
  * 这一层的职责边界：**只把一次点击整形为宿主 `/twin/jog` 的 body**，不自己发请求、
  * 不读运动学、不做乐观更新（下一帧状态才是唯一真源）。命令出口与快照都是注入的：
  *   - `deps.send(body)`  —— 返回 Promise 时按"完成/失败"解禁，返回其它值时视为同步完成；
- *   - `deps.getSnapshot()` —— 本模块不用它（面板每帧调 `sync(snapshot)` 更直接）；
- *   - `deps.setTimeout` / `deps.clearTimeout` —— 长按重复的定时器（单测注入假时钟）。
- * 没有 `send`（或它抛错）时控件保持禁用，**绝不吞掉异常**：错误写到控件区的错误行上。
+ *   - `deps.setTimeout` / `deps.clearTimeout` —— 长按重复的定时器（单测注入假时钟）；
+ *   - `deps.lock` —— 与位姿/关节共用的运动闸门（`createMotionLock()`）。
+ * 没有 `send`（或它抛错）时控件保持禁用，**绝不吞掉异常**：错误交给 `deps.reportError`。
  * ------------------------------------------------------------------ */
 
 /** 按住多久后从"一步"切换成速度流（毫秒）。 */
@@ -362,52 +398,58 @@ function makeSegment(doc, label, attr, options, initial, onPick) {
   setActive(active)
   return { wrap, buttons, setActive }
 }
-
 /**
- * 左轨内容：TCP 位置 / TCP 方向 点动盘、步长、参考系、回零。
+ * 点动区内容：TCP 位置 / TCP 方向 点动盘、步长两档（mm / °）。
  *
- * 交互（设计 §6，2026-10-19 改为"短按一步 / 长按速度流"）：
+ * 这一层的职责边界：**只把一次点击整形为宿主 `/twin/jog` 的 body**，不自己发请求、
+ * 不读运动学、不做乐观更新（下一帧状态才是唯一真源）。命令出口与快照都是注入的：
+ *   - `deps.send(body)`  —— 返回 Promise 时按"完成/失败"解禁，返回其它值时视为同步完成；
+ *   - `deps.setTimeout` / `deps.clearTimeout` —— 长按重复的定时器（单测注入假时钟）；
+ *   - `deps.lock` —— `createMotionLock()` 的实例：点动与位姿/关节输入共用一把闸门。
+ * 没有 `send`（或它抛错）时控件保持禁用，**绝不吞掉异常**：错误写到控件区的错误行上。
+ *
+ * ## 交互（设计 §6，2026-10-19 改为"短按一步 / 长按速度流"）
  *   - **短按**：按下立即发**一步**（`cartesian` / `rotate`），松手补一条 `{mode:'stop'}`；
  *   - **长按**：按住 `JOG_HOLD_DELAY_MS` 后不再重复小步，切换成**速度流** ——
  *     发一条 `{mode:'velocity', twist, frame, ttlMs}`，此后每 `JOG_VELOCITY_INTERVAL_MS`
  *     重发一次（喂服务器看门狗，400 ms 不收就自动归零）；
- *   - **重发是覆盖式**：上一条还在飞就跳过这一拍，但**绝不停表**（后端立即返回，
- *     理论上不会忙；容错时也不能让速度流因为一次忙就断掉）；
+ *   - **重发是覆盖式**：上一条还在飞就跳过这一拍，但**绝不停表**；
  *   - **回零不参与速度流**：它是绝对位形，按住重复没有意义 —— 仍然"点一次走一次"；
  *   - 按下时抓住指针（`setPointerCapture`），松开（`pointerup` / `pointerleave` /
- *     `pointercancel` / `lostpointercapture`）即停，**任何按住结束都发 `{mode:'stop'}`**
- *     （无论此前处于步进还是速度流阶段），定时器在 `dispose()` 清掉；
+ *     `pointercancel` / `lostpointercapture`）即停，**任何按住结束都发 `{mode:'stop'}`**；
+ *     另外在窗口层面兜底 `blur` / `pointerup`（捕获阶段）/ `visibilitychange`；
  *   - 宿主节点写 `data-ursim-jog-mode="step"|"velocity"`（空闲/短按时为 `step`）；
- *   - **同一时刻只允许一条命令在飞**（串行）：在途（busy）时**不设 `disabled`**（否则被按住的
- *     按钮收不到 `pointerup`，长按会被自己掐断），只写 `aria-disabled="true"` +
- *     `data-ursim-ctl-state="busy"`；后续命令仍由 `runCommand` 的代码闸门丢弃；
- *     `{mode:'stop'}` 是**例外**：它不走 busy 闸门，松手必须能立刻打断在途的速度指令。
- *   - 快照 `connected !== true` / `feedStale === true` / `simulated !== true` ⇒ 全部控件禁用。
- *
- * **左轨没有文字原因栏**：这一栏在窄轨时代会把方向盘挤下去，而且"为什么不能点"在右轨
- * 已经有一份。这里只靠置灰 + `data-ursim-ctl-state` 表达，不再写 `data-ursim-ctl-note` /
- * `data-ursim-ctl-error`（它们只存在于右轨）。
+ *   - **同一时刻只允许一条命令在飞**（串行，且与位姿/关节共用 `lock`）：在途时点动按钮
+ *     **不设 `disabled`**（否则被按住的按钮收不到 `pointerup`，长按会被自己掐断），只写
+ *     `aria-disabled="true"`；后续命令由 `runCommand` 的门丢弃；
+ *     `{mode:'stop'}` 是**例外**：它不走闸门，松手必须能立刻打断在途的速度指令。
  *
  * 按钮文案一律带轴与方向（`X+` / `RX−` / `回零`…），`title` 里再写清"沿哪个参考系的哪根轴、
  * 走多少"—— 步长或参考系一变就重算，避免标题与真实命令对不上。
  *
  * @param {Document} doc
- * @param {HTMLElement} body 侧轨的 body 容器
- * @param {{send?: Function, getSnapshot?: Function, setTimeout?: Function, clearTimeout?: Function}} [deps]
- * @returns {{sync: (snapshot?: object) => void, dispose: () => void, body: HTMLElement|null, deps: object}}
+ * @param {{send?: Function, setTimeout?: Function, clearTimeout?: Function, lock?: object, host?: object, reportError?: Function}} [deps]
+ * @returns {{
+ *   row: HTMLElement|null,
+ *   frameSeg: HTMLElement|null,
+ *   sync: (snapshot?: object) => void,
+ *   dispose: () => void,
+ * }}
+ *   `row` 是"两盘点动盘 + 步长列"的一行（由 `mountRightRail` 插进正文）；
+ *   `frameSeg` 是参考系分段控件（工具系 / 基座系），由调用方放进「坐标系」那一列。
  */
-export function mountLeftRail(doc, body, deps = {}) {
-  const host = body ?? makeBody(doc, 'left', deps)
-  if (!host) {
-    return { body: null, deps, sync() {}, dispose() {} }
-  }
-  host.setAttribute('data-ursim-twin-rail-body', 'left')
-  const merged = { ...(host.__deps ?? {}), ...deps }
-  host.__deps = merged
-
+export function createJogControls(doc, deps = {}) {
+  const merged = { ...deps }
   const send = typeof merged.send === 'function' ? merged.send : null
   const setT = typeof merged.setTimeout === 'function' ? merged.setTimeout : globalThis.setTimeout
   const clearT = typeof merged.clearTimeout === 'function' ? merged.clearTimeout : globalThis.clearTimeout
+  const lock = merged.lock ?? createMotionLock()
+  /**
+   * 面板级宿主节点：`data-ursim-jog-mode` 除了写在 `row`（CSS 用它切样式）之外，还要在面板
+   * 正文上再写一份 —— 合并成单轨后，这个属性就是整块面板"现在是步进还是速度流"的状态位，
+   * 外部（测试、将来的诊断面板）只看正文即可，不必知道内部 DOM 结构。
+   */
+  const host = merged.host ?? null
 
   /* ---------------- 可变状态 ---------------- */
   let disposed = false
@@ -416,8 +458,6 @@ export function mountLeftRail(doc, body, deps = {}) {
   let frame = 'tool'
   /** 整块控件是否可用（连接 + 仿真 + 数据在流动）。 */
   let available = false
-  /** 是否有命令在飞（串行：同一时刻只允许一条）。 */
-  let busy = false
   let repeatTimer = null
   /** 当前是否有一段"按住"仍在进行（松手时据此决定要不要补 stop）。 */
   let holding = false
@@ -456,9 +496,6 @@ export function mountLeftRail(doc, body, deps = {}) {
   }
 
   /* ---------------- DOM ---------------- */
-  // 左轨**不建** note / error 两个节点（见函数文档）：禁用状态只由 data-ursim-ctl-state
-  // 与控件的 disabled 表达。右轨仍保留那一对（那里有空间，也承载命令失败原因）。
-
   const jogButtons = []
   const segmentButtons = []
 
@@ -499,8 +536,6 @@ export function mountLeftRail(doc, body, deps = {}) {
   zRow.appendChild(makeJogButton('cartesian-z-minus'))
   posSection.appendChild(zRow)
 
-  host.appendChild(posSection)
-
   /* ---- TCP 方向 ---- */
   const rotSection = makeEl(doc, 'div', 'ursim-twin-ctl-section', 'data-ursim-ctl-section', 'orientation')
   const rotLabel = makeEl(doc, 'div', 'ursim-twin-ctl-label')
@@ -535,11 +570,14 @@ export function mountLeftRail(doc, body, deps = {}) {
   rzRow.appendChild(makeJogButton('rotate-rz-minus'))
   rotSection.appendChild(rzRow)
 
-  host.appendChild(rotSection)
-
-  /* ---- 步进与参考系（位置/姿态两组步长共用同一块，避免单位混在某个分区标题下）---- */
+  /* ---- 步长：两档竖排（位置 mm / 姿态 °），与附件图右侧那两列一致 ---- */
   const stepSection = makeEl(doc, 'div', 'ursim-twin-ctl-section', 'data-ursim-ctl-section', 'steps')
+  const stepsInner = makeEl(doc, 'div', 'ursim-twin-ctl-steps')
 
+  const mmCell = makeEl(doc, 'div', 'ursim-twin-ctl-stepcol')
+  const mmTitle = makeEl(doc, 'div', 'ursim-twin-ctl-label')
+  mmTitle.textContent = S.controlsStepMm
+  mmCell.appendChild(mmTitle)
   const stepMmSeg = makeSegment(
     doc,
     S.controlsStepMm,
@@ -557,8 +595,13 @@ export function mountLeftRail(doc, body, deps = {}) {
   )
   stepMmSeg.wrap.setAttribute('data-ursim-ctl-seg', 'step-mm')
   segmentButtons.push(...stepMmSeg.buttons.map((entry) => entry.button))
-  stepSection.appendChild(stepMmSeg.wrap)
+  mmCell.appendChild(stepMmSeg.wrap)
+  stepsInner.appendChild(mmCell)
 
+  const degCell = makeEl(doc, 'div', 'ursim-twin-ctl-stepcol')
+  const degTitle = makeEl(doc, 'div', 'ursim-twin-ctl-label')
+  degTitle.textContent = S.controlsStepDeg
+  degCell.appendChild(degTitle)
   const stepDegSeg = makeSegment(
     doc,
     S.controlsStepDeg,
@@ -576,11 +619,15 @@ export function mountLeftRail(doc, body, deps = {}) {
   )
   stepDegSeg.wrap.setAttribute('data-ursim-ctl-seg', 'step-deg')
   segmentButtons.push(...stepDegSeg.buttons.map((entry) => entry.button))
-  stepSection.appendChild(stepDegSeg.wrap)
+  degCell.appendChild(stepDegSeg.wrap)
+  stepsInner.appendChild(degCell)
 
+  stepSection.appendChild(stepsInner)
+
+  /* ---- 参考系（工具系 / 基座系）：不在这里定位，交给调用方放进「坐标系」列 ---- */
   const frameSeg = makeSegment(
     doc,
-    S.controlsFrame,
+    S.controlsFrameTitle,
     'data-ursim-frame',
     [
       { value: 'tool', text: S.controlsFrameTool, title: S.controlsFrameOptionTitle(S.controlsFrameTool) },
@@ -594,9 +641,11 @@ export function mountLeftRail(doc, body, deps = {}) {
   )
   frameSeg.wrap.setAttribute('data-ursim-ctl-seg', 'frame')
   segmentButtons.push(...frameSeg.buttons.map((entry) => entry.button))
-  stepSection.appendChild(frameSeg.wrap)
 
-  host.appendChild(stepSection)
+  /* ---- 点动行：位置盘 | 方向盘（步长两档不在这里排，交给调用方放进右侧列）---- */
+  const row = makeEl(doc, 'div', 'ursim-twin-ctl-jog', 'data-ursim-ctl-row', 'jog')
+  row.appendChild(posSection)
+  row.appendChild(rotSection)
 
   /* ---------------- 行为 ---------------- */
 
@@ -676,7 +725,7 @@ export function mountLeftRail(doc, body, deps = {}) {
 
   /** 按下：立即走一步；非回零键随后进入"按住"状态（250 ms 后切速度流）。 */
   function onPress(key) {
-    if (disposed || !available || busy || send === null) return
+    if (disposed || !available || send === null) return
     if (!runCommand(bodyFor(key))) return
     holding = true
     heldKey = key
@@ -711,39 +760,34 @@ export function mountLeftRail(doc, body, deps = {}) {
   }
 
   /**
-   * 发一条命令（串行）。
+   * 发一条命令（串行，与位姿/关节共用 `lock`）。
    *
    * `send` 返回 Promise 时在它落定后解禁；返回其它值（如单测里的记录器）视为同步完成 ——
    * 否则长按重复在假时钟下会被上一条"永远在飞"卡死。
    *
-   * 失败只回滚"在途"状态：左轨没有原因栏，异常不抛到事件回调外，也不写任何文字节点。
-   *
-   * @returns {boolean} 是否真的发出去（在途/没有出口时为 false）
+   * @returns {boolean} 是否真的发出去（别的控件正持有闸门 / 没有出口时为 false）
    */
   function runCommand(payload) {
-    if (!payload || send === null || busy) return false
-    busy = true
-    renderAvailability()
+    if (disposed || !payload || send === null || !available) return false
+    if (!lock.tryAcquire('jog')) return false
+    const settle = () => {
+      lock.release('jog')
+      if (!disposed) renderAvailability()
+    }
     let result
     try {
       result = send(payload)
     } catch {
-      finish()
+      settle()
       return false
     }
     if (result !== null && typeof result?.then === 'function') {
-      result.then(() => finish(), () => finish())
+      result.then(settle, settle)
     } else {
-      finish()
+      settle()
     }
-    return true
-  }
-
-  /** 一条命令落定：解禁（失败与成功对左轨而言只差一次置灰的时长）。 */
-  function finish() {
-    busy = false
-    if (disposed) return
     renderAvailability()
+    return true
   }
 
   /** 按住 `JOG_HOLD_DELAY_MS` 后切速度流；此后每 `JOG_VELOCITY_INTERVAL_MS` 重发一次。 */
@@ -785,7 +829,8 @@ export function mountLeftRail(doc, body, deps = {}) {
   function setJogMode(next) {
     if (next === lastMode) return
     lastMode = next
-    host.setAttribute('data-ursim-jog-mode', next)
+    row.setAttribute('data-ursim-jog-mode', next)
+    if (host && host !== row) host.setAttribute('data-ursim-jog-mode', next)
   }
 
   /**
@@ -818,7 +863,7 @@ export function mountLeftRail(doc, body, deps = {}) {
   /**
    * 松手 / 移出 / 取消 / 捕获丢失 / 卸载：结束按住并补一条 `{mode:'stop'}`。
    *
-   * - stop **不走 busy 闸门**：一条 velocity 还在飞时松手，也必须能把机械臂停下来；
+   * - stop **不走闸门**：一条 velocity 还在飞时松手，也必须能把机械臂停下来；
    * - 只有"真的有过一段按住"才发：`pointerup` 之后浏览器补发的 `lostpointercapture`
    *   不会再补第二条 stop。
    */
@@ -831,14 +876,14 @@ export function mountLeftRail(doc, body, deps = {}) {
    * 发停止指令（尽力而为，但**不再静默**）。
    *
    * 这是"松手之后让机械臂停下来"的那一条：丢掉它就只剩服务器 400 ms 看门狗兜底，而看门狗
-   * 一旦失效，机械臂会带着最后一次速度继续动。左轨刻意没有错误栏（用户裁定：控件区只表达
-   * 可用性），所以把失败原因交给面板的统一错误行（`deps.reportError`），同时在宿主节点上留
-   * `data-ursim-stop-failed` 供排查；没有上报出口时也不会把异常冒到事件回调外。
+   * 一旦失效，机械臂会带着最后一次速度继续动。失败原因交给面板的统一错误行
+   * （`deps.reportError`），同时在宿主节点上留 `data-ursim-stop-failed` 供排查；
+   * 没有上报出口时也不会把异常冒到事件回调外。
    */
   function sendStop() {
     if (send === null) return
     const onFail = (e) => {
-      host.setAttribute('data-ursim-stop-failed', 'true')
+      row.setAttribute('data-ursim-stop-failed', 'true')
       merged.reportError?.(S.controlsStopFailed(e instanceof Error ? e.message : String(e)))
     }
     let result
@@ -849,12 +894,12 @@ export function mountLeftRail(doc, body, deps = {}) {
       return
     }
     if (result !== null && typeof result?.then === 'function') {
-      // stop 不参与 busy 状态，也不让失败冒成 unhandledRejection。
+      // stop 不参与闸门，也不让失败冒成 unhandledRejection。
       result.then(() => {
-        host.removeAttribute?.('data-ursim-stop-failed')
+        row.removeAttribute?.('data-ursim-stop-failed')
       }, onFail)
     } else {
-      host.removeAttribute?.('data-ursim-stop-failed')
+      row.removeAttribute?.('data-ursim-stop-failed')
     }
   }
 
@@ -867,20 +912,26 @@ export function mountLeftRail(doc, body, deps = {}) {
     if (doc?.visibilityState === 'hidden') stopRepeat()
   })
 
-  /** 只有"可用性/在途"变化时才写 DOM —— 每帧（60 Hz）重写 disabled 是浪费。 */
+  /**
+   * 只有"可用性/闸门持有者"变化时才写 DOM —— 每帧（60 Hz）重写 disabled 是浪费。
+   *
+   * `data-ursim-ctl-state` 由 `mountRightRail` 统一写到 body 上（整条轨一个状态）；
+   * 这里只在点动行上写一份同样的值，方便单独调试只看点动区。
+   */
   function renderAvailability() {
+    const busy = lock.isHeld()
     const key = `${available ? '1' : '0'}${busy ? '1' : '0'}`
     if (key === lastRenderKey) return
     lastRenderKey = key
     for (const entry of jogButtons) {
       // 只有"能不能用"才落真 disabled。busy 绝不能设 disabled：被禁用的元素不再接收
       // 指针事件，浏览器会补一个 pointercancel，正在被按住的按钮当场丢长按定时器。
-      // busy 只写 aria-disabled + 宿主节点状态，按钮仍然收得到 pointerup。
+      // busy 只写 aria-disabled，按钮仍然收得到 pointerup。
       entry.button.disabled = !available
       entry.button.setAttribute('aria-disabled', busy ? 'true' : 'false')
     }
     for (const button of segmentButtons) button.disabled = !available
-    host.setAttribute('data-ursim-ctl-state', !available ? 'disabled' : (busy ? 'busy' : 'ready'))
+    row.setAttribute('data-ursim-ctl-state', !available ? 'disabled' : (busy ? 'busy' : 'ready'))
   }
 
   /** 这一帧是否可点动（连接 + 仿真 + 数据在流动 + 有命令出口）。 */
@@ -894,7 +945,7 @@ export function mountLeftRail(doc, body, deps = {}) {
 
   /**
    * 每帧喂最新快照：只更新可用性（置灰/解禁），从不回写用户正在操作的步长
-   * （那会把手指还按着的控件抢回去），也不写任何文字原因（左轨没有原因栏）。
+   * （那会把手指还按着的控件抢回去），也不写任何文字原因（原因行在 body 顶部）。
    */
   function sync(snapshot) {
     if (disposed) return
@@ -931,6 +982,9 @@ export function mountLeftRail(doc, body, deps = {}) {
     windowBindings.length = 0
   }
 
+  // 闸门持有者变化 = 按钮的 aria-disabled 与点动行状态要重画（另一类控件抢到了锁）。
+  const offLock = lock.subscribe(() => renderAvailability())
+
   // 初始一律禁用：第一帧快照到达前不可能知道连没连上/是不是仿真。
   // 标题在建完按钮后统一派生一次（默认 5 mm / 1° / 工具系）。
   // 空闲态一律 `step`（速度流只在按住超过 250 ms 之后才出现）。
@@ -938,7 +992,16 @@ export function mountLeftRail(doc, body, deps = {}) {
   refreshJogTitles()
   renderAvailability()
 
-  return { body: host, deps: merged, sync, dispose }
+  return {
+    row,
+    steps: stepSection,
+    frameSeg: frameSeg.wrap,
+    sync,
+    dispose() {
+      offLock()
+      dispose()
+    },
+  }
 }
 
 /** 右轨位姿输入的轴顺序（与宿主 `/twin/jog` body 里 `pose` 的下标一致）。 */
@@ -1003,9 +1066,16 @@ function formatMeters(value) {
   if (!Number.isFinite(n)) return '—'
   return String(Number(n.toFixed(3))).replace(/^-/, '−')
 }
-
 /**
- * 右轨内容：TCP 位姿数值输入（X/Y/Z mm、RX/RY/RZ rad）+ 六关节滑块与 ± 按钮。
+ * 控制轨内容（**唯一一条**，700 px）：只读摘要 + TCP 位姿数值输入 + 坐标系 + 点动盘/步长 + 六关节滑块。
+ *
+ * 2026-10-20 用户要求把原来的左轨（点动）整体并到右轨，位置按附件图自上而下：
+ *   ① 只读读数行（`TCP: x, y, z m`）；
+ *   ② `TCP 位姿` 六格输入（X/Y/Z mm 一行 + RX/RY/RZ rad 一行），右侧是 `坐标系` 竖排（工具系 / 基座系）；
+ *   ③ `TCP 位置（mm）` 3×3 盘 + `Z+`/`Z−` 一行，中间是 `TCP 方向（°）` 3×3 盘 + `RZ+`/`RZ−` 一行，
+ *      右侧是两列竖排步长（`步长 mm` 1/5/10、`步长 °` 1/2/5）；
+ *   ④ `关节` 六行（机座 / 肩部 / 肘部 / 手腕1 / 手腕2 / 手腕3，每行 ◀ + 滑块 + ▶ + 角度）。
+ * 文案与位置一一对应；控件尺寸按 700 px 轨重算（见 `styles.js` 的注释）。
  *
  * 交互（设计 §5 / §6）：
  *   - 关节滑块 `input` 只更新**本地数值与 FD 预览**（通过可选的 `deps.previewJoints(q)`），
@@ -1016,8 +1086,10 @@ function formatMeters(value) {
  *   - 拖动中的轴不被 `sync` 回填（否则滑块会从用户手指下被拽走）；
  *   - 命令失败（`ok !== true` 或抛错）→ 输入框/滑块回滚到最新帧值并标红，
  *     下一次**新帧**（`ts` 变化）后自动清除；
- *   - 可用性与左轨完全一致（`connected` / `simulated` / `feedStale` / 有没有 `send`），
- *     整块禁用时在顶部 `data-ursim-ctl-note` 写出原因；
+ *   - 点动与位姿/关节共用 `deps.lock`（`createMotionLock()`）：同一时刻只有一条命令在飞，
+ *     点动按钮在忙时只写 `aria-disabled`（不设 disabled，否则被按住的按钮收不到 `pointerup`），
+ *     位姿输入与关节控件则真 `disabled`；
+ *   - 整块禁用时在顶部 `data-ursim-ctl-note` 写出原因；`data-ursim-ctl-error` 承载命令失败原因；
  *   - 顶部另有一行**只读摘要**（`data-ursim-ctl-summary`，`TCP: x, y, z m`）：随快照更新，
  *     不是输入、不参与下发。
  *
@@ -1027,12 +1099,14 @@ function formatMeters(value) {
  *   send?: Function,
  *   getSnapshot?: Function,
  *   previewJoints?: (q: number[]|null) => void,
+ *   lock?: object,
+ *   reportError?: (message: string) => void,
  * }} [deps] `previewJoints` 是纯本地的 3D 预览钩子（不发命令、不改测量值）；
- *   传 `null` 表示结束预览。
+ *   传 `null` 表示结束预览。`lock` 缺省时自建一把（单测只挂这一块控件时用）。
  * @returns {{sync: (snapshot?: object) => void, dispose: () => void, body: HTMLElement|null, deps: object}}
  */
 export function mountRightRail(doc, body, deps = {}) {
-  const host = body ?? makeBody(doc, 'right', deps)
+  const host = body ?? makeBody(doc, deps)
   if (!host) {
     return { body: null, deps, sync() {}, dispose() {} }
   }
@@ -1042,13 +1116,12 @@ export function mountRightRail(doc, body, deps = {}) {
 
   const send = typeof merged.send === 'function' ? merged.send : null
   const preview = typeof merged.previewJoints === 'function' ? merged.previewJoints : null
+  const lock = merged.lock ?? createMotionLock()
 
   /* ---------------- 可变状态 ---------------- */
   let disposed = false
-  /** 整块控件是否可用（连接 + 仿真 + 数据在流动）。判断口径与左轨同一套。 */
+  /** 整块控件是否可用（连接 + 仿真 + 数据在流动）。 */
   let available = false
-  /** 是否有命令在飞（串行：同一时刻只允许一条）。 */
-  let busy = false
   /** 最新一帧的关节角 / TCP（命令的唯一基底 —— 绝不用缓存位姿算目标）。 */
   let latestQ = null
   let latestTcp = null
@@ -1056,7 +1129,7 @@ export function mountRightRail(doc, body, deps = {}) {
   /** 标红时的帧时间戳：只有**新帧**（`ts` 变化）才清除红标，不给用户"一帧就消失"的假象。 */
   let invalidTs = null
   let lastReason = null
-  let lastRenderKey = null
+  let lastStateKey = null
   /** 正在拖动的关节下标（这些轴的滑块与数值不得被 sync 回填）。 */
   const dragging = new Set()
   /** 当前被标红的元素（下一次成功帧统一清除）。 */
@@ -1076,7 +1149,7 @@ export function mountRightRail(doc, body, deps = {}) {
   host.appendChild(error)
 
   /*
-   * 只读摘要：350 px 轨有空间，把"机器人现在在哪"放在最上面一眼可见。
+   * 只读摘要：把"机器人现在在哪"放在最上面一眼可见（附件图第一行）。
    * 它不是输入、不参与下发，只随快照更新 —— 位姿输入框仍各自承担编辑。
    */
   const summary = makeEl(doc, 'div', 'ursim-twin-ctl-summary', 'data-ursim-ctl-summary')
@@ -1088,7 +1161,7 @@ export function mountRightRail(doc, body, deps = {}) {
   const poseInputs = Object.create(null)
   const jointRows = []
 
-  /* ---- TCP 位姿：3 列 × 2 行（第一行 X/Y/Z mm，第二行 RX/RY/RZ rad）---- */
+  /* ---- ② 位姿段：TCP 位姿六格（X/Y/Z mm 一行、RX/RY/RZ rad 一行）---- */
   const poseSection = makeEl(doc, 'div', 'ursim-twin-ctl-section', 'data-ursim-ctl-section', 'pose')
   const poseLabel = makeEl(doc, 'div', 'ursim-twin-ctl-label')
   poseLabel.textContent = S.controlsToolPosition
@@ -1155,9 +1228,34 @@ export function mountRightRail(doc, body, deps = {}) {
     bind(input, 'blur', () => { entry.editing = false })
   }
   poseSection.appendChild(poseGrid)
-  host.appendChild(poseSection)
 
-  /* ---- 关节：6 行（名称 40 + ◀ 26 + 滑块 + ▶ 26 + 数值 56，行高 30）---- */
+  /* ---- ③ 点动区：位置盘 | 方向盘（点动逻辑在 createJogControls 里）---- */
+  const jog = createJogControls(doc, { ...merged, lock, host: body })
+
+  /* ---- 坐标系：竖排两档（工具系 / 基座系），与附件图右侧一致 ---- */
+  const frameCol = makeEl(doc, 'div', 'ursim-twin-ctl-frame', 'data-ursim-ctl-frame', 'frame')
+  const frameLabel = makeEl(doc, 'div', 'ursim-twin-ctl-label')
+  frameLabel.textContent = S.controlsFrameTitle
+  frameCol.appendChild(frameLabel)
+  if (jog.frameSeg) frameCol.appendChild(jog.frameSeg)
+
+  /*
+   * 主区两列（与附件图一致）：左＝位姿六格 + 两块方向盘，右＝坐标系 + 两档步长竖排。
+   * 右列独立成列（而不是塞进各自的行里），才能在 700 px 里把「坐标系」与「步长」上下对齐
+   * 成同一条竖带 —— 附件图里它们就是同一个右栏。
+   */
+  const main = makeEl(doc, 'div', 'ursim-twin-ctl-main')
+  const primary = makeEl(doc, 'div', 'ursim-twin-ctl-primary')
+  const side = makeEl(doc, 'div', 'ursim-twin-ctl-side')
+  primary.appendChild(poseSection)
+  if (jog.row) primary.appendChild(jog.row)
+  side.appendChild(frameCol)
+  if (jog.steps) side.appendChild(jog.steps)
+  main.appendChild(primary)
+  main.appendChild(side)
+  host.appendChild(main)
+
+  /* ---- ④ 关节：6 行（名称 40 + ◀ 26 + 滑块 + ▶ 26 + 数值 70，行高 30）---- */
   const jointSection = makeEl(doc, 'div', 'ursim-twin-ctl-section', 'data-ursim-ctl-section', 'joints')
   const jointLabel = makeEl(doc, 'div', 'ursim-twin-ctl-label')
   jointLabel.textContent = S.controlsJoints
@@ -1231,7 +1329,7 @@ export function mountRightRail(doc, body, deps = {}) {
       dragging.delete(index)
       if (disposed) return
       const deg = clampJointDeg(Number(slider.value))
-      if (!available || busy || send === null || latestQ === null) {
+      if (!available || lock.isHeld() || send === null || latestQ === null) {
         rollbackJoint(index)
         clearPreview()
         // 拒绝也要有说法（P2）：只把滑块弹回去而不解释，读起来就是"松手没反应"。
@@ -1283,7 +1381,7 @@ export function mountRightRail(doc, body, deps = {}) {
 
   /** 关节 ±：每次 1°，以最新帧为底只改这一轴。 */
   function stepJoint(index, direction) {
-    if (disposed || !available || busy || send === null || latestQ === null) {
+    if (disposed || !available || lock.isHeld() || send === null || latestQ === null) {
       // ± 按钮每次真下发 1°，被拒时**必须**有可见说法（P2）：否则连点几次都是"没反应"。
       if (!disposed) {
         error.textContent = rejectSubmitReason(
@@ -1302,12 +1400,9 @@ export function mountRightRail(doc, body, deps = {}) {
     })
   }
 
-  /**
-   * 提交被拒时的统一说法（P2）：`busy` = 已有一条命令在飞，其余按"本帧为什么不可用"给原因。
-   * 写进右轨错误行 —— 右轨有那一行（左轨刻意没有，见 mountLeftRail）。
-   */
+  /** 提交被拒时的统一说法（P2）：闸门被占 = 已有一条命令在飞，其余按"本帧为什么不可用"给原因。 */
   function rejectSubmitReason(fallback) {
-    if (busy) return S.controlsBusyRetry
+    if (lock.isHeld()) return S.controlsBusyRetry
     return lastReason !== null && lastReason !== '' ? lastReason : fallback
   }
 
@@ -1328,16 +1423,14 @@ export function mountRightRail(doc, body, deps = {}) {
     /*
      * 不可用 / 在途：**拒绝但必须说出来**。
      *
-     * 以前这里直接 return —— 用户敲完回车（或失焦）什么都没发生：数值留在框里、机械臂不动、
-     * 界面上也没有一个字。更糟的是 `busy` 会让输入框变 disabled，失焦触发的 change 恰好走这条
-     * 路，用户只看到刚输入的值被下一帧回填覆盖。现在把拒绝原因写进错误行（输入框的值**不做
-     * 回滚**，用户回车重试即可）。
+     * 不可用时直接 return —— 用户敲完回车（或失焦）什么都没发生：数值留在框里、机械臂不动、
+     * 界面上也没有一个字。现在把拒绝原因写进错误行（输入框的值**不做**回滚，用户回车重试即可）。
      */
-    if (disposed || !available || busy || send === null) {
+    if (disposed || !available || lock.isHeld() || send === null) {
       if (!disposed) {
         error.textContent = rejectSubmitReason(S.controlsRejectedCommand)
         markInvalid(input)
-        // 拒绝之后**保留用户输入**：`frame` 的回填只跳过 `editing === true` 的输入框，所以这里
+        // 拒绝之后**保留用户输入**：`sync` 的回填只跳过 `editing === true` 的输入框，所以这里
         // 必须把编辑态重新立起来，否则下一帧（最多 ~16 ms）就把刚敲的值换成最新帧值 ——
         // 用户只会看到"我按了回车，数字自己变回去了"，连重试的机会都没有。
         entry.editing = true
@@ -1380,7 +1473,7 @@ export function mountRightRail(doc, body, deps = {}) {
   }
 
   /**
-   * 发一条命令（严格串行）。
+   * 发一条命令（严格串行，闸门与点动共用）。
    *
    * `send` 返回 Promise 时等它落定；返回其它值时视为同步完成。`ok === false` 也算失败
    * （面板的 `sendJog` 会抛，但单测/自定义出口可能直接回一个失败信封）。
@@ -1388,10 +1481,12 @@ export function mountRightRail(doc, body, deps = {}) {
    * @returns {boolean} 是否真的发出去
    */
   function runCommand(payload, handlers = {}) {
-    if (disposed || !payload || send === null || busy || !available) return false
-    busy = true
-    renderAvailability()
-    const settle = (err) => finish(err, handlers)
+    if (disposed || !payload || send === null || !available) return false
+    if (!lock.tryAcquire('rail')) return false
+    const settle = (err) => {
+      lock.release('rail')
+      finish(err, handlers)
+    }
     let result
     try {
       result = send(payload)
@@ -1407,6 +1502,7 @@ export function mountRightRail(doc, body, deps = {}) {
     } else {
       settle(rejectedError(result))
     }
+    renderAvailability()
     return true
   }
 
@@ -1419,7 +1515,6 @@ export function mountRightRail(doc, body, deps = {}) {
 
   /** 一条命令落定：解禁；失败时回滚 + 标红（**不**抛到事件回调外）。 */
   function finish(err, handlers) {
-    busy = false
     if (disposed) return
     if (err) {
       error.textContent = S.controlsCommandFailed(err instanceof Error ? err.message : String(err))
@@ -1479,11 +1574,17 @@ export function mountRightRail(doc, body, deps = {}) {
     invalidTs = null
   }
 
-  /** 只有"可用性/在途"变化时才写 DOM —— 每帧重写 disabled 是浪费。 */
+  /**
+   * 只有"可用性/在途"变化时才写 DOM —— 每帧重写 disabled 是浪费。
+   *
+   * 整条轨只有一个 `data-ursim-ctl-state`（写在 body 上）：闸门被任一方持有时都是 `busy`，
+   * 这样点动命令在飞时位姿输入也一起置灰 —— 视觉上不再出现"半边像是能用"的错觉。
+   */
   function renderAvailability() {
+    const busy = lock.isHeld()
     const key = `${available ? '1' : '0'}${busy ? '1' : '0'}`
-    if (key === lastRenderKey) return
-    lastRenderKey = key
+    if (key === lastStateKey) return
+    lastStateKey = key
     const disabled = !available || busy
     for (const axis of POSE_AXES) poseInputs[axis].input.disabled = disabled
     for (const row of jointRows) {
@@ -1497,7 +1598,7 @@ export function mountRightRail(doc, body, deps = {}) {
     )
   }
 
-  /** 本帧为什么不可用（空串 = 可用）—— 与左轨同一套判断。 */
+  /** 本帧为什么不可用（空串 = 可用）。 */
   function unavailableReason(snapshot) {
     if (send === null) return S.controlsDisabledDisconnected
     if (snapshot?.connected !== true) return S.controlsDisabledDisconnected
@@ -1512,6 +1613,7 @@ export function mountRightRail(doc, body, deps = {}) {
    */
   function sync(snapshot) {
     if (disposed) return
+    jog.sync(snapshot)
     const reason = unavailableReason(snapshot)
     const nextAvailable = reason === ''
     if (nextAvailable !== available) {
@@ -1567,9 +1669,12 @@ export function mountRightRail(doc, body, deps = {}) {
   function dispose() {
     if (disposed) return
     disposed = true
+    offLock()
+    jog.dispose()
     clearPreview()
     dragging.clear()
     invalidEls.clear()
+    lock.release('rail')
     for (const off of bindings) {
       try {
         off()
@@ -1579,6 +1684,9 @@ export function mountRightRail(doc, body, deps = {}) {
     }
     bindings.length = 0
   }
+
+  // 闸门持有者变化 = 位姿输入/关节控件与 body 状态要重画（点动盘抢到了锁）。
+  const offLock = lock.subscribe(() => renderAvailability())
 
   // 初始一律禁用：第一帧快照到达前不可能知道连没连上/是不是仿真。
   renderAvailability()

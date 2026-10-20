@@ -102,10 +102,10 @@ body[data-ds-dark-theme] .ursim-twin-panel {
   flex: 1 1 auto;
   min-height: 0;
 }
-/* ── 三栏骨架与可收起控制轨（feat/twin-control-panel）──────────────────────
+/* ── 两栏骨架与可收起控制轨（feat/twin-control-panel；2026-10-20 合并为单轨）────
    这里是控制轨静态样式的**唯一真源**（以前写在 JS 的 inline 上）。运行期只剩一个动态量：
    stage.style.gridTemplateColumns —— 它的唯一拼法是 twin-controls.js 的 stageColumns()，
-   因为列宽取决于两条轨是否收起。收起态本身落在 data-collapsed 属性上，正文显隐由下面的
+   因为列宽取决于控制轨是否收起。收起态本身落在 data-collapsed 属性上，正文显隐由下面的
    CSS 决定，不靠 JS 改 style.display。
    ⚠️ 不要在这里写死列宽：.ursim-twin-stage 的 grid 模板由面板按状态写入 inline。 */
 .ursim-twin-stage {
@@ -125,8 +125,8 @@ body[data-ds-dark-theme] .ursim-twin-panel {
   /* 半透明 chrome：与工具栏/HUD 同一套质感。 */
   background: color-mix(in srgb, var(--ursim-chrome) 88%, transparent);
 }
-/* 左右轨各贴中线一侧的边：用 data-* 取值而不是再传一个 class，避免两侧规则重复。 */
-.ursim-twin-rail[data-ursim-twin-rail='left'] { border-right: 1px solid var(--ursim-border-subtle); }
+/* 控制轨贴在画布右侧：用 data-* 取值而不是再传一个 class（属性仍是 side 语义，
+   将来若要恢复一条左侧轨，加一条 [data-ursim-twin-rail='left'] 规则即可）。 */
 .ursim-twin-rail[data-ursim-twin-rail='right'] { border-left: 1px solid var(--ursim-border-subtle); }
 .ursim-twin-rail-toggle {
   flex: 0 0 auto;
@@ -367,18 +367,17 @@ body[data-ds-dark-theme] .ursim-twin-panel {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: pre-wrap;
 }
-/* ── 左轨点动控件（feat/twin-control-panel）─────────────────────────────────
-   180 px 轨的尺寸是反推出来的：3×3 盘每格 52×52、gap 6（3×52 + 2×6 = 168），
-   加上左右各 6 px 内边距正好铺满。Z / RZ 行两枚按钮各占一半宽（高 32）；
-   分段控件与速度行高 28。
+/* ── 控制轨（2026-10-20 合并为单条右轨，轨宽 700px）─────────────────────────
+   布局按用户给的参照图自上而下：
+     只读读数行 → TCP 位姿六格（X/Y/Z 一行、RX/RY/RZ 一行）+ 右侧「坐标系」竖排两档
+     → 两块方向盘（TCP 位置 / TCP 方向）+ 右侧两档步长竖排 → 六行关节（◀ 滑块 ▶ 角度）。
+   主区是两列 grid：左列（位姿 + 方向盘）自适应，右列固定 172px（坐标系 + 步长），
+   对应参照图右侧那条竖带 —— 坐标系与步长必须落在同一列，否则两者左右会错开。
    状态只走属性：按钮可用性交给 disabled、档位交给 aria-pressed、整块状态交给
-   data-ursim-ctl-state —— 这里没有任何 inline 样式，运行期也不写 style.*。
-   ⚠️ 左轨**没有**文字原因栏（data-ursim-ctl-note / -error 只在右轨）：不可用时
-   只置灰控件，不再拿一行文字去挤方向盘的垂直空间。 */
-.ursim-twin-rail-body[data-ursim-twin-rail-body='left'] {
-  padding: 6px;
+   data-ursim-ctl-state —— 这里没有任何 inline 样式，运行期也不写 style.*。 */
+.ursim-twin-rail-body[data-ursim-twin-rail-body='right'] {
+  padding: 8px 10px;
 }
-/* 只读提示/错误行只服务右轨（左轨没有这两个节点），所以横向不再留 6 px 缩进。 */
 .ursim-twin-ctl-note {
   margin: 0 0 6px;
   font-size: 11px;
@@ -394,34 +393,74 @@ body[data-ds-dark-theme] .ursim-twin-panel {
   white-space: pre-wrap;
 }
 .ursim-twin-ctl-error:empty { display: none; }
-.ursim-twin-ctl-section { margin: 0 0 8px; }
+/* 顶部只读读数（TCP 米制三元组）：等宽数字，放不下就省略，不换行。 */
+.ursim-twin-ctl-summary {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--ursim-text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ursim-twin-ctl-summary:empty { display: none; }
+/* 主区两列：左 = 位姿 + 方向盘，右 = 坐标系 + 步长。 */
+.ursim-twin-ctl-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 172px;
+  gap: 10px;
+  align-items: start;
+  margin: 0 0 8px;
+}
+.ursim-twin-ctl-primary {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.ursim-twin-ctl-side {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.ursim-twin-ctl-section { margin: 0; min-width: 0; }
 .ursim-twin-ctl-label {
   margin: 0 0 4px;
   font-size: 11px;
   color: var(--ursim-text-secondary);
 }
+/* 点动行：位置盘 | 方向盘（与参照图一致，两块盘并排）。 */
+.ursim-twin-ctl-jog {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
 .ursim-twin-ctl-pad {
   display: grid;
-  /* 宽度算术：180（列宽）− 1（右轨边框）− 12（body 左右各 6）= 167 可用。
-     3×52 + 2×5 = 166 ≤ 167；用 gap 6 就是 168，会溢出 1 px 被 overflow-x 裁掉。 */
-  grid-template-columns: repeat(3, 52px);
-  grid-template-rows: repeat(3, 52px);
-  gap: 5px;
-  justify-content: center;
+  /* 3 × 64 + 2 × 6 = 204：两盘并排 2 × 204 + 10 = 418 ≤ 左列可用宽度（700 − 1 边框 −
+     20 内边距 − 172 右列 − 10 列间距 ≈ 497）。 */
+  grid-template-columns: repeat(3, 64px);
+  grid-template-rows: repeat(3, 64px);
+  gap: 6px;
+  justify-content: start;
 }
 .ursim-twin-ctl-cell { display: block; }
 .ursim-twin-ctl-button {
-  width: 52px;
-  height: 52px;
+  width: 64px;
+  height: 64px;
   padding: 0;
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1;
   color: var(--ursim-text);
   background: var(--ursim-surface);
   border: 1px solid var(--ursim-border);
-  border-radius: 4px;
+  border-radius: 6px;
   cursor: pointer;
+  /* 触屏上不要 300 ms 双击缩放延迟：点动要求"按下即动"。 */
+  touch-action: manipulation;
 }
 .ursim-twin-ctl-button:hover:not(:disabled) {
   border-color: var(--ursim-accent);
@@ -432,7 +471,7 @@ body[data-ds-dark-theme] .ursim-twin-panel {
 /* busy（命令在途）不落 disabled —— 被禁用的按钮收不到 pointerup，会把长按掐断。
    这里只用 aria-disabled 把"这一拍不会发出去"表达出来，按钮仍可接收指针事件。 */
 .ursim-twin-ctl-button[aria-disabled='true'] { opacity: 0.55; cursor: progress; }
-/* Z / RZ 行：两枚按钮各占一半宽（168 = 2×81 + 6），高度比圆盘钮矮，避免整列过长。 */
+/* Z / RZ 行：两枚按钮各占半条盘宽，高度比圆盘钮矮。 */
 .ursim-twin-ctl-row {
   display: flex;
   gap: 6px;
@@ -441,12 +480,13 @@ body[data-ds-dark-theme] .ursim-twin-panel {
 .ursim-twin-ctl-row .ursim-twin-ctl-button {
   flex: 1 1 0;
   width: auto;
-  height: 32px;
+  height: 38px;
 }
+/* 分段控件：横向（步长在右侧列时改为竖排，见下面 .ursim-twin-ctl-stepcol）。 */
 .ursim-twin-ctl-seg {
   display: flex;
-  height: 28px;
-  margin: 0 0 6px;
+  height: 30px;
+  margin: 0;
   border: 1px solid var(--ursim-border);
   border-radius: 4px;
   overflow: hidden;
@@ -454,7 +494,7 @@ body[data-ds-dark-theme] .ursim-twin-panel {
 .ursim-twin-ctl-seg-button {
   flex: 1 1 0;
   min-width: 0;
-  height: 28px;
+  height: 30px;
   padding: 0;
   font: inherit;
   font-size: 11px;
@@ -465,57 +505,68 @@ body[data-ds-dark-theme] .ursim-twin-panel {
   border-right: 1px solid var(--ursim-border-subtle);
   cursor: pointer;
 }
-.ursim-twin-ctl-seg-button:last-child { border-right: 0; }
+.ursim-twin-ctl-seg-button:last-child { border-right: 0; border-bottom: 0; }
 .ursim-twin-ctl-seg-button[aria-pressed='true'] {
   color: var(--ursim-accent-ink);
   background: var(--ursim-accent);
 }
 .ursim-twin-ctl-seg-button:disabled { opacity: 0.45; cursor: not-allowed; }
-/* ── 右轨位姿 / 关节控件（feat/twin-control-panel · 设计 §5）────────────────
-   350 px 轨：位姿 3 列 × 2 行（第一行 X/Y/Z mm、第二行 RX/RY/RZ rad；每格 =
-   28 px 标签 + 最小 76 px 输入框，列宽 (350 − 1 − 16 − 12) / 3 ≈ 107）；关节 6 行
-   （名称 40 + ◀ 26 + 滑块自适应 + ▶ 26 + 数值 56，行高 30）。
-   正文内边距 6 × 8：这个宽度刚好放得下 3 × 107 的网格，不需要再按窄轨压缩。
-   状态仍只走属性：disabled / aria-invalid / data-ursim-invalid。 */
-.ursim-twin-rail-body[data-ursim-twin-rail-body='right'] {
-  padding: 6px 8px;
+/* 坐标系：竖排两档（工具系 / 基座系）。 */
+.ursim-twin-ctl-frame { min-width: 0; }
+.ursim-twin-ctl-frame .ursim-twin-ctl-seg {
+  flex-direction: column;
+  height: auto;
 }
-/* 顶部只读摘要（TCP 米制三元组）：等宽数字，放不下就省略，不换行。 */
-.ursim-twin-ctl-summary {
-  margin: 0 0 6px;
-  font-size: 11px;
-  color: var(--ursim-text-secondary);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.ursim-twin-ctl-frame .ursim-twin-ctl-seg-button {
+  flex: 0 0 34px;
+  height: 34px;
+  border-right: 0;
+  border-bottom: 1px solid var(--ursim-border-subtle);
 }
+/* 步长：两列（mm / °），每列内部竖排三档。 */
+.ursim-twin-ctl-steps {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+}
+.ursim-twin-ctl-stepcol { min-width: 0; }
+.ursim-twin-ctl-stepcol .ursim-twin-ctl-seg {
+  flex-direction: column;
+  height: auto;
+}
+.ursim-twin-ctl-stepcol .ursim-twin-ctl-seg-button {
+  flex: 0 0 28px;
+  height: 28px;
+  border-right: 0;
+  border-bottom: 1px solid var(--ursim-border-subtle);
+}
+/* TCP 位姿六格：3 列 × 2 行（X/Y/Z mm，RX/RY/RZ rad）。 */
 .ursim-twin-ctl-pose {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 4px 6px;
-  margin: 0 0 6px;
+  gap: 6px 8px;
+  margin: 0;
 }
 .ursim-twin-ctl-pose-cell {
   display: flex;
   align-items: center;
-  gap: 2px;
-  height: 26px;
+  gap: 4px;
+  height: 30px;
   min-width: 0;
 }
 .ursim-twin-ctl-pose-label {
-  flex: 0 0 28px;
-  font-size: 10px;
+  flex: 0 0 26px;
+  font-size: 11px;
   color: var(--ursim-text-secondary);
 }
 .ursim-twin-ctl-pose-input {
   flex: 1 1 auto;
-  min-width: 76px;
-  height: 26px;
+  min-width: 0;
+  height: 30px;
   box-sizing: border-box;
-  padding: 0 4px;
+  padding: 0 6px;
   font: inherit;
-  font-size: 11px;
+  font-size: 12px;
   text-align: right;
   font-variant-numeric: tabular-nums;
   color: var(--ursim-text);
@@ -524,30 +575,27 @@ body[data-ds-dark-theme] .ursim-twin-panel {
   border-radius: 4px;
 }
 .ursim-twin-ctl-pose-input:disabled { opacity: 0.45; cursor: not-allowed; }
+/* 关节：名称 56 + ◀ 32 + 滑块 + ▶ 32 + 角度 64，行高 34。 */
 .ursim-twin-ctl-joint-row {
   display: grid;
-  grid-template-columns: 40px 26px minmax(0, 1fr) 26px 56px;
+  grid-template-columns: 56px 32px minmax(0, 1fr) 32px 64px;
   align-items: center;
-  /* 间隙 2px → 12px：每枚 ± 按钮都真下发 1°，贴在一起时误触一次机械臂就动。
-     按钮本身 32px、轨道仍是 26px（测试钉死），用负 margin 让按钮居中溢出轨道 ——
-     相邻按钮的命中区之间因此还剩 12 − 3 − 3 = 6px 净间隙，视觉上也分得开。 */
-  gap: 12px;
-  height: 30px;
+  /* 间隙 10px：◀ / ▶ 每枚都真下发 1°，贴太近时误触一次机械臂就动。 */
+  gap: 10px;
+  height: 34px;
 }
 .ursim-twin-ctl-joint-name {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--ursim-text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .ursim-twin-ctl-step {
-  /* 命中区 26×26 → 32×32：这是"每点一次真下发 1°"的按钮，26px 在触屏/触控板上太容易点偏。
-     列轨道保持 26px（见 .ursim-twin-ctl-joint-row），用负 margin 让按钮居中溢出轨道 ——
-     既放大命中区，又不挤压滑块与读数列。 */
+  /* 命中区 32×32：这是"每点一次真下发 1°"的按钮，再小在触屏/触控板上容易点偏。 */
   width: 32px;
   height: 32px;
-  margin: -1px -3px;
+  margin: 0;
   padding: 0;
   font: inherit;
   font-size: 11px;
@@ -557,7 +605,6 @@ body[data-ds-dark-theme] .ursim-twin-panel {
   border: 1px solid var(--ursim-border);
   border-radius: 4px;
   cursor: pointer;
-  /* 触屏上不要 300 ms 双击缩放延迟：点动要求"按下即动"。 */
   touch-action: manipulation;
 }
 .ursim-twin-ctl-step:hover:not(:disabled) {
@@ -571,7 +618,7 @@ body[data-ds-dark-theme] .ursim-twin-panel {
 }
 .ursim-twin-ctl-joint-range:disabled { opacity: 0.45; }
 .ursim-twin-ctl-joint-value {
-  font-size: 11px;
+  font-size: 12px;
   text-align: right;
   color: var(--ursim-text-secondary);
   font-variant-numeric: tabular-nums;
@@ -603,34 +650,13 @@ body[data-ds-dark-theme] .ursim-twin-panel {
   border-color: var(--ursim-warn);
 }
 /*
- * 窄面板响应式（P2）。
+ * 窄面板（P2 容错）。
  *
- * 两条轨都展开时列宽是 180 + 280 + 350 = 810px（twin-controls.js 的 stageColumns()），而面板宽度
- * 由宿主右栏决定，常常不到 810 —— 以前只能靠外面的 overflow:hidden 硬裁，右轨（位姿/关节输入，
- * 唯一能精确下发数值的地方）整个掉出可视区。
- *
- * 为什么用容器查询而不是 JS：inline 的 grid-template-columns 由 stageColumns() 按"轨道是否收起"
- * 拼出，测试也按 inline 宽度断言；把宽度判断塞进 JS 会让"列宽"有两个真源。容器查询只看面板
- * 自身宽度，inline 那份保持原样，两者职责不重叠。
+ * 单条轨固定 700px、中间 3D 列最少 280px，因此面板宽度不足 ≈ 980px 时整条轨会掉出可视区。
+ * 这里不改列宽（inline 的 grid-template-columns 由 stageColumns() 拼出，测试按它断言，
+ * 塞进样式会让"列宽"出现两个真源），而是允许横向滚动：控件还在，只是要划一下。
  */
-@container (max-width: 819px) {
-  /* 主要省的是中间 3D 列：280 → 200（再窄就只剩网格线了）。两条侧轨维持原宽 ——
-     左轨的点动板是 3×52px 固定网格、右轨的位姿输入 min-width 76px，缩轨只会把控件裁掉。 */
-  .ursim-twin-stage { grid-template-columns: 180px minmax(200px, 1fr) 350px !important; }
-  /* 收起态必须继续生效：否则窄面板上"收起左轨"看起来毫无变化（还被 !important 顶回 180px）。 */
-  .ursim-twin-stage:has(> [data-ursim-twin-rail='left'][data-collapsed='true']) {
-    grid-template-columns: 24px minmax(200px, 1fr) 350px !important;
-  }
-  .ursim-twin-stage:has(> [data-ursim-twin-rail='right'][data-collapsed='true']) {
-    grid-template-columns: 180px minmax(200px, 1fr) 24px !important;
-  }
-  .ursim-twin-stage:has(> [data-ursim-twin-rail='left'][data-collapsed='true']):has(> [data-ursim-twin-rail='right'][data-collapsed='true']) {
-    grid-template-columns: 24px minmax(200px, 1fr) 24px !important;
-  }
-}
-@container (max-width: 729px) {
-  /* 再窄连 730px 都放不下：改成横向滚动，而不是像以前那样把右轨裁没了。
-     （裁切 = 用户以为控件不存在；滚动 = 控件还在，只是要划一下。） */
+@container (max-width: 999px) {
   .ursim-twin-stage { overflow-x: auto; }
 }
 `.trim()

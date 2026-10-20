@@ -83,7 +83,7 @@ import { pushSample, trajectoryColors, trajectoryCsv, trajectoryPoints } from '.
 import { injectStyles } from './styles.js'
 import {
   buildRail,
-  mountLeftRail,
+  createMotionLock,
   mountRightRail,
   stageColumns,
 } from './twin-controls.js'
@@ -1039,41 +1039,34 @@ export function mountTwinPanel({
   })()
 
   /**
-   * 按两条轨的当前收起状态重算 grid 列宽。
+   * 按控制轨的当前收起状态重算 grid 列宽。
    *
    * 列宽变化后画布必须**重新量一次**：`ResizeObserver` 也会通知，但它要等浏览器完成一次
    * 布局才回调，中间那一帧仍按旧尺寸渲染（被 CSS 拉伸、画面发糊）。这里先主动 `resize()`，
    * 下一帧再由 observer 兜底。
    */
   function refreshStageColumns() {
-    stage.style.gridTemplateColumns = stageColumns({
-      left: leftRail.isCollapsed(),
-      right: rightRail.isCollapsed(),
-    })
+    stage.style.gridTemplateColumns = stageColumns({ right: rightRail.isCollapsed() })
     resize()
     invalidate()
   }
 
-  const leftRail = buildRail(doc, 'left', railStorage, { onChange: refreshStageColumns })
-  const rightRail = buildRail(doc, 'right', railStorage, { onChange: refreshStageColumns })
-  stage.appendChild(leftRail.rail)
+  const rightRail = buildRail(doc, railStorage, { onChange: refreshStageColumns })
   stage.appendChild(view)
   stage.appendChild(rightRail.rail)
   // 首帧列宽直接按存储恢复的状态算（不走 refreshStageColumns：挂载期不该 resize/invalidate）。
-  stage.style.gridTemplateColumns = stageColumns({
-    left: leftRail.isCollapsed(),
-    right: rightRail.isCollapsed(),
-  })
+  stage.style.gridTemplateColumns = stageColumns({ right: rightRail.isCollapsed() })
 
   /*
-   * 控制轨内容都在 twin-controls.js 里建好：左轨（点动 / 步长 / 参考系 / 回零 / 速度倍率）、
-   * 右轨（位姿数值 + 六关节滑块）。
+   * 控制轨内容都在 twin-controls.js 里建好（2026-10-20 起合并为**单条右轨**：只读读数 +
+   * 位姿数值 + 坐标系 + 点动盘/步长 + 六关节滑块）。
    *   - 命令走 `deps.send(body)`（body 就是宿主 `/twin/jog` 的路由 body）；
    *   - 状态走返回的 `sync(snapshot)`（每帧喂最新快照）；
-   *   - 右轨拖滑块时走 `deps.previewJoints(q)` 做**本地 FK 预览**（见下面的 `previewQ`）。
+   *   - 拖关节滑块时走 `deps.previewJoints(q)` 做**本地 FK 预览**（见下面的 `previewQ`）；
+   *   - 点动与位姿/关节共用一把运动闸门（`createMotionLock()`），同一时刻只下发一条命令。
    */
   /**
-   * 右轨拖关节滑块时的本地预览关节角（`null` = 不预览）。
+   * 拖关节滑块时的本地预览关节角（`null` = 不预览）。
    *
    * 设计 §6.1：拖动时 3D 跟着动、**不发命令**，松手才下发一条 `movej`。面板是唯一
    * 知道"怎么把关节角摆进场景"的一方（`applyPoseToScene`），所以预览状态放在这里：
@@ -1102,8 +1095,12 @@ export function mountTwinPanel({
     return body
   }
 
+  // 一条轨里现在同时有点动盘、位姿输入与关节滑块：三者必须共用**一把**运动闸门，
+  // 否则"点动流还在跑时拖关节"会并发下发两条命令（宿主按顺序处理，读数会来回跳）。
+  const motionLock = createMotionLock()
   const railDeps = {
     send: sendJog,
+    lock: motionLock,
     getSnapshot: () => state?.getSnapshot?.() ?? {},
     /**
      * 右轨拖动关节滑块时的本地 FK 预览：只把 3D 摆到拖动值，不发命令、不改读数。
@@ -1129,7 +1126,6 @@ export function mountTwinPanel({
       holdError(message)
     },
   }
-  const leftControls = mountLeftRail(doc, leftRail.body, railDeps)
   const rightControls = mountRightRail(doc, rightRail.body, railDeps)
 
   root.appendChild(toolbar)
@@ -2396,7 +2392,6 @@ export function mountTwinPanel({
     const feedStale = snap?.feedStale === true
       || (lastFeedAtMs !== null && nowMs - lastFeedAtMs > FEED_STALE_MS)
     const railSnap = feedStale === (snap?.feedStale === true) ? snap : { ...snap, feedStale }
-    leftControls.sync(railSnap)
     rightControls.sync(railSnap)
     if (!connected) return
     if (wasDegraded !== snapDegraded) refreshStatus()
@@ -2596,8 +2591,7 @@ export function mountTwinPanel({
     // 收起面板即停仿真（含 AI 开的那台），并把数据源切回"按宿主解析"。
     stopSimOnDispose()
 
-    // 控件自己的定时器（左轨长按重复）必须在这里清掉，否则面板卸载后还会继续发命令。
-    leftControls.dispose?.()
+    // 控件自己的定时器（点动长按重复）与运动闸门必须在这里清掉，否则面板卸载后还会继续发命令。
     rightControls.dispose?.()
     previewQ = null
 

@@ -53,7 +53,7 @@ import { reachRadiusFromKinematics } from '../src/client/robot/overlays.js'
 import { lerpJoints } from '../src/client/robot/interpolate.js'
 import { Group } from 'three'
 import { TWIN_CSS, TWIN_STYLE_ID, injectStyles } from '../src/client/styles.js'
-import { mountLeftRail } from '../src/client/twin-controls.js'
+import { mountRightRail } from '../src/client/twin-controls.js'
 import { TWIN_JOG_PATH } from '../lib/twin-paths.js'
 
 /* ------------------------------------------------------------------ *
@@ -73,7 +73,7 @@ function makeEl(tag) {
     _text: '',
     listeners: Object.create(null),
     /**
-     * 指针捕获：左轨在 `pointerdown` 里抓住指针，长按期间手指滑出按钮也不丢事件。
+     * 指针捕获：点动按钮在 `pointerdown` 里抓住指针，长按期间手指滑出按钮也不丢事件。
      * 真实 DOM 的这三个方法由浏览器实现；假 DOM 用集合模拟，便于断言"抓住 / 放掉"。
      */
     capturedPointers: new Set(),
@@ -2443,7 +2443,7 @@ test('★ 0.1.12：断连必须清空风险行并复位等级（否则残留"⚠
 const byAttrValue = (root, attr, value) =>
   byAttr(root, attr).find((el) => el.getAttribute(attr) === value) ?? null
 
-test('★ 控制面板骨架：三栏 grid + 两条侧轨 + 收起把手，收起状态写 localStorage', async () => {
+test('★ 控制面板骨架：两栏 grid + 单条控制轨 + 收起把手，收起状态写 localStorage', async () => {
   const storage = makeFakeStorage()
   const ctx = boot({
     initial: { connected: true, model: 'ur12e', q: Q0, tcp: TCP0, ts: 1000 },
@@ -2464,43 +2464,45 @@ test('★ 控制面板骨架：三栏 grid + 两条侧轨 + 收起把手，收�
     '★ 收起态正文让位必须由 TWIN_CSS 消费 data-collapsed，而不是 JS 写 inline display')
   assert.match(TWIN_CSS, /\.ursim-twin-rail-toggle\s*\{[^}]*height:\s*24px/,
     '★ 把手高度必须由 TWIN_CSS 提供（不再是 inline style）')
-  const left = byAttrValue(root, 'data-ursim-twin-rail', 'left')
-  const right = byAttrValue(root, 'data-ursim-twin-rail', 'right')
-  assert.ok(left, '左轨应存在')
-  assert.ok(right, '右轨应存在')
-  const toggle = byAttrValue(root, 'data-ursim-twin-rail-toggle', 'left')
-  assert.ok(toggle, '左轨收起把手应存在')
+  const rail = byAttrValue(root, 'data-ursim-twin-rail', 'right')
+  assert.ok(rail, '控制轨应存在')
+  assert.equal(byAttrValue(root, 'data-ursim-twin-rail', 'left'), null,
+    '★ 左轨已并入右轨：不允许再出现第二条轨')
+  const toggle = byAttrValue(root, 'data-ursim-twin-rail-toggle', 'right')
+  assert.ok(toggle, '控制轨收起把手应存在')
 
-  // 画布必须被夹在两条轨中间（不是并排在 stage 之外的旧布局）。
+  // 画布必须与唯一的控制轨并排（三栏时代的"左轨 / 画布 / 右轨"已不再成立）。
   const view = byAttr(root, 'data-ursim-twin-view')[0]
-  assert.equal(view.parentNode, stage, '画布容器必须在三栏容器里')
-  assert.deepEqual(stage.children, [left, view, right], 'stage 顺序必须是 左轨 / 画布 / 右轨')
-  assert.notEqual(stage.style.gridTemplateColumns, '', '三栏 grid 必须落到 inline style 上')
+  assert.equal(view.parentNode, stage, '画布容器必须在两栏容器里')
+  assert.deepEqual(stage.children, [view, rail], 'stage 顺序必须是 画布 / 控制轨')
+  assert.notEqual(stage.style.gridTemplateColumns, '', '两栏 grid 必须落到 inline style 上')
+  assert.match(stage.style.gridTemplateColumns, /^minmax\(280px, 1fr\) 700px$/,
+    '★ 控制轨固定 700px（中间 3D 列自适应）')
 
   // 展开态 → 点一下收起：属性、aria、存储三处同步，列宽由 grid 模板表达。
-  assert.equal(left.getAttribute('data-collapsed'), 'false')
+  assert.equal(rail.getAttribute('data-collapsed'), 'false')
   toggle.listeners.click[0]()
-  assert.equal(left.getAttribute('data-collapsed'), 'true', '★ 点收起把手后必须进入收起态')
-  assert.ok(!('width' in left.style), '轨宽不再写 inline：列宽由 grid 决定，收起由 data-collapsed 驱动')
+  assert.equal(rail.getAttribute('data-collapsed'), 'true', '★ 点收起把手后必须进入收起态')
+  assert.ok(!('width' in rail.style), '轨宽不再写 inline：列宽由 grid 决定，收起由 data-collapsed 驱动')
   assert.equal(toggle.getAttribute('aria-expanded'), 'false', 'aria-expanded 要跟着收起态走')
-  assert.match(stage.style.gridTemplateColumns, /^24px minmax\(280px, 1fr\) 350px$/,
-    '★ 收起后 grid 左列必须变成 24px（3D 自动占满）')
+  assert.match(stage.style.gridTemplateColumns, /^minmax\(280px, 1fr\) 24px$/,
+    '★ 收起后 grid 右列必须变成 24px（3D 自动占满）')
   const saved = JSON.parse(storage.map.get('dsh-nonead-ursim.rails'))
-  assert.equal(saved.left, true, '★ 收起状态必须写进 localStorage')
-  assert.equal(saved.right, false)
+  assert.equal(saved.right, true, '★ 收起状态必须写进 localStorage')
+  assert.equal('left' in saved, false, '左轨已删除，存储里不再写 left 键')
 
-  // 再点一下展开：属性回 false，存储也回写，列宽回到 180px。
+  // 再点一下展开：属性回 false，存储也回写，列宽回到 700px。
   toggle.listeners.click[0]()
-  assert.equal(left.getAttribute('data-collapsed'), 'false')
+  assert.equal(rail.getAttribute('data-collapsed'), 'false')
   assert.equal(toggle.getAttribute('aria-expanded'), 'true')
-  assert.match(stage.style.gridTemplateColumns, /^180px minmax\(280px, 1fr\) 350px$/)
-  assert.equal(JSON.parse(storage.map.get('dsh-nonead-ursim.rails')).left, false)
+  assert.match(stage.style.gridTemplateColumns, /^minmax\(280px, 1fr\) 700px$/)
+  assert.equal(JSON.parse(storage.map.get('dsh-nonead-ursim.rails')).right, false)
   ctx.panel.dispose()
 })
 
 test('★ 控制面板骨架：收起状态来自 localStorage，跨挂载保持', async () => {
   const storage = makeFakeStorage({
-    'dsh-nonead-ursim.rails': JSON.stringify({ left: true, right: false }),
+    'dsh-nonead-ursim.rails': JSON.stringify({ right: true }),
   })
   const ctx = boot({
     initial: { connected: true, model: 'ur12e', q: Q0, tcp: TCP0, ts: 1000 },
@@ -2512,12 +2514,10 @@ test('★ 控制面板骨架：收起状态来自 localStorage，跨挂载保持
 
   const root = panelRoot(ctx)
   const stage = byAttr(root, 'data-ursim-twin-stage')[0]
-  const left = byAttrValue(root, 'data-ursim-twin-rail', 'left')
-  const right = byAttrValue(root, 'data-ursim-twin-rail', 'right')
-  assert.equal(left.getAttribute('data-collapsed'), 'true', '★ 存储里已收起 → 挂载后直接是收起态')
-  assert.ok(!('width' in left.style), '轨宽不再写 inline（由 grid 列宽表达）')
-  assert.equal(right.getAttribute('data-collapsed'), 'false', '未记录的侧保持展开')
-  assert.match(stage.style.gridTemplateColumns, /^24px minmax\(280px, 1fr\) 350px$/,
+  const rail = byAttrValue(root, 'data-ursim-twin-rail', 'right')
+  assert.equal(rail.getAttribute('data-collapsed'), 'true', '★ 存储里已收起 → 挂载后直接是收起态')
+  assert.ok(!('width' in rail.style), '轨宽不再写 inline（由 grid 列宽表达）')
+  assert.match(stage.style.gridTemplateColumns, /^minmax\(280px, 1fr\) 24px$/,
     '★ 初始 grid 必须按存储里的收起状态算，否则首帧会跳一下')
 
   // 再挂载一次（模拟收起面板后重开）：状态仍来自同一份存储。
@@ -2529,8 +2529,8 @@ test('★ 控制面板骨架：收起状态来自 localStorage，跨挂载保持
   })
   again.clock.flush()
   await tick()
-  const leftAgain = byAttrValue(panelRoot(again), 'data-ursim-twin-rail', 'left')
-  assert.equal(leftAgain.getAttribute('data-collapsed'), 'true', '★ 跨挂载必须保持收起状态')
+  const railAgain = byAttrValue(panelRoot(again), 'data-ursim-twin-rail', 'right')
+  assert.equal(railAgain.getAttribute('data-collapsed'), 'true', '★ 跨挂载必须保持收起状态')
   again.panel.dispose()
 })
 
@@ -2546,20 +2546,20 @@ test('★ 控制面板骨架：localStorage 不可用（隐私模式）时静默
   }, '存储读取抛错时挂载不得失败')
 
   const root = panelRoot(ctx)
-  const left = byAttrValue(root, 'data-ursim-twin-rail', 'left')
-  assert.ok(left, '没有存储也要有左轨')
-  const toggle = byAttrValue(root, 'data-ursim-twin-rail-toggle', 'left')
+  const rail = byAttrValue(root, 'data-ursim-twin-rail', 'right')
+  assert.ok(rail, '没有存储也要有控制轨')
+  const toggle = byAttrValue(root, 'data-ursim-twin-rail-toggle', 'right')
   // 写存储同样会抛：收起交互仍必须可用（只是不持久化）。
   assert.doesNotThrow(() => toggle.listeners.click[0](), '存储写入抛错不得冒到点击回调外')
-  assert.equal(left.getAttribute('data-collapsed'), 'true', '没有存储时收起交互照样工作')
+  assert.equal(rail.getAttribute('data-collapsed'), 'true', '没有存储时收起交互照样工作')
   const stage = byAttr(panelRoot(ctx), 'data-ursim-twin-stage')[0]
-  assert.match(stage.style.gridTemplateColumns, /^24px minmax\(280px, 1fr\) 350px$/,
+  assert.match(stage.style.gridTemplateColumns, /^minmax\(280px, 1fr\) 24px$/,
     '收起后列宽仍必须是 24px（由 grid 模板表达）')
   ctx.panel.dispose()
 })
 
 /* ================================================================== *
- * 左轨控件（feat/twin-control-panel · 点动 / 步长 / 回零）
+ * 控制轨控件（feat/twin-control-panel · 点动 / 步长 / 参考系 / 回零）
  * ================================================================== */
 
 /** 处于"可点动"状态的快照：连接 + 仿真 + 数据在流动。 */
@@ -2567,8 +2567,9 @@ const LIVE = { connected: true, simulated: true, model: 'ur12e', q: Q0, tcp: TCP
 
 const jogButton = (ctx, key) => byAttrValue(ctx.container, 'data-ursim-jog', key)
 const allJogButtons = (ctx) => byAttr(ctx.container, 'data-ursim-jog')
-const leftBody = (ctx) => byAttrValue(ctx.container, 'data-ursim-twin-rail-body', 'left')
-const rightBody = (ctx) => byAttrValue(ctx.container, 'data-ursim-twin-rail-body', 'right')
+/** 控制轨正文（合并后只有一条轨，data 值沿用 'right'）。 */
+const railBody = (ctx) => byAttrValue(ctx.container, 'data-ursim-twin-rail-body', 'right')
+const rightBody = railBody
 const postedBodies = (ctx) => ctx.request.posts().map((p) => JSON.parse(p.body))
 /**
  * 只取"操作命令"（滤掉松手时补的 `{mode:'stop'}`）。
@@ -2586,26 +2587,28 @@ function tapJog(ctx, key) {
   button.listeners.pointerup[0]()
 }
 
-test('★ 控制轨尺寸：左轨 180 / 右轨 350，按钮 52×52、位姿 3 列、关节列 40/26/56', async () => {
+test('★ 控制轨尺寸：单条轨 700 px，按钮 64×64、位姿 3 列、关节列 56/32/64', async () => {
   const ctx = boot({ initial: LIVE, autoSim: false })
   ctx.clock.flush()
   await tick()
 
   const stage = byAttr(panelRoot(ctx), 'data-ursim-twin-stage')[0]
-  assert.match(stage.style.gridTemplateColumns, /^180px minmax\(280px, 1fr\) 350px$/,
-    '★ 展开态列宽必须是 180 / 350（RAIL_W_LEFT / RAIL_W_RIGHT）')
+  assert.match(stage.style.gridTemplateColumns, /^minmax\(280px, 1fr\) 700px$/,
+    '★ 展开态：控制轨固定 700 px（RAIL_W）')
 
-  /* ---- 左轨：3×3 盘 52×52 + gap 5 ----
-     宽度算术：180（列宽）− 1（右轨边框）− 12（body 左右各 6）= 167 可用；
-     3×52 + 2×5 = 166 ≤ 167。gap 用 6 就是 168，会溢出 1 px 被 overflow-x 裁掉。 */
-  assert.match(TWIN_CSS, /\.ursim-twin-rail-body\[data-ursim-twin-rail-body='left'\]\s*\{\s*padding:\s*6px/,
-    '★ 左轨 body 上下左右内边距各 6 px')
-  assert.match(TWIN_CSS, /\.ursim-twin-ctl-pad\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*52px\)/,
-    '★ 3×3 盘必须是 3 列 52 px')
-  assert.match(TWIN_CSS, /\.ursim-twin-ctl-pad\s*\{[^}]*gap:\s*5px/,
-    '★ 盘内 gap 必须是 5 px（6 px 会溢出 1 px）')
-  assert.match(TWIN_CSS, /\.ursim-twin-ctl-button\s*\{[^}]*width:\s*52px[^}]*height:\s*52px/,
-    '★ 点动按钮必须 52×52')
+  /* ---- 点动盘：3×3、每格 64×64、gap 6 ----
+     算术：700 − 1（边框）− 20（body 左右各 10）− 172（右列）− 10（列间距）≈ 497 可用；
+     两盘并排 2 × 204 + 10 = 418 ≤ 497。 */
+  assert.match(TWIN_CSS, /\.ursim-twin-rail-body\[data-ursim-twin-rail-body='right'\]\s*\{\s*padding:\s*8px\s*10px/,
+    '★ 控制轨 body 上下 8 / 左右 10')
+  assert.match(TWIN_CSS, /\.ursim-twin-ctl-main\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+172px/,
+    '★ 主区两列：左自适应 + 右 172 px（坐标系 / 步长）')
+  assert.match(TWIN_CSS, /\.ursim-twin-ctl-pad\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*64px\)/,
+    '★ 3×3 盘必须是 3 列 64 px')
+  assert.match(TWIN_CSS, /\.ursim-twin-ctl-pad\s*\{[^}]*gap:\s*6px/,
+    '★ 盘内 gap 必须是 6 px')
+  assert.match(TWIN_CSS, /\.ursim-twin-ctl-button\s*\{[^}]*width:\s*64px[^}]*height:\s*64px/,
+    '★ 点动按钮必须 64×64')
 
   // 每个点动按钮都有可读 title（中文说明轴与方向，不是空串/"按钮"）。
   const buttons = allJogButtons(ctx)
@@ -2625,7 +2628,7 @@ test('★ 控制轨尺寸：左轨 180 / 右轨 350，按钮 52×52、位姿 3 �
 
   // 轨内所有按钮（点动 / 步长 / 参考系 / 关节 ±）都必须有可读 title：
   // 只有箭头或数字的按钮既解释不了"点下去会发生什么"，读屏软件也读不出信息。
-  for (const body of [leftBody(ctx), rightBody(ctx)]) {
+  for (const body of [railBody(ctx)]) {
     for (const button of findAll(body, (el) => el.tagName === 'BUTTON')) {
       assert.ok(
         String(button.getAttribute('title') ?? '').length > 0,
@@ -2634,17 +2637,15 @@ test('★ 控制轨尺寸：左轨 180 / 右轨 350，按钮 52×52、位姿 3 �
     }
   }
 
-  /* ---- 右轨：位姿 3 列 × 2 行、关节五列固定宽度 ---- */
-  assert.match(TWIN_CSS, /\.ursim-twin-rail-body\[data-ursim-twin-rail-body='right'\]\s*\{\s*padding:\s*6px\s*8px/,
-    '★ 右轨 body 上下 6 / 左右 8')
+  /* ---- 位姿 3 列 × 2 行、关节五列固定宽度 ---- */
   assert.match(TWIN_CSS, /\.ursim-twin-ctl-pose\s*\{[^}]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/,
     '★ 位姿必须是 3 列网格')
-  assert.match(TWIN_CSS, /\.ursim-twin-ctl-pose-label\s*\{[^}]*flex:\s*0\s+0\s+28px/,
-    '★ 位姿轴标签固定 28 px')
-  assert.match(TWIN_CSS, /\.ursim-twin-ctl-pose-input\s*\{[^}]*min-width:\s*76px[^}]*height:\s*26px/,
-    '★ 位姿输入框最小 76 px、高 26 px')
-  assert.match(TWIN_CSS, /\.ursim-twin-ctl-joint-row\s*\{[^}]*grid-template-columns:\s*40px\s+26px\s+minmax\(0,\s*1fr\)\s+26px\s+56px/,
-    '★ 关节行 = 名称 40 + ◀ 26 + 滑块 + ▶ 26 + 数值 56')
+  assert.match(TWIN_CSS, /\.ursim-twin-ctl-pose-label\s*\{[^}]*flex:\s*0\s+0\s+26px/,
+    '★ 位姿轴标签固定 26 px')
+  assert.match(TWIN_CSS, /\.ursim-twin-ctl-pose-input\s*\{[^}]*min-width:\s*0[^}]*height:\s*30px/,
+    '★ 位姿输入框随列宽收缩、高 30 px')
+  assert.match(TWIN_CSS, /\.ursim-twin-ctl-joint-row\s*\{[^}]*grid-template-columns:\s*56px\s+32px\s+minmax\(0,\s*1fr\)\s+32px\s+64px/,
+    '★ 关节行 = 名称 56 + ◀ 32 + 滑块 + ▶ 32 + 数值 64')
 
   // 3 列网格靠 DOM 顺序折行：X/Y/Z 第一行、RX/RY/RZ 第二行。
   const poseGrid = byAttr(rightBody(ctx), 'data-ursim-ctl-grid')[0]
@@ -2653,14 +2654,14 @@ test('★ 控制轨尺寸：左轨 180 / 右轨 350，按钮 52×52、位姿 3 �
   assert.deepEqual(axes, ['x', 'y', 'z', 'rx', 'ry', 'rz'],
     '★ 位姿单元格顺序必须是 X/Y/Z + RX/RY/RZ')
 
-  // 右轨仍保留自己的 note / error（只删左轨那一对）。
+  // 合并后这条轨自己带 note / error（不可用原因写在同一条轨顶部）。
   assert.equal(byAttr(rightBody(ctx), 'data-ursim-ctl-note').length, 1, '右轨的提示栏必须保留')
   assert.equal(byAttr(rightBody(ctx), 'data-ursim-ctl-error').length, 1, '右轨的错误栏必须保留')
 
   ctx.panel.dispose()
 })
 
-test('★ 左轨：点一次 X+ 只发一条 cartesian + 一条 stop，body 形状正确', async () => {
+test('★ 控制轨：点一次 X+ 只发一条 cartesian + 一条 stop，body 形状正确', async () => {
   const ctx = boot({ initial: LIVE, autoSim: false })
   ctx.clock.flush()
   await tick()
@@ -2684,7 +2685,7 @@ test('★ 左轨：点一次 X+ 只发一条 cartesian + 一条 stop，body 形�
   ctx.panel.dispose()
 })
 
-test('★ 左轨：simulated=false / connected=false 时所有点动按钮 disabled', async () => {
+test('★ 控制轨：simulated=false / connected=false 时所有点动按钮 disabled', async () => {
   const ctx = boot({
     initial: { ...LIVE, simulated: false },
     autoSim: false,
@@ -2697,12 +2698,12 @@ test('★ 左轨：simulated=false / connected=false 时所有点动按钮 disab
   for (const button of buttons) {
     assert.equal(button.disabled, true, `${button.getAttribute('data-ursim-jog')} 在非仿真时必须禁用`)
   }
-  assert.equal(leftBody(ctx).getAttribute('data-ursim-ctl-state'), 'disabled', '★ 整块状态由属性表达')
-  // 左轨的原因栏已删除：不可用只置灰，不再有文字节点（右轨保留那一对）。
-  assert.equal(byAttr(leftBody(ctx), 'data-ursim-ctl-note').length, 0,
-    '★ 左轨不得再有提示栏（data-ursim-ctl-note）')
-  assert.equal(byAttr(leftBody(ctx), 'data-ursim-ctl-error').length, 0,
-    '★ 左轨不得再有错误栏（data-ursim-ctl-error）')
+  assert.equal(railBody(ctx).getAttribute('data-ursim-ctl-state'), 'disabled', '★ 整块状态由属性表达')
+  // 合并成一条轨后，提示/错误栏就长在同一条轨上（不可用时仍靠置灰 + 文字两类信号）。
+  assert.equal(byAttr(railBody(ctx), 'data-ursim-ctl-note').length, 1,
+    '★ 控制轨必须保留提示栏（data-ursim-ctl-note）')
+  assert.equal(byAttr(railBody(ctx), 'data-ursim-ctl-error').length, 1,
+    '★ 控制轨必须保留错误栏（data-ursim-ctl-error）')
 
   // 仿真来了 ⇒ 解禁
   ctx.state.set({ simulated: true, ts: 1100 })
@@ -2710,24 +2711,24 @@ test('★ 左轨：simulated=false / connected=false 时所有点动按钮 disab
   for (const button of allJogButtons(ctx)) {
     assert.equal(button.disabled, false, `${button.getAttribute('data-ursim-jog')} 应解禁`)
   }
-  assert.equal(leftBody(ctx).getAttribute('data-ursim-ctl-state'), 'ready', '可点动时状态为 ready')
+  assert.equal(railBody(ctx).getAttribute('data-ursim-ctl-state'), 'ready', '可点动时状态为 ready')
 
   // 数据停滞 ⇒ 再次置灰
   ctx.state.set({ feedStale: true, ts: 1200 })
   ctx.clock.flush()
   for (const button of allJogButtons(ctx)) assert.equal(button.disabled, true, '数据停滞时必须禁用')
-  assert.equal(leftBody(ctx).getAttribute('data-ursim-ctl-state'), 'disabled', '数据停滞时整块禁用')
+  assert.equal(railBody(ctx).getAttribute('data-ursim-ctl-state'), 'disabled', '数据停滞时整块禁用')
 
   // 断连 ⇒ 置灰
   ctx.state.set({ connected: false, simulated: false, feedStale: false, ts: 1300 })
   ctx.clock.flush()
   for (const button of allJogButtons(ctx)) assert.equal(button.disabled, true, '断连时必须禁用')
-  assert.equal(leftBody(ctx).getAttribute('data-ursim-ctl-state'), 'disabled', '断连时整块禁用')
+  assert.equal(railBody(ctx).getAttribute('data-ursim-ctl-state'), 'disabled', '断连时整块禁用')
 
   ctx.panel.dispose()
 })
 
-test('★ 左轨：回零按钮发 {mode:"home"}；步长切换后距离随之变化', async () => {
+test('★ 控制轨：回零按钮发 {mode:"home"}；步长切换后距离随之变化', async () => {
   const ctx = boot({ initial: LIVE, autoSim: false })
   ctx.clock.flush()
   await tick()
@@ -2758,7 +2759,7 @@ test('★ 左轨：回零按钮发 {mode:"home"}；步长切换后距离随之�
   ctx.panel.dispose()
 })
 
-test('★ 左轨：旋转点动发 rotate（角度→弧度），参考系切换后随命令下发', async () => {
+test('★ 控制轨：旋转点动发 rotate（角度→弧度），参考系切换后随命令下发', async () => {
   const ctx = boot({ initial: LIVE, autoSim: false })
   ctx.clock.flush()
   await tick()
@@ -2795,7 +2796,7 @@ test('★ 左轨：旋转点动发 rotate（角度→弧度），参考系切换
   ctx.panel.dispose()
 })
 
-test('★ 左轨：命令在途时按钮不禁用（aria-disabled 表达 busy）、后续运动点击被丢弃', async () => {
+test('★ 控制轨：命令在途时按钮不禁用（aria-disabled 表达 busy）、后续运动点击被丢弃', async () => {
   const calls = []
   const releases = []
   const request = (url, init = {}) => {
@@ -2819,7 +2820,7 @@ test('★ 左轨：命令在途时按钮不禁用（aria-disabled 表达 busy）
   const held = jogButton(ctx, 'cartesian-x-plus')
   assert.equal(held.disabled, false, '★ 在途期间绝不能让被按住的按钮 disabled（否则收不到 pointerup）')
   assert.equal(held.getAttribute('aria-disabled'), 'true', '★ busy 用 aria-disabled 表达')
-  assert.equal(leftBody(ctx).getAttribute('data-ursim-ctl-state'), 'busy', '★ 宿主节点状态是 busy')
+  assert.equal(railBody(ctx).getAttribute('data-ursim-ctl-state'), 'busy', '★ 宿主节点状态是 busy')
   assert.equal(jogButton(ctx, 'cartesian-y-plus').disabled, false, '其它按钮同样保持可点（闸门在代码里）')
   assert.equal(bodies().filter((b) => b.mode === 'stop').length, 1,
     '★ 松手 stop 不走 busy 闸门：在途时也必须发出去')
@@ -2833,12 +2834,12 @@ test('★ 左轨：命令在途时按钮不禁用（aria-disabled 表达 busy）
   ctx.clock.flush(16)
   assert.equal(held.disabled, false, '返回后仍然不禁用')
   assert.equal(held.getAttribute('aria-disabled'), 'false', '★ 落地后解除 busy 标记')
-  assert.equal(leftBody(ctx).getAttribute('data-ursim-ctl-state'), 'ready')
+  assert.equal(railBody(ctx).getAttribute('data-ursim-ctl-state'), 'ready')
 
   ctx.panel.dispose()
 })
 
-test('★ 左轨：短按一步；按住 250 ms 切速度流，每 100 ms 重发；松开/卸载即停', () => {
+test('★ 控制轨：短按一步；按住 250 ms 切速度流，每 100 ms 重发；松开/卸载即停', () => {
   const { body, timers, sent, rail, button } = mountJogRecorder()
   const btn = button('cartesian-x-plus')
   const count = (mode) => sent.filter((payload) => payload.mode === mode).length
@@ -2879,14 +2880,14 @@ test('★ 左轨：短按一步；按住 250 ms 切速度流，每 100 ms 重发
   assert.equal(timers.pending, 0)
 })
 
-test('★ 左轨：速度流中某一条在飞时按钮不被禁用，重发跳过这一拍但绝不停表', async () => {
+test('★ 控制轨：速度流中某一条在飞时按钮不被禁用，重发跳过这一拍但绝不停表', async () => {
   const doc = makeDoc()
   const body = doc.createElement('div')
   const timers = makeFakeTimers()
   const sent = []
   /** 可控 promise：每次 send 都挂着，直到测试手动 resolve。 */
   const pending = []
-  const rail = mountLeftRail(doc, body, {
+  const rail = mountRightRail(doc, body, {
     send: (payload) => {
       sent.push(payload)
       return new Promise((resolve) => pending.push(resolve))
@@ -2940,7 +2941,7 @@ test('★ 左轨：速度流中某一条在飞时按钮不被禁用，重发跳�
 })
 
 /**
- * 建一条最小的左轨挂载：假文档 + 假时钟 + 记录型 `send`。
+ * 建一条最小的控制轨挂载：假文档 + 假时钟 + 记录型 `send`。
  *
  * 这五条速度流用例只关心"发了什么、什么时候发"，不需要面板/3D/状态帧。
  */
@@ -2949,7 +2950,7 @@ function mountJogRecorder() {
   const body = doc.createElement('div')
   const timers = makeFakeTimers()
   const sent = []
-  const rail = mountLeftRail(doc, body, {
+  const rail = mountRightRail(doc, body, {
     send: (payload) => {
       sent.push(payload)
     },
@@ -2965,7 +2966,7 @@ function mountJogRecorder() {
   return { doc, body, timers, sent, rail, button }
 }
 
-test('★ 左轨·短按：只发一步 cartesian + stop，全程没有 velocity', () => {
+test('★ 控制轨·短按：只发一步 cartesian + stop，全程没有 velocity', () => {
   const { timers, sent, rail, button } = mountJogRecorder()
   const btn = button('cartesian-x-plus')
 
@@ -2991,7 +2992,7 @@ test('★ 左轨·短按：只发一步 cartesian + stop，全程没有 velocity
   rail.dispose()
 })
 
-test('★ 左轨·长按：250 ms 切换成 velocity（x 分量 +0.025，其余 0）', () => {
+test('★ 控制轨·长按：250 ms 切换成 velocity（x 分量 +0.025，其余 0）', () => {
   const { body, timers, sent, rail, button } = mountJogRecorder()
   const btn = button('cartesian-x-plus')
 
@@ -3014,7 +3015,7 @@ test('★ 左轨·长按：250 ms 切换成 velocity（x 分量 +0.025，其余 
   rail.dispose()
 })
 
-test('★ 左轨·长按：每 100 ms 重发同一条 velocity（喂看门狗）', () => {
+test('★ 控制轨·长按：每 100 ms 重发同一条 velocity（喂看门狗）', () => {
   const { timers, sent, rail, button } = mountJogRecorder()
   const btn = button('cartesian-x-plus')
 
@@ -3037,7 +3038,7 @@ test('★ 左轨·长按：每 100 ms 重发同一条 velocity（喂看门狗）
   rail.dispose()
 })
 
-test('★ 左轨·松手即停：pointerup 发 stop，之后 1000 ms 不得再有 velocity', () => {
+test('★ 控制轨·松手即停：pointerup 发 stop，之后 1000 ms 不得再有 velocity', () => {
   const { body, timers, sent, rail, button } = mountJogRecorder()
   const btn = button('cartesian-x-plus')
 
@@ -3059,7 +3060,7 @@ test('★ 左轨·松手即停：pointerup 发 stop，之后 1000 ms 不得再�
   rail.dispose()
 })
 
-test('★ 左轨·旋转长按：rz 分量 = 15°/s（rad/s），其余 0', () => {
+test('★ 控制轨·旋转长按：rz 分量 = 15°/s（rad/s），其余 0', () => {
   const { timers, sent, rail, button } = mountJogRecorder()
   const btn = button('rotate-rz-plus')
 
@@ -3079,7 +3080,7 @@ test('★ 左轨·旋转长按：rz 分量 = 15°/s（rad/s），其余 0', () =
   rail.dispose()
 })
 
-test('★ 左轨·速度流：frame 跟随参考系分段控件（base）', () => {
+test('★ 控制轨·速度流：frame 跟随参考系分段控件（base）', () => {
   const { timers, sent, rail, button } = mountJogRecorder()
   byAttrValue(rail.body, 'data-ursim-frame', 'base').listeners.click[0]()
 
@@ -3095,7 +3096,7 @@ test('★ 左轨·速度流：frame 跟随参考系分段控件（base）', () =
   rail.dispose()
 })
 
-test('★ 左轨·回零：不参与速度流，按住也只发一条 home', () => {
+test('★ 控制轨·回零：不参与速度流，按住也只发一条 home', () => {
   const { body, timers, sent, rail, button } = mountJogRecorder()
   const btn = button('home')
 
@@ -3114,7 +3115,7 @@ test('★ 左轨·回零：不参与速度流，按住也只发一条 home', () 
   rail.dispose()
 })
 
-test('★ 左轨：pointerleave / pointercancel / lostpointercapture 都发 stop 并停表', () => {
+test('★ 控制轨：pointerleave / pointercancel / lostpointercapture 都发 stop 并停表', () => {
   for (const type of ['pointerleave', 'pointercancel', 'lostpointercapture']) {
     const { timers, sent, rail, button } = mountJogRecorder()
     const btn = button('cartesian-z-plus')
@@ -3182,7 +3183,7 @@ const rightError = (ctx) => byAttr(rightBody(ctx), 'data-ursim-ctl-error')[0]
 const KIN12 = resolveKinematics('ur12e')
 const degToRad = (deg) => (deg * Math.PI) / 180
 
-test('★ 右轨：拖关节滑块只预览不发命令，松手才发一条 joint', async () => {
+test('★ 控制轨：拖关节滑块只预览不发命令，松手才发一条 joint', async () => {
   const ctx = boot({ initial: LIVE, autoSim: false })
   ctx.clock.flush()
   await tick()
@@ -3230,7 +3231,7 @@ test('★ 右轨：拖关节滑块只预览不发命令，松手才发一条 joi
   ctx.panel.dispose()
 })
 
-test('★ 右轨：位姿输入回车只改一个分量，其余分量取最新帧', async () => {
+test('★ 控制轨：位姿输入回车只改一个分量，其余分量取最新帧', async () => {
   const ctx = boot({ initial: LIVE, autoSim: false })
   ctx.clock.flush()
   await tick()
@@ -3262,7 +3263,7 @@ test('★ 右轨：位姿输入回车只改一个分量，其余分量取最新�
   ctx.panel.dispose()
 })
 
-test('★ 右轨：顶部只读摘要随快照更新 TCP（米）', async () => {
+test('★ 控制轨：顶部只读摘要随快照更新 TCP（米）', async () => {
   const ctx = boot({ initial: LIVE, autoSim: false })
   ctx.clock.flush()
   await tick()
@@ -3280,7 +3281,7 @@ test('★ 右轨：顶部只读摘要随快照更新 TCP（米）', async () => 
   ctx.panel.dispose()
 })
 
-test('★ 右轨：命令失败时输入框回滚到最新帧值并标红', async () => {
+test('★ 控制轨：命令失败时输入框回滚到最新帧值并标红', async () => {
   const base = makeFakeRequest()
   const request = (url, init = {}) => {
     if ((init.method ?? 'GET') === 'POST') {
@@ -3311,7 +3312,7 @@ test('★ 右轨：命令失败时输入框回滚到最新帧值并标红', asyn
   ctx.panel.dispose()
 })
 
-test('★ 右轨：关节 ± 按钮各发一条 joint，且步进是 1°', async () => {
+test('★ 控制轨：关节 ± 按钮各发一条 joint，且步进是 1°', async () => {
   const ctx = boot({ initial: LIVE, autoSim: false })
   ctx.clock.flush()
   await tick()
@@ -3342,7 +3343,7 @@ test('★ 右轨：关节 ± 按钮各发一条 joint，且步进是 1°', async
   ctx.panel.dispose()
 })
 
-test('★ 右轨：禁用条件与左轨一致（connected / simulated / feedStale）', async () => {
+test('★ 控制轨：禁用条件与控制轨一致（connected / simulated / feedStale）', async () => {
   const ctx = boot({ initial: { ...LIVE, simulated: false }, autoSim: false })
   ctx.clock.flush()
   await tick()

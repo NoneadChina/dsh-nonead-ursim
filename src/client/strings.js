@@ -187,6 +187,8 @@ export const zh = {
   controlsStepMmOptionTitle: (value) => `步长 ${value} mm`,
   controlsStepDegOptionTitle: (value) => `步长 ${value}°`,
   controlsFrame: '参考系',
+  /** 位姿行右侧那一列的标题（附件图用「坐标系」，与「参考系」同义；新面板按附件图排版）。 */
+  controlsFrameTitle: '坐标系',
   controlsFrameTool: '工具系',
   controlsFrameBase: '基座系',
   controlsFrameOptionTitle: (name) => `切换到${name}点动`,
@@ -382,6 +384,7 @@ export const en = {
   controlsStepMmOptionTitle: (value) => `Step ${value} mm`,
   controlsStepDegOptionTitle: (value) => `Step ${value}°`,
   controlsFrame: 'Frame',
+  controlsFrameTitle: 'Frame',
   controlsFrameTool: 'Tool',
   controlsFrameBase: 'Base',
   controlsFrameOptionTitle: (name) => `Jog in the ${name} frame`,

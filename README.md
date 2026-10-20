@@ -136,7 +136,7 @@ Failure responses carry a **machine-readable `code`** (e.g. `no_robot` / `robot_
    // C:\Users\<you>\.dsh\profiles\web\package.json
    {
      "dependencies": {
-       "dsh-nonead-ursim": "^0.3.1"
+       "dsh-nonead-ursim": "^0.3.2"
      },
      "dsh": {
        "profile": {
@@ -220,7 +220,7 @@ npm run verify:models # validate the structural contract of the 14 GLBs
   sides by *parsing* them (the snapshot that carries `op` for every tool, and `ast` for the handler),
   so parameter names, required-ness and types are all cross-checked.
 
-The most recent full run (**2026-10-20**, v0.3.1): `npm run check` green; `npm test` **59/59**
+The most recent full run (**2026-10-20**, v0.3.2): `npm run check` green; `npm test` **59/59**
 (48 test files + 11 gates, 0 failed / 0 skipped); `npm run verify:host` reports **89/89** tools
 registered through the host's real DSL; `npm run verify:models` passes 14/14 models; plus a live
 UR12e offline-simulation smoke run (readback, motion, jog/pose/joint panel control, velocity stream

@@ -8,9 +8,9 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
-## [Unreleased]
+## [0.3.2] - 2026-10-20
 
-A review round over the whole plugin — host, worker, panel, docs, gates — fixing 33 defects. Four of them changed behaviour a user could feel: releasing a jog button could leave the velocity stream running, opening the panel could kill the worker, the simulated arm's state could tear across threads, and the README promised a test semantics the runner did not implement.
+A review round over the whole plugin — host, worker, panel, docs, gates — fixing 33 defects. Four of them changed behaviour a user could feel: releasing a jog button could leave the velocity stream running, opening the panel could kill the worker, the simulated arm's state could tear across threads, and the README promised a test semantics the runner did not implement. On top of the fixes, the panel dropped from two control rails to one 700 px rail laid out like the teach pendant.
 
 ### Fixed
 
@@ -35,6 +35,11 @@ A review round over the whole plugin — host, worker, panel, docs, gates — fi
 ### Added
 
 - `docs/test-report-2026-10-20.md`: the v0.3.1 regression — four verification layers, 59/59 items, 89/89 tools registered through the host's real DSL, 6 panel routes, 14 model assets, and the end-to-end smoke matrix over the simulation. The 2026-10-19 report is now marked as a v0.2.4 archive.
+
+### Changed
+
+- **The panel now has one control rail instead of two.** The left rail (jog pads, step sizes, reference frame, home) and the right rail (TCP pose, joints) were merged into a single **700 px** rail that follows the pendant layout requested by the user: readout → `TCP 位姿` six fields with the `坐标系` selector stacked on the right → the position and orientation pads → the six joint sliders. Nothing was dropped, and the stage is a two-column grid (`3D | 700px`) instead of `180 | 3D | 350`; the collapsed state is still remembered in localStorage (the stored `left` key is ignored rather than reset).
+- Jog and pose/joint submission now share **one motion gate** (`createMotionLock`): previously each rail had its own busy flag, so a held jog button and a typed pose could be sent to the host at the same time. Jog buttons are 64×64 with a 6 px pad gap, the frame and step segments stack vertically in the right-hand strip, and `data-ursim-jog-mode` is mirrored onto the rail body so the whole panel has a single "stepping vs streaming" state.
 
 ## [0.3.1] - 2026-10-19
 
