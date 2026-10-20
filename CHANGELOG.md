@@ -8,6 +8,11 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.3.8] - 2026-10-20
+
+### Changed
+
+- **The control rail's "data stalled" hint moved out of the rail too** (user report). 0.3.6 only relocated the red error line, so `数据通道停滞：控件已暂停，恢复后自动解禁` was still rendering at the top of the right rail. The hint node (`data-ursim-ctl-note`) now hangs in the same HUD slot next to `机器人 UR12e · 127.0.0.1` as the error node, through a matching optional `noteHost` argument of `mountRightRail` (falling back inside the rail when omitted, so the rail stays usable standalone). Both nodes keep `:empty { display: none }`, so the identity row shows nothing extra while the channel is healthy, and the slot clips long text with an ellipsis instead of stretching the row.
 ## [0.3.7] - 2026-10-20
 
 ### Changed

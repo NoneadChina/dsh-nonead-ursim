@@ -790,11 +790,15 @@ export function mountTwinPanel({
    */
   const hudIdentityText = makeEl(doc, 'span', 'ursim-twin-identity-text', 'data-ursim-twin-identity-text')
   /**
-   * 控制轨**报错栏的槽位**（0.3.6，用户要求"把右轨顶部的报错栏移到身份行右侧、与系统报错栏共存"）。
+   * 控制轨**提示行与报错栏的共用槽位**（0.3.6 起错误行、0.3.8 起提示行）。
    *
-   * 这里只放一个**空壳 span**：真正的错误节点由 `mountRightRail` 通过 `deps.errorHost` 挂进来，
-   * 这样"命令被拒/点动失败"的红字与身份文字同一行，而两条链路的写入互不覆盖 ——
-   * 系统级错误仍走 `errorLine`（`data-ursim-twin-error`），数据停滞提示仍走 `hudFeed`。
+   * 用户要求"把右轨顶部那两行（数据通道停滞提示 / 命令失败报错）移到身份行右侧、与系统报错栏共存"。
+   * 这里只放一个**空壳 span**：真正的两个节点由 `mountRightRail` 通过 `deps.noteHost` /
+   * `deps.errorHost` 挂进来（`noteHost === errorHost === hudIdentityError`），这样它们与身份文字同一行，
+   * 而各条链路的写入互不覆盖 —— 系统级错误仍走 `errorLine`（`data-ursim-twin-error`），
+   * 数据通道健康度仍走 `hudFeed`，命令失败/整块禁用则走这两个节点。
+   *
+   * 两个节点都有 `:empty { display: none }`：没有内容时槽位是空的，这一行就只剩身份文字。
    */
   const hudIdentityError = makeEl(doc, 'span', 'ursim-twin-identity-error', 'data-ursim-twin-identity-error')
   const hudJoints = makeEl(doc, 'div', 'ursim-twin-hud-row', 'data-ursim-twin-joints')
@@ -822,7 +826,7 @@ export function mountTwinPanel({
   // （用户要求）。没有停滞时它是 `display:none`，这一行就只剩身份。
   hudIdentity.appendChild(hudIdentityText)
   hudIdentity.appendChild(hudFeed)
-  // 控制轨的报错栏紧跟在数据停滞提示之后：同一行、独立槽位（见 `hudIdentityError` 的说明）。
+  // 控制轨的提示行/报错栏紧跟在数据停滞提示之后：同一行、独立槽位（见 `hudIdentityError` 的说明）。
   hudIdentity.appendChild(hudIdentityError)
   // 工程辅助图层的开关（清单第 9 条）。默认状态见 `LAYER_DEFAULTS`：`基座系` 与 `幽灵臂` 默认开，
   // 其余默认关（一次全画出来会看不清真臂）。
@@ -1125,7 +1129,9 @@ export function mountTwinPanel({
   const railDeps = {
     send: sendJog,
     lock: motionLock,
-    // 控制轨的报错栏挂进 HUD 身份行（与"机器人 <型号> · <IP>"同一行），不再占轨内顶部一行。
+    // 控制轨的提示行（数据通道停滞/整块禁用原因）与报错栏都挂进 HUD 身份行
+    // （与"机器人 <型号> · <IP>"同一行，共用同一个槽位），不再占轨内顶部两行。
+    noteHost: hudIdentityError,
     errorHost: hudIdentityError,
     getSnapshot: () => state?.getSnapshot?.() ?? {},
     /**

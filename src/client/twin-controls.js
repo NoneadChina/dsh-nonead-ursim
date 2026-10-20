@@ -1089,9 +1089,9 @@ function formatMeters(value) {
  *   - 点动与位姿/关节共用 `deps.lock`（`createMotionLock()`）：同一时刻只有一条命令在飞，
  *     点动按钮在忙时只写 `aria-disabled`（不设 disabled，否则被按住的按钮收不到 `pointerup`），
  *     位姿输入与关节控件则真 `disabled`；
- *   - 整块禁用时在顶部 `data-ursim-ctl-note` 写出原因；`data-ursim-ctl-error` 承载命令失败原因；
- *     错误行挂到 `deps.errorHost`（0.3.6 起面板把它放到 HUD 的身份行里，与"机器人 <型号> · <IP>"
- *     同一行、和系统级错误行各占一个槽位），缺省仍挂在轨内顶部；
+ *   - 整块禁用时在 `data-ursim-ctl-note` 写出原因；`data-ursim-ctl-error` 承载命令失败原因；
+ *     两者都挂到 `deps.noteHost` / `deps.errorHost`（0.3.6 起错误行、0.3.8 起提示行都放进 HUD 的
+ *     身份行，与"机器人 <型号> · <IP>"同一行、和系统级错误行共存），缺省仍挂在轨内顶部；
  *   - 顶部另有一行**只读摘要**（`data-ursim-ctl-summary`，`TCP: x, y, z m`）：随快照更新，
  *     不是输入、不参与下发。
  *
@@ -1103,10 +1103,12 @@ function formatMeters(value) {
  *   previewJoints?: (q: number[]|null) => void,
  *   lock?: object,
  *   reportError?: (message: string) => void,
+ *   noteHost?: HTMLElement,
  *   errorHost?: HTMLElement,
  * }} [deps] `previewJoints` 是纯本地的 3D 预览钩子（不发命令、不改测量值）；
  *   传 `null` 表示结束预览。`lock` 缺省时自建一把（单测只挂这一块控件时用）。
- *   `errorHost` 是错误行的宿主节点（缺省 = 侧轨 body）。
+ *   `noteHost` 是"整块禁用原因"提示行的宿主节点、`errorHost` 是错误行的宿主节点
+ *   （两者缺省都 = 侧轨 body；面板把两个都指到 HUD 身份行里同一个槽位）。
  * @returns {{sync: (snapshot?: object) => void, dispose: () => void, body: HTMLElement|null, deps: object}}
  */
 export function mountRightRail(doc, body, deps = {}) {
@@ -1122,12 +1124,15 @@ export function mountRightRail(doc, body, deps = {}) {
   const preview = typeof merged.previewJoints === 'function' ? merged.previewJoints : null
   const lock = merged.lock ?? createMotionLock()
   /*
-   * 错误行的宿主：面板把它指到 HUD 的身份行（与"机器人 <型号> · <IP>"同一行），
-   * 让"命令为什么没生效"紧挨着"我在操作哪台机器"。缺省仍挂在侧轨 body 顶部。
-   * ⚠️ 只换挂载点、不换元素本身：节点仍带 `data-ursim-ctl-error`，写入路径与 7 处触发点一字未改。
+   * 提示行与错误行的宿主：面板把两者都指到 HUD 的身份行（与"机器人 <型号> · <IP>"同一行），
+   * 让"为什么整块不能操作 / 命令为什么没生效"紧挨着"我在操作哪台机器"。
+   * 缺省仍挂在侧轨 body 顶部。
+   * ⚠️ 只换挂载点、不换元素本身：节点仍带 `data-ursim-ctl-note` / `data-ursim-ctl-error`，
+   *    写入路径与触发点一字未改；两者都有 `:empty { display: none }`，空着就不占位置。
    */
-  const errorHost =
-    merged.errorHost && typeof merged.errorHost.appendChild === 'function' ? merged.errorHost : host
+  const hostIsUsable = (node) => node && typeof node.appendChild === 'function'
+  const noteHost = hostIsUsable(merged.noteHost) ? merged.noteHost : host
+  const errorHost = hostIsUsable(merged.errorHost) ? merged.errorHost : host
 
   /* ---------------- 可变状态 ---------------- */
   let disposed = false
@@ -1155,7 +1160,8 @@ export function mountRightRail(doc, body, deps = {}) {
 
   /* ---------------- DOM ---------------- */
   const note = makeEl(doc, 'div', 'ursim-twin-ctl-note', 'data-ursim-ctl-note')
-  host.appendChild(note)
+  // 挂到 `noteHost`（面板传 HUD 身份行）：提示行与错误行共享同一个槽位。
+  noteHost.appendChild(note)
   const error = makeEl(doc, 'div', 'ursim-twin-ctl-error', 'data-ursim-ctl-error')
   // 挂到 `errorHost`（面板传 HUD 身份行）而不是轨内顶部：用户要求错误行与身份同一行。
   errorHost.appendChild(error)
