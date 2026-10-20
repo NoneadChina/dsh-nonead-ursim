@@ -1,5 +1,9 @@
 # 完整功能测试报告 · 2026-10-19
 
+> **历史存档（v0.2.4）。** 本报告记录的是 2026-10-19 对 v0.2.4 的回归，数字（87 工具 / 88 op /
+> 48 门禁 / 用例规模）与今天的 v0.3.1 不一致，保留原文仅为可追溯。当前结论见
+> [2026-10-20 报告](./test-report-2026-10-20.md)（89 工具 / 90 op / 50 门禁）。
+
 被测对象：`dsh-nonead-ursim` v0.2.4，commit `75bee83`（与 `origin/main` 同一提交）
 测试主机：Windows · Node v24.18.0 · Python 3.12.9 · 宿主 `@deepseek-ai/dsh` 0.2.0-rc.2
 测试方式：仓库自带门禁与测试套件（四层）+ 会话内真实调用已注册工具驱动 UR12e 离线仿真
@@ -74,7 +78,7 @@ npm run test:python      # worker 自检（Python 依赖）
 
 工具分类与审批门禁见 [工具矩阵](./tool-matrix.md)；版本变更见 [CHANGELOG](../CHANGELOG.md)。
 
-## 4. worker / 仿真层 88 个 op 全量扫测（2026-10-19 补充）
+## 7. worker / 仿真层 88 个 op 全量扫测（2026-10-19 补充）
 
 方法：从 `lib/tool-defs.js` 解析 op→toolName（87 个，无重复；第 88 个 `shutdown_worker` 无工具），
 `docs/tool-schemas.golden.json` 提供参数，逐个调用 `route_op(op, params)`（passthrough 回落 `HANDLERS`），
@@ -99,7 +103,7 @@ npm run test:python      # worker 自检（Python 依赖）
 - `run_sequence`（20 段 + `t=30`）与四个 `draw_*` 的计划时长 = `t + 0.05 s`（`_MIN_SEGMENT_S` 地板，
   测试里已明文记录该常数）。
 
-## 5. 宿主工具层冒烟（2026-10-19 补充，会话内真实调用 36 个已注册工具）
+## 8. 宿主工具层冒烟（2026-10-19 补充，会话内真实调用 36 个已注册工具）
 
 全部通过：`sim_start` / `get_status` / `get_speed_scaling` / `get_uptime` / `get_robot_model` /
 `get_serial_number` / `get_joint_pose` / `get_tcp_pose`、`set_digital_out` + `get_digital_out_bits`

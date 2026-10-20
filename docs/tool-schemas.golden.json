@@ -1161,7 +1161,7 @@
     "name": "ursim_run_sequence",
     "op": "run_sequence",
     "description": "**一条命令跑完整段多段轨迹**：按顺序走完 segments 里的每一段，段与段之间**不停顿**。每段是一个对象，只有两种形态：`{\"type\":\"joint\",\"q\":[q0,q1,q2,q3,q4,q5]}`（关节空间，弧度，按最短路径）或 `{\"type\":\"cartesian\",\"pose\":[x,y,z,rx,ry,rz]}`（从上一点直线过去；米 / 旋转向量弧度，按 1 cm 细分并逐点求逆解）。序列本体（必填）示例：[{\"type\":\"joint\",\"q\":[0,-1.5708,1.5708,-1.5708,-1.5708,0]},{\"type\":\"cartesian\",\"pose\":[0.3,0,0.4,0,3.1416,0]}]。★ 仿真路径把**所有段拼成一条折线、只规划一次**，整条轨迹共用一条时间剖面 —— 所以段间不会各自起停；`t>0` 时整段时长就是 t。⚠️ 真机路径发出去的是一串 `movej`/`movel`（每段各带 a/v），控制器在每个途经点按 `r` 过渡：`r=0`（默认）时是**逐段起停**，并且**整段时长 `t` 在真机上不建模**（回包里会明说已忽略）。⚠️ 任一段的任一细分点逆解不出来就**整条序列失败**（仿真不会跳过那一段继续走）。⚠️ 会驱动机械臂运动，请确保机器人可见且无人员/障碍物。",
-    "timeoutMs": null,
+    "timeoutMs": 600000,
     "parameters": {
       "a": {
         "description": "加速度，必须 >0，默认 1.2（movel 的手册默认值；关节段也用这一对）",
@@ -1700,7 +1700,7 @@
     "name": "ursim_speedj",
     "op": "speedj",
     "description": "**关节速度控制**：让指定机器人线性加速到给定的关节角速度并保持（URScript `speedj(qd, a, t)`）。⚠️ 这是速度指令、不是位置指令：机器人会一直以该速度转动，直到 ursim_stopj / 新的运动指令 / 安全停止。t>0 时函数在 t 秒后返回，t=0（默认）时在达到目标速度后返回——**两种情况机器人都还在动**。请用 ursim_wait_steady 或 ursim_stopj 收尾，并务必确认终点方向的行程足够。",
-    "timeoutMs": null,
+    "timeoutMs": 600000,
     "parameters": {
       "a": {
         "description": "关节加速度（rad/s²，必须 >0，默认 0.5）",
@@ -1728,7 +1728,7 @@
     "name": "ursim_speedl",
     "op": "speedl",
     "description": "**TCP 速度控制**：让指定机器人线性加速到给定的 TCP 速度并保持（URScript `speedl(xd, a, t, aRot)`）。⚠️ 这是本插件\"放得最开\"的运动指令：它绕过位置轨迹规划，直接给笛卡尔速度；机器人会一直以该速度运动，直到 ursim_stopl / 新指令 / 安全停止。t=0（默认）表示达速后返回但**仍在运动**。aRot 省略时旋转加速度按 a 处理（=手册默认 `aRot='a'`）。",
-    "timeoutMs": null,
+    "timeoutMs": 600000,
     "parameters": {
       "a": {
         "description": "加速度（m/s²，必须 >0，默认 0.5）",
@@ -1820,7 +1820,7 @@
     "name": "ursim_wait_steady",
     "op": "wait_steady",
     "description": "等待指定机器人**完全静止**后再返回（对应用户手册里的\"等待机器人静止\"语义）。实现方式是轮询 RTDE 里已有的 TCP 速度与关节角速度（零额外往返），**不是**发 URScript 的 is_steady()——那个表达式在力控/示教模式下恒为 false，反而会误导。适合在 speedj/speedl/力控之后确认\"确实停下来了\"。超时不会报错，而是如实回报 steady=false 与当时的实测速度。",
-    "timeoutMs": null,
+    "timeoutMs": 600000,
     "parameters": {
       "angular_tolerance": {
         "description": "TCP 角速度静止阈值（rad/s，默认 0.01）",

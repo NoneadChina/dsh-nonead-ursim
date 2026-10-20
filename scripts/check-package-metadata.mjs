@@ -43,10 +43,28 @@ if (id === pkg.name) ok(`client bundle module id 与包名一致（${id}）`);
 else bad(`client bundle 的模块 id 是 ${id}，包名是 ${pkg.name} —— 客户端半不会加载`);
 
 // `files` must cover the runtime and must not leak the machine-local shim.
-const needed = ['lib', 'assets', 'cordis.patch.yml', 'python/ur_worker.py',
-  'python/URBasic/rtdeConfiguration.xml', 'python/URBasic/rtdeConfigurationDefault.xml'];
+//
+// Coverage is matched **exactly** (or as a parent directory / a real glob): the old
+// `want.startsWith(f.replace('/**/*.py', ''))` let `python/ur_worker.py` cover
+// `python/ur_sim.py` and `python/URBasic/rtdeConfiguration*.xml`, so deleting either of
+// those two files from `files` still printed PASS while the published tarball lost them.
+const globToRegExp = (glob) => {
+  const src = glob
+    .split('*')
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('[^/]*');
+  return new RegExp(`^${src}$`);
+};
+const coveredBy = (want, entry) => {
+  if (entry === want) return true;
+  if (entry.includes('*')) return globToRegExp(entry).test(want);
+  return want.startsWith(entry.endsWith('/') ? entry : `${entry}/`);
+};
+const needed = ['lib', 'assets', 'cordis.patch.yml', 'python/ur_worker.py', 'python/ur_sim.py',
+  'python/URBasic/rtdeConfiguration.xml', 'python/URBasic/rtdeConfigurationDefault.xml',
+  'LICENSE', 'LICENSE-AGPL-3.0.txt'];
 for (const want of needed) {
-  const covered = pkg.files.some((f) => f === want || want.startsWith(f.replace('/**/*.py', '')));
+  const covered = pkg.files.some((f) => coveredBy(want, f));
   if (covered) ok(`files 覆盖 ${want}`);
   else bad(`files 未覆盖 ${want} —— 发布包里会缺文件`);
 }

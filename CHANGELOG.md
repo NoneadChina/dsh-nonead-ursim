@@ -8,6 +8,34 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [Unreleased]
+
+A review round over the whole plugin — host, worker, panel, docs, gates — fixing 33 defects. Four of them changed behaviour a user could feel: releasing a jog button could leave the velocity stream running, opening the panel could kill the worker, the simulated arm's state could tear across threads, and the README promised a test semantics the runner did not implement.
+
+### Fixed
+
+- **Releasing a jog button could keep the arm moving.** The velocity stream was stopped only by button-level `pointerup`/`pointerleave`/`pointercancel`; releasing outside the window (alt-tab, drag off-screen, tab hidden) left it restating 25 mm/s every 100 ms. Window-level `pointerup`, `blur` and `visibilitychange` now always end the hold.
+- **Opening the panel could kill the Python worker.** Read-only telemetry and the I/O write used the default `killOnTimeout: true`, so one panel poll queued behind a long command could tear the process down — losing the simulation state, or on a real robot cutting the only channel able to send `stopj`. Panel paths now use a short budget with `killOnTimeout: false`.
+- **Simulated state could tear between threads.** The push thread (`snapshot` → `advance`, every 50 ms) and the command thread did read-modify-write on the same fields without a lock: a frame could jump to a segment end and bounce back, and overlapping integrations could double the velocity. `VirtualRobot` now serialises advance/plan/twist/stop/status/snapshot under an `RLock`.
+- **`POST /twin/sim` with an empty body silently stopped the simulation.** `enabled` was read as `body.enabled === true`, so `POST {}` or `null` fell into the stop branch and still answered `200`. A non-object body or non-boolean `enabled` is now `400`, and route errors answer their real status instead of always `200`.
+- **`ursim_disconnect` cleared the simulation registration regardless of target**, so disconnecting a real robot in `real` mode also disabled the simulation and persisted that; jog then answered `403 SIM_ONLY`. The reset now applies only to the simulation target.
+- **`set_digital_out` read `"false"` as `true`** — `bool("false")` is `True`. Booleans are parsed strictly now (`true`/`false`/`1`/`0`), and a missing `value` is `BADARG` rather than a crash.
+- **A clockwise `movec` lost its starting orientation**: the signed fraction was clamped to 0 on a negative sweep, dropping the first arc segment. Fixed by normalising the signed fraction.
+- **`ursim_jog_rotate` had no upper bound on `delta_rad`** — on the simulation `1e4` became 25 000 segments of `move_cartesian` plus settle with no timeout, wedging the worker. The increment is now bounded by π.
+- **Rotation interpolation took the long way across ±π** (component-wise wrap); poses are now interpolated by composing the relative rotation and slerping its rotation vector, so a `movel` across the ±π seam stays on the short path and the final attitude is exact.
+- **A serialisation failure could kill the worker silently.** `respond()` called `json.dumps(..., allow_nan=False)` outside its own try and stdin decoded with `errors="strict"`, so one NaN reply or one bad byte ended the process with no error to the caller. Replies now fall back to a `SERIALIZE` error object and stdin decodes with `errors="replace"`.
+- **`ursim_stop` was followed by `is_steady: false` for 50 ms** because `stop()` reset the horizon to the minimum segment length instead of zero.
+- **`wait_steady`'s 300 s allowance exceeded the host's 60 s call deadline**, so a legal long wait was killed by the host first; `run_sequence`/`speedj`/`speedl` mismatched the browser-side `t` the same way. The host timeout now derives from the requested seconds, capped by the configured maximum.
+- **`ursim_list_programs` could never succeed against a real controller** — `RejectPolicy` with an empty known-hosts set rejects every host — and leaked the SSH session on failure. It loads the system known-hosts file, closes on every path, and prints the exact `ssh-keyscan` command when the host key is unknown.
+- **`_sim_settle` timed out while the simulated arm kept moving** (the reply said "failed" but the trajectory continued). Timeout now freezes the arm at its current attitude.
+- Also: `null` protocol lines no longer throw inside the readline callback; restart timers are tracked, cleared on dispose, and `_spawnOnce` refuses after dispose; `spawn` passes `windowsHide`; `shutdown`'s timer is `unref`'d and cleared; `readJsonBody` rejects non-object JSON; `sendJson` skips closed sockets; `jog_rotate`/`set_speed_scaling` gained the missing gate cases; `tool-matrix` verification now reads the generated Markdown it claims to check.
+- **Panel:** a pose/joint submit while busy was silently dropped (the edit was cleared first) — it now reports why and keeps the input; the error line survives more than one frame; HUD rows stop rewriting `aria-live` at 10 Hz; the canvas has a `:focus-visible` outline; joint ± buttons are 32 px with a 12 px gap (they were 26 px/2 px — one mis-click means one real degree); pose inputs accept plain decimals only (`0x10`/`1e3` were sent as 16/1000); the layout gets a container query for narrow docks; `refreshIo` drops out-of-order replies; the mode badge stops being rewritten every frame.
+- **Docs and packaging:** the README route table was missing `POST /nonead-ursim/twin/jog` (and had a malformed 3-cell row GFM discarded); non-existent version references (`0.6.0`/`5.0`/`^0.2.4`) were replaced with factual statements; `run-tests.mjs` now exits non-zero when anything was skipped (with an opt-in `--allow-skip`), matching the README's "a skip is never a pass"; `check-package-metadata` matches `files` entries exactly; the tarball carries `LICENSE-AGPL-3.0.txt` and excludes `lib/client.js.map` (15.5 MB instead of 16.2 MB); `prepublishOnly` runs the full check set and the test suite.
+
+### Added
+
+- `docs/test-report-2026-10-20.md`: the v0.3.1 regression — four verification layers, 59/59 items, 89/89 tools registered through the host's real DSL, 6 panel routes, 14 model assets, and the end-to-end smoke matrix over the simulation. The 2026-10-19 report is now marked as a v0.2.4 archive.
+
 ## [0.3.1] - 2026-10-19
 
 A version about jogging feel and panel layout: holding a jog button now moves the arm **continuously** instead of one step at a time, both rails are wider, and the left rail lost a control it did not need.

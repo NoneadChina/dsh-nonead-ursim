@@ -36,9 +36,11 @@ python/ur_sim.py — 运动学级离线仿真引擎（**没有任何网络/机�
 本模块**零第三方依赖**（只用标准库），因此可以在没有 numpy/paramiko 的机器上被导入与单测。
 """
 
+import functools
 import json
 import math
 import os
+import threading
 import time
 
 __all__ = [
@@ -597,6 +599,32 @@ _MIN_SEGMENT_S = 0.05
 _MAX_TWIST_DT = 0.1
 
 
+def _locked(method):
+    """把 `VirtualRobot` 的方法串行化在同一把**可重入**锁上。
+
+    为什么需要：一台虚拟机器人有**两条线程**同时碰它 ——
+    · 命令线程（worker 主线程）：`move_joints` / `move_cartesian` / `set_twist` / `stop` …；
+    · 推送线程（`_twin_push_loop`，20 Hz）：`snapshot()` → `advance()`。
+
+    没有锁时 `advance()` 的「读 `_last_advance_at` → 按 Δt 积分 → 写 `_last_advance_at`」
+    与 `_plan()` 的「写 5 个字段（`_waypoints` / `_segment_s` / `_total_s` / `_started_at`）」
+    可以交错，后果有两种，都是**看起来正常、实际错**：
+
+    1. **撕裂帧**：推送线程在 `_waypoints` 已更新、`_started_at` 还是旧值时取帧 ⇒ `u ≥ 1`
+       ⇒ 这一帧直接画在终点，下一帧再弹回起点（画面上闪一下，很难复现也很难归因）；
+    2. **双积分**：推送线程与命令线程同时观测到同一段 Δt>0，速度流被积两次 ⇒ 实际位移
+       是请求速度的两倍。
+
+    用 `RLock` 而不是 `Lock`：`_plan` / `move_*` / `status` 之间有嵌套调用，普通 `Lock`
+    会在自身上直接死锁。
+    """
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return wrapper
+
+
 class VirtualRobot:
     """一台**虚拟 UR**：只有运动学状态，没有控制器、没有网络。
 
@@ -611,6 +639,8 @@ class VirtualRobot:
     """
 
     def __init__(self, ip, model, q=None, speed_scaling=1.0, preset="zero"):
+        # 推送线程（20 Hz `snapshot()`）与命令线程共用同一份状态，先建锁（见 `_locked`）。
+        self._lock = threading.RLock()
         self.ip = str(ip)
         self.model = str(model).strip().lower()
         kinematics_for(self.model)  # 未知型号立刻失败，而不是等第一条指令
@@ -681,6 +711,7 @@ class VirtualRobot:
             remaining -= duration
         return list(self._waypoints[-1])
 
+    @_locked
     def advance(self, now=None):
         """把内部 `q` 推到"现在"；返回当前 q。
 
@@ -709,6 +740,7 @@ class VirtualRobot:
         self._last_advance_at = now
         return self.q
 
+    @_locked
     def is_steady(self, now=None):
         """速度流有效期间**永远不算"稳态"**（它会一直走下去，直到停或看门狗到点）。"""
         now = self._t_now(now)
@@ -732,6 +764,7 @@ class VirtualRobot:
         self._total_s = 0.0
         self._started_at = now
 
+    @_locked
     def set_twist(self, twist, frame="base", ttl_s=0.4, now=None):
         """写入一条**速度流**（`speedl` 语义）并武装看门狗。
 
@@ -794,6 +827,7 @@ class VirtualRobot:
         self._twist_frame = frame
         self._twist_deadline = now + ttl
 
+    @_locked
     def stop_twist(self, now=None):
         """立即清掉速度流（`stopl` / 全零 twist 语义）。位姿保持不动。"""
         now = self._t_now(now)
@@ -804,6 +838,7 @@ class VirtualRobot:
         # 冻结当前姿态：之后不会再有任何通道把它推回去。
         self._freeze_current(now)
 
+    @_locked
     def twist_state(self, now=None):
         """速度流的只读快照（供 `status()` 与测试核对"到底停了没有/为什么停"）。"""
         now = self._t_now(now)
@@ -865,10 +900,12 @@ class VirtualRobot:
         self._freeze_current(now)
         self._last_advance_at = now
 
+    @_locked
     def target_q(self):
         return list(self._waypoints[-1])
 
     # ── 运动指令 ──────────────────────────────────────────────
+    @_locked
     def _plan(self, waypoints, v, a, now=None, total_s=None):
         """把关节折线排成时间表，并把起点锚定到"现在"。
 
@@ -908,6 +945,7 @@ class VirtualRobot:
         self.q = list(current)
         self.move_count += 1
 
+    @_locked
     def move_joints(self, q_goal, v=1.05, a=1.4, now=None, total_s=None):
         """movej：目标关节角（按最短路径）。越限直接拒绝。"""
         goal = [float(q_goal[i]) for i in range(6)]
@@ -918,6 +956,7 @@ class VirtualRobot:
         delta = _shortest_joint_delta(current, goal)
         self._plan([[current[i] + delta[i] for i in range(6)]], v, a, now=now, total_s=total_s)
 
+    @_locked
     def move_cartesian(self, poses, v=0.25, a=1.2, step_m=0.01, now=None, total_s=None):
         """movel 语义：目标**位姿**（一个或多个途经点）→ 逐点逆解 → 关节折线。
 
@@ -950,10 +989,12 @@ class VirtualRobot:
             seed = list(ok)
         self._plan(waypoints, v, a, now=now, total_s=total_s)
 
+    @_locked
     def move_cartesian_path(self, waypoints, v=0.25, a=1.2, now=None):
         """movep 语义：一趟走过多个 Cartesian 途经点（每个点各自逆解，不细分直线）。"""
         return self.move_cartesian(waypoints, v, a, now=now)
 
+    @_locked
     def run_sequence(self, segments, v=0.25, a=1.2, step_m=0.01, now=None, total_s=None):
         """**多段连续运动**：把每一段转成关节航点后拼成一条折线，只排**一次**时间表。
 
@@ -1022,6 +1063,7 @@ class VirtualRobot:
                 "SIM_BADARG")
         self._plan(waypoints, v, a, now=now, total_s=total_s)
 
+    @_locked
     def servoj(self, q_goal, now=None):
         """servoj：直接把姿态设过去（真机是 500 Hz 流式伺服；这里退化成一次瞬时到位）。
 
@@ -1032,13 +1074,19 @@ class VirtualRobot:
             raise SimError("servoj 目标超出关节限位", "SIM_JOINT_LIMIT")
         self._plan([goal], 1.05, 1.4, now=now)
 
+    @_locked
     def stop(self, now=None):
         """stopj/stopl：在当前姿态冻结（清掉剩余轨迹**与速度流**）。"""
         now = self._t_now(now)
         current = self._sample(self.elapsed(now))
         self._waypoints = [list(current)]
         self._segment_s = [_MIN_SEGMENT_S]
-        self._total_s = _MIN_SEGMENT_S
+        # 总时长必须是 **0**（不是 `_MIN_SEGMENT_S`）：`is_steady()` 判的是
+        # `elapsed >= _total_s`，而 stop 之后 `_started_at = now` ⇒ elapsed 从 0 起算。
+        # 若这里写 0.05，紧接的 `get_robot_mode` / `status.running` / 短超时 `wait_steady`
+        # 会在 50ms 内报"还在动" —— 与 `stopj`/`stopl` 的"已停"语义自相矛盾，也与
+        # `_freeze_current()`（同一个动作，写的就是 0.0）不一致。
+        self._total_s = 0.0
         self._started_at = now
         self.q = list(current)
         # 速度流同样是"还在动"的一种：stop 之后必须一起清掉，否则下一帧 advance 会继续积分。
@@ -1046,25 +1094,40 @@ class VirtualRobot:
         self._twist_deadline = now
         self._last_advance_at = now
 
+    @_locked
     def speedj_probe(self):
-        """当前最大关节速度（rad/s）—— 只读、用于 `ursim_wait_steady` 之外的诊断。"""
+        """当前最大关节速度（rad/s）—— 只读、用于 `ursim_wait_steady` 之外的诊断。
+
+        两个采样点必须来自**同一条时间基准**、且都不推进状态：
+        · 旧实现用 `self.advance()` 取"现在"，它既会按墙钟推进 `q`，也会积分速度流 /
+          触发看门狗 —— 一个"只读诊断"因此有了副作用；
+        · 旧实现的 `later` 被 `min(self._total_s, …)` 饱和：轨迹走完时两点永远相同 ⇒ 恒 0；
+          速度流有效时 `_sample` 返回的是轨迹点（与 q 无关）⇒ 结果是噪声。
+
+        现在：`now` 取 `elapsed()` 的同一基准，`later` 取 `now + step`，`_sample` 在
+        `u ≥ 1` 时原样返回终点 ⇒ 轨迹走完时速度恒为 0，运动中则是终点方向的真实差分。
+        """
         step = 1e-3
-        later = self._sample(min(self._total_s, self.elapsed() + step))
-        now = self.advance()
+        base = self.elapsed()
+        now = self._sample(base)
+        later = self._sample(base + step)
         return max(abs(later[i] - now[i]) / step for i in range(6))
 
     # ── 读回 ──────────────────────────────────────────────────
+    @_locked
     def snapshot(self, now=None):
         """仿真推送用的一帧：**只给 q 与由 q 正解出的 tcp**（保证界面与读回一致）。"""
         q = self.advance(now)
         tcp = tcp_pose(self.model, q)
         return {"q": list(q), "tcp": tcp}
 
+    @_locked
     def target_snapshot(self, now=None):
         """控制器"打算去哪"（仿真的幽灵臂）：终点关节角与其正解 TCP。"""
         goal = self.target_q()
         return {"target_q": goal, "target_tcp": tcp_pose(self.model, goal)}
 
+    @_locked
     def status(self, now=None):
         """`ursim_get_status` 的仿真子集。`simulated: True` 是**契约字段**：调用方据此知道
         这不是真机读数，界面据此打仿真水印。"""
@@ -1138,21 +1201,66 @@ def _segment_vector(segment, key, index, what):
     return out
 
 
+def _mat4_mul(a, b):
+    """两个 4×4 **列主序**矩阵相乘（布局与 `matrix_from_axis_angle` 一致）。"""
+    out = [0.0] * 16
+    for col in range(4):
+        for row in range(4):
+            out[col * 4 + row] = (a[row] * b[col * 4]
+                                  + a[4 + row] * b[col * 4 + 1]
+                                  + a[8 + row] * b[col * 4 + 2]
+                                  + a[12 + row] * b[col * 4 + 3])
+    return out
+
+
+def _mat4_transpose(m):
+    return [m[0], m[4], m[8], m[12],
+            m[1], m[5], m[9], m[13],
+            m[2], m[6], m[10], m[14],
+            m[3], m[7], m[11], m[15]]
+
+
 def _interpolate_poses(start, goal, step_m=0.01, max_steps=800):
     """`start → goal` 的 Cartesian 直线细分（含终点，不含起点）。
 
-    位置线性；姿态在**旋转向量空间**线性插值 —— 绕单一轴转动时精确，一般情形是近似
-    （真机的 movel 由控制器做姿态插补，仿真不做四元数球面插值）。这个近似写进了文档。
+    位置线性；姿态走**球面插值**：取相对旋转 `R_startᵀ·R_goal` 的旋转向量（角度必在
+    [0, π]，天然走短边），再按弧长比例旋转起始姿态。**终点精确等于目标姿态** ——
+    这一点是硬要求：逐分量线性插值（旧实现）在 `rx` 跨 ±π 时会把 6.28 rad 走成长边，
+    且 `start + wrapped_delta` 一般**不是**目标旋转（多轴时甚至不是同一朝向），
+    `jog_rotate` 回报的目标姿态与实际到位姿态就会对不上。
+
+    细分步数取「位移细分」与「姿态细分」的**较大者**：纯原地转动（位置没变、只有 rx/ry/rz
+    变化）以前 `span = 0` ⇒ 只产生 1 个中间点，整段姿态变化被压成一步"瞬转"，
+    `wait_steady` 几乎立刻报稳。姿态分辨率固定为 0.01 rad（≈0.57°），与 step_m 无关。
     """
     start = _normalize_pose(start)
     goal = _normalize_pose(goal)
-    span = math.sqrt(sum((goal[i] - start[i]) ** 2 for i in range(3)))
+    m_start = matrix_from_axis_angle(0.0, 0.0, 0.0, *start[3:6])
+    m_goal = matrix_from_axis_angle(0.0, 0.0, 0.0, *goal[3:6])
+    rel = axis_angle_from_matrix(_mat4_mul(_mat4_transpose(m_start), m_goal))
+    pos_span = math.sqrt(sum((goal[i] - start[i]) ** 2 for i in range(3)))
+    rot_span = math.sqrt(sum(v * v for v in rel))
     step = step_m if isinstance(step_m, (int, float)) and step_m > 0 else 0.01
-    count = 1 if span <= step else min(max_steps, int(math.ceil(span / step)))
+    pos_count = 1 if pos_span <= step else int(math.ceil(pos_span / step))
+    rot_count = 1 if rot_span <= 0.01 else int(math.ceil(rot_span / 0.01))
+    count = min(max_steps, max(pos_count, rot_count))
+    # 姿态变化可忽略（纯平移）时**原样沿用起始姿态**：`矩阵 → 旋转向量` 在 θ≈π 附近
+    # 的往返误差约 1e-6 rad，会把"沿轴平移"的中间航点微微拧一下，最终位姿也就带上
+    # 同样量级的姿态漂移。（终点下面直接取 goal 的三个分量，天然精确。）
+    pure_translation = rot_span < 1e-9
     out = []
     for k in range(1, count + 1):
         u = k / float(count)
-        out.append([start[i] + (goal[i] - start[i]) * u for i in range(6)])
+        pos = [start[i] + (goal[i] - start[i]) * u for i in range(3)]
+        if k == count:
+            out.append(pos + list(goal[3:6]))
+            continue
+        if pure_translation:
+            out.append(pos + list(start[3:6]))
+            continue
+        m = _mat4_mul(m_start, matrix_from_axis_angle(0.0, 0.0, 0.0,
+                                                      rel[0] * u, rel[1] * u, rel[2] * u))
+        out.append(pos + axis_angle_from_matrix(m))
     return out
 
 

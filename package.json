@@ -12,6 +12,7 @@
   },
   "files": [
     "lib",
+    "!lib/client.js.map",
     "assets",
     "cordis.patch.yml",
     "README.md",
@@ -19,6 +20,7 @@
     "CHANGELOG.md",
     "CHANGELOG.zh.md",
     "LICENSE",
+    "LICENSE-AGPL-3.0.txt",
     "THIRD_PARTY_NOTICES.md",
     "requirements.txt",
     "python/__init__.py",
@@ -29,7 +31,7 @@
     "python/URBasic/rtdeConfigurationDefault.xml"
   ],
   "scripts": {
-    "prepublishOnly": "npm run check:static && npm run check:ops && npm run check:docs",
+    "prepublishOnly": "npm run check && npm test",
     "check": "npm run check:static && npm run check:ops && npm run check:docs && npm run check:manifest",
     "check:static": "node --check lib/index.js && node --check lib/worker.js && node scripts/check-package-metadata.mjs && node scripts/check-client-bundle.mjs",
     "check:ops": "python scripts/check-worker-ops.py && python scripts/check-new-ops.py && python scripts/check-approval-gate.py && python scripts/check-tool-params.py && python scripts/check-rtde-recipe.py",

@@ -896,7 +896,7 @@ test('★ H-3：同一 handler 的并发订阅有上限，超额订阅明确回 
     connectedIps: () => new Set(['1.2.3.4']),
     intervalMs: 1000,
     detailMs: 0,
-    maxClients: 2, // 便于测试；真实默认值是 4
+    maxClients: 2, // 便于测试；真实默认值 = 读类在飞槽位数（TWIN_STREAM_MAX_CLIENTS，当前 3）
   });
 
   const a = makeSseCapture();

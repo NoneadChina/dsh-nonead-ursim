@@ -6,6 +6,34 @@
 那份代码库的版本编号。此前那段历史已原样归档到 `CHANGELOG-archive.zh.md`；该文件在准备 0.1.1 时
 **已从本仓库移除**（可从导入源码的那个提交 `4c91704` 取回），并且从未进入过发布包。
 
+## [未发布]
+
+一次覆盖宿主、worker、面板、文档与门禁的全量审查，修复 33 项缺陷。其中 4 项用户能直接感知：松手后速度流可能还在续发、打开面板可能杀掉 worker、仿真状态会跨线程撕裂、README 承诺的测试语义与实现不符。
+
+### 修复
+
+- **松手后机械臂可能继续动。** 速度流原先只由按钮级的 `pointerup`/`pointerleave`/`pointercancel` 停止；在窗口外松手（切窗口、拖出可视区、切标签页）会留下每 100 ms 续发 25 mm/s 的定时器。现在窗口级 `pointerup`、`blur`、`visibilitychange` 一定结束长按。
+- **打开面板可能杀掉 Python worker。** 只读遥测与 I/O 写沿用默认 `killOnTimeout: true`，一次面板轮询排在长指令后面就会把子进程杀掉：仿真内存态全丢，真机模式下更会切断唯一能发 `stopj` 的通道。面板路径改用短预算 + `killOnTimeout: false`。
+- **仿真状态会跨线程撕裂。** 推送线程（每 50 ms 的 `snapshot` → `advance`）与命令线程对同一批字段做无锁读-改-写：某一帧可能跳到段末再弹回，重叠积分会翻倍速度。`VirtualRobot` 现在用 `RLock` 串行化 advance/plan/twist/stop/status/snapshot。
+- **`POST /twin/sim` 空 body 会静默关掉仿真。** `enabled` 取的是 `body.enabled === true`，于是 `POST {}` 或 `null` 落进停止分支还回 `200`。非对象 body 或非布尔 `enabled` 一律 `400`，路由错误也返回真实状态码而不是一律 `200`。
+- **`ursim_disconnect` 不判目标就清仿真登记**：`real` 模式下断真机也会把仿真标记为停用并落盘，随后点动 403、I/O 409。现在只在目标确实是仿真时重置。
+- **`set_digital_out` 把 `"false"` 读成 `true`** —— `bool("false")` 是 `True`。布尔参数改为严格解析（只认 `true`/`false`/`1`/`0`），缺参回 `BADARG` 而不是崩溃。
+- **顺时针 `movec` 丢失起始姿态**：负向扫掠时带符号比例被钳到 0，起始圆弧段被跳过。改为按符号归一化。
+- **`ursim_jog_rotate` 的 `delta_rad` 没有上界**：仿真里 `1e4` 会拆成 25 000 段 `move_cartesian` 加 settle 且无超时，worker 永久卡死。增量上界改为 π。
+- **旋转插值跨 ±π 走长路**（逐分量折角）；改为合成相对旋转、对旋转向量做球面插值 —— 跨 ±π 的 `movel` 走短路径，且终点姿态精确。
+- **序列化失败会静默杀死 worker。** `respond()` 把 `json.dumps(..., allow_nan=False)` 放在自己的 try 之外，stdin 又是 `errors="strict"`：回包里一个 NaN 或一个坏字节就让进程结束、调用方拿不到任何错误。现在回包降级为 `SERIALIZE` 错误对象，stdin 用 `errors="replace"`。
+- **`ursim_stop` 之后 50 ms 内 `is_steady` 为假**：`stop()` 把时间轴重置成最小段长而不是 0。
+- **`wait_steady` 的 300 s 允许值超过宿主 60 s 调用死线**，合法的长等待会先被宿主杀掉；`run_sequence`/`speedj`/`speedl` 的 `t` 有同样错配。宿主超时改为按请求秒数推算，并以配置上限封顶。
+- **`ursim_list_programs` 对真机永远不可能成功**（`RejectPolicy` + 空 known_hosts 会拒绝所有主机），且失败路径不关连接。现在会加载系统 known_hosts、所有路径都关闭连接，并在主机密钥未知时打印确切的 `ssh-keyscan` 命令。
+- **`_sim_settle` 超时后仿真里机械臂还在动**（回包说失败、轨迹继续走）。现在超时即按当前姿态冻结。
+- 其它：协议 `null` 行不再在 readline 回调里抛异常；重启定时器被跟踪、dispose 后清理且 `_spawnOnce` 拒绝再启动；`spawn` 加 `windowsHide`；`shutdown` 的定时器 `unref` 并清理；`readJsonBody` 拒绝非对象 JSON；`sendJson` 跳过已关闭的 socket；`jog_rotate`/`set_speed_scaling` 补上缺失的门禁用例；`tool-matrix` 校验现在真的读它声称校验的 Markdown 生成物。
+- **面板：** 忙时提交位姿/关节会被静默丢弃（输入先被清空）—— 现在给出可见拒绝并保留输入；错误行驻留超过一帧；HUD 行不再以 10 Hz 重写 `aria-live`；画布补 `:focus-visible` 轮廓；关节 ± 按钮从 26 px/2 px 放大到 32 px/12 px（原来一次误触就是真下发 1°）；位姿输入只接受普通十进制（`0x10`/`1e3` 曾被当成 16/1000 下发）；窄栏补容器查询；`refreshIo` 丢弃乱序回包；mode 角标不再每帧重写。
+- **文档与打包：** README 路由表补上 `POST /nonead-ursim/twin/jog`（并修掉被 GFM 丢弃的 3 单元格畸形行）；不存在的版本引用（`0.6.0`/`5.0`/`^0.2.4`）改为事实表述；`run-tests.mjs` 有跳过项时退出码非 0（可用 `--allow-skip` 显式接受），与 README「跳过绝不算通过」一致；`check-package-metadata` 改为精确匹配 `files` 条目；发布包补 `LICENSE-AGPL-3.0.txt`、排除 `lib/client.js.map`（15.5 MB，原 16.2 MB）；`prepublishOnly` 覆盖完整检查与测试。
+
+### 新增
+
+- `docs/test-report-2026-10-20.md`：v0.3.1 回归记录 —— 四层验证、59/59 项、89/89 工具经宿主真实 DSL 注册、6 条面板路由、14 个模型资产，以及仿真端到端冒烟矩阵。2026-10-19 的报告已标记为 v0.2.4 历史存档。
+
 ## [0.3.1] - 2026-10-19
 
 点动手感与面板版式的一版：按住点动键**连续平滑运动**（不再一步一步挪），左右轨按内容加宽，左轨去掉多余控件。

@@ -435,6 +435,25 @@ export function mountLeftRail(doc, body, deps = {}) {
     target.addEventListener(type, handler)
     bindings.push(() => target.removeEventListener?.(type, handler))
   }
+  /**
+   * 窗口级监听（P0 安全兜底）。
+   *
+   * 按住点动只在**按钮**上挂了结束事件，而 `holding` 是速度流唯一的开关（见 `streamVelocity`）：
+   * 鼠标按下后拖出浏览器窗口再松手，按钮收不到 `pointerup`（指针捕获只在同一文档内有效），
+   * 切窗口/切标签页时同理。`holding` 就会永久为真 —— 速度流以 20 Hz 一直续发，机械臂一直动。
+   * 所以除了按钮自身的事件，还要在窗口层面再兜一道：失焦、任何位置的松手、页面转后台，
+   * 全部当作"用户已经松手"。
+   *
+   * 挂在 `doc.defaultView`（= window）而不是 `document`：`pointerup` 在捕获阶段经过 window，
+   * 不依赖它是否冒泡到被按住的按钮；而宿主注入的假 DOM 也只为 window 提供 addEventListener。
+   */
+  const win = doc?.defaultView ?? null
+  const windowBindings = []
+  const bindWindow = (target, type, handler, options) => {
+    if (!target || typeof target.addEventListener !== 'function') return
+    target.addEventListener(type, handler, options)
+    windowBindings.push(() => target.removeEventListener?.(type, handler, options))
+  }
 
   /* ---------------- DOM ---------------- */
   // 左轨**不建** note / error 两个节点（见函数文档）：禁用状态只由 data-ursim-ctl-state
@@ -808,20 +827,45 @@ export function mountLeftRail(doc, body, deps = {}) {
     sendStop()
   }
 
-  /** 发停止指令（尽力而为：左轨没有错误栏，失败也不改界面）。 */
+  /**
+   * 发停止指令（尽力而为，但**不再静默**）。
+   *
+   * 这是"松手之后让机械臂停下来"的那一条：丢掉它就只剩服务器 400 ms 看门狗兜底，而看门狗
+   * 一旦失效，机械臂会带着最后一次速度继续动。左轨刻意没有错误栏（用户裁定：控件区只表达
+   * 可用性），所以把失败原因交给面板的统一错误行（`deps.reportError`），同时在宿主节点上留
+   * `data-ursim-stop-failed` 供排查；没有上报出口时也不会把异常冒到事件回调外。
+   */
   function sendStop() {
     if (send === null) return
+    const onFail = (e) => {
+      host.setAttribute('data-ursim-stop-failed', 'true')
+      merged.reportError?.(S.controlsStopFailed(e instanceof Error ? e.message : String(e)))
+    }
     let result
     try {
       result = send({ mode: 'stop' })
-    } catch {
+    } catch (e) {
+      onFail(e)
       return
     }
     if (result !== null && typeof result?.then === 'function') {
       // stop 不参与 busy 状态，也不让失败冒成 unhandledRejection。
-      result.then(() => {}, () => {})
+      result.then(() => {
+        host.removeAttribute?.('data-ursim-stop-failed')
+      }, onFail)
+    } else {
+      host.removeAttribute?.('data-ursim-stop-failed')
     }
   }
+
+  // 窗口级兜底的三条通道（见 `bindWindow` 的注释）。`blur` 覆盖"点了别的窗口"，
+  // `pointerup` 捕获阶段覆盖"在窗口任何地方松手"，`visibilitychange` 覆盖"切到后台/最小化"。
+  // 三者都只调用 `stopRepeat`：它自带去重（只有真的按住过才补 stop），重复触发无害。
+  bindWindow(win, 'blur', () => stopRepeat())
+  bindWindow(win, 'pointerup', () => stopRepeat(), true)
+  bindWindow(win, 'visibilitychange', () => {
+    if (doc?.visibilityState === 'hidden') stopRepeat()
+  })
 
   /** 只有"可用性/在途"变化时才写 DOM —— 每帧（60 Hz）重写 disabled 是浪费。 */
   function renderAvailability() {
@@ -875,6 +919,16 @@ export function mountLeftRail(doc, body, deps = {}) {
       }
     }
     bindings.length = 0
+    // 窗口监听同样必须摘干净：面板卸载后它们仍会触发（window 的生命周期比面板长），
+    // 而 `stopRepeat` 在 disposed 之后也没有意义了。
+    for (const off of windowBindings) {
+      try {
+        off()
+      } catch {
+        /* 同上：宿主可能已经把 window 换成新的，解绑失败不该阻断卸载 */
+      }
+    }
+    windowBindings.length = 0
   }
 
   // 初始一律禁用：第一帧快照到达前不可能知道连没连上/是不是仿真。
@@ -914,6 +968,28 @@ function clampJointDeg(value) {
 /** 位姿输入框的显示格式：X/Y/Z 用 mm（1 位小数）、RX/RY/RZ 用 rad（3 位小数）。 */
 function formatPoseValue(axis, value) {
   return isTranslationAxis(axis) ? (value * 1000).toFixed(1) : Number(value).toFixed(3)
+}
+
+/**
+ * 位姿输入的严格数字格式：只接受十进制整数或小数（可带负号）。
+ *
+ * `Number()` 太宽：`0x10` → 16、`1e3` → 1000、`Infinity` → Infinity —— 这些都会被**静默**
+ * 当成合法目标位姿下发（框里写着 `1e3`，机械臂去了 1000 mm）。工程输入框只该接受人真的会
+ * 写的十进制数；指数/十六进制/空白一律按非法处理（回滚 + 标红 + 提示）。
+ * 回填值走 `formatPoseValue`，恒为 ASCII 十进制，不会被这条正则误伤。
+ */
+const POSE_INPUT_RE = /^-?\d+(\.\d+)?$/
+
+/**
+ * 解析位姿输入。合法返回有限数，非法返回 `null`（调用方据此回滚并提示）。
+ * @param {unknown} text
+ * @returns {number|null}
+ */
+function parsePoseInput(text) {
+  const raw = String(text ?? '').trim()
+  if (raw === '' || !POSE_INPUT_RE.test(raw)) return null
+  const value = Number(raw)
+  return Number.isFinite(value) ? value : null
 }
 
 /**
@@ -1057,8 +1133,9 @@ export function mountRightRail(doc, body, deps = {}) {
     bind(input, 'keydown', (event) => {
       if (event?.key !== 'Enter') return
       event?.preventDefault?.()
-      entry.skipChange = true
-      commitPose(axis)
+      // `commitPose` 的返回值表示这次编辑是否已被消费（已下发/去重/已给出可见错误）：
+      // 只有真的消费了，紧随其后的 `change` 才是同一个编辑的第二次通知。
+      entry.skipChange = commitPose(axis) !== false
     })
     bind(input, 'change', () => {
       // 回车已经发过这一条：紧跟的 change 是同一个编辑的第二次通知，丢弃。
@@ -1157,6 +1234,10 @@ export function mountRightRail(doc, body, deps = {}) {
       if (!available || busy || send === null || latestQ === null) {
         rollbackJoint(index)
         clearPreview()
+        // 拒绝也要有说法（P2）：只把滑块弹回去而不解释，读起来就是"松手没反应"。
+        error.textContent = rejectSubmitReason(
+          latestQ === null ? S.controlsNoPoseData : S.controlsRejectedCommand,
+        )
         return
       }
       const q = latestQ.slice()
@@ -1202,7 +1283,15 @@ export function mountRightRail(doc, body, deps = {}) {
 
   /** 关节 ±：每次 1°，以最新帧为底只改这一轴。 */
   function stepJoint(index, direction) {
-    if (disposed || !available || busy || send === null || latestQ === null) return
+    if (disposed || !available || busy || send === null || latestQ === null) {
+      // ± 按钮每次真下发 1°，被拒时**必须**有可见说法（P2）：否则连点几次都是"没反应"。
+      if (!disposed) {
+        error.textContent = rejectSubmitReason(
+          latestQ === null ? S.controlsNoPoseData : S.controlsRejectedCommand,
+        )
+      }
+      return
+    }
     const row = jointRows[index]
     if (!row) return
     const q = latestQ.slice()
@@ -1214,33 +1303,68 @@ export function mountRightRail(doc, body, deps = {}) {
   }
 
   /**
+   * 提交被拒时的统一说法（P2）：`busy` = 已有一条命令在飞，其余按"本帧为什么不可用"给原因。
+   * 写进右轨错误行 —— 右轨有那一行（左轨刻意没有，见 mountLeftRail）。
+   */
+  function rejectSubmitReason(fallback) {
+    if (busy) return S.controlsBusyRetry
+    return lastReason !== null && lastReason !== '' ? lastReason : fallback
+  }
+
+  /**
    * 位姿输入提交（回车/失焦）：以最新帧 TCP 为底，只改被编辑的分量。
    *
    * X/Y/Z 按 mm 收、除以 1000；RX/RY/RZ 按 rad 收。同一字符串值不重复下发
    * （回车与 change 一次编辑只发一条）。
+   *
+   * @returns {boolean} 这次编辑是否已被"消费"（已下发 / 去重 / 已给出可见错误）。
+   *   回车处理用它决定要不要吞掉紧随其后的 `change`。
    */
   function commitPose(axis) {
     const entry = poseInputs[axis]
-    if (!entry) return
+    if (!entry) return false
     entry.editing = false
     const input = entry.input
-    if (disposed || !available || busy || send === null) return
+    /*
+     * 不可用 / 在途：**拒绝但必须说出来**。
+     *
+     * 以前这里直接 return —— 用户敲完回车（或失焦）什么都没发生：数值留在框里、机械臂不动、
+     * 界面上也没有一个字。更糟的是 `busy` 会让输入框变 disabled，失焦触发的 change 恰好走这条
+     * 路，用户只看到刚输入的值被下一帧回填覆盖。现在把拒绝原因写进错误行（输入框的值**不做
+     * 回滚**，用户回车重试即可）。
+     */
+    if (disposed || !available || busy || send === null) {
+      if (!disposed) {
+        error.textContent = rejectSubmitReason(S.controlsRejectedCommand)
+        markInvalid(input)
+        // 拒绝之后**保留用户输入**：`frame` 的回填只跳过 `editing === true` 的输入框，所以这里
+        // 必须把编辑态重新立起来，否则下一帧（最多 ~16 ms）就把刚敲的值换成最新帧值 ——
+        // 用户只会看到"我按了回车，数字自己变回去了"，连重试的机会都没有。
+        entry.editing = true
+      }
+      return true
+    }
 
     const text = String(input.value ?? '').trim()
-    const raw = text === '' ? Number.NaN : Number(text)
-    if (!Number.isFinite(raw)) {
+    // 严格十进制：`Number()` 会把 `0x10` 读成 16、`1e3` 读成 1000 并**静默**下发，
+    // 操作员看到框里写的是 `1e3`、机械臂却跑到 1000 mm。这里只接受人真的会写的十进制数。
+    const raw = parsePoseInput(text)
+    if (raw === null) {
       rollbackPose(axis)
       markInvalid(input)
       error.textContent = S.controlsInvalidRollback
-      return
+      return true
     }
-    if (entry.lastSent === input.value) return
-    if (latestTcp === null) return
+    if (entry.lastSent === input.value) return true
+    if (latestTcp === null) {
+      error.textContent = S.controlsNoPoseData
+      return true
+    }
 
     const pose = latestTcp.slice()
     pose[entry.index] = isTranslationAxis(axis) ? raw / 1000 : raw
     error.textContent = ''
-    runCommand({ mode: 'pose', pose }, {
+    const sent = runCommand({ mode: 'pose', pose }, {
       onFail: () => {
         rollbackPose(axis)
         markInvalid(input)
@@ -1250,6 +1374,9 @@ export function mountRightRail(doc, body, deps = {}) {
         clearInvalidEl(input)
       },
     })
+    // 极小概率的竞态：检查通过之后、下发之前另一个控件的命令进了在途。这条同样要可见。
+    if (!sent) error.textContent = rejectSubmitReason(S.controlsRejectedCommand)
+    return true
   }
 
   /**

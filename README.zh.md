@@ -51,7 +51,7 @@
 | 实时遥测 | `ursim_get_runtime_telemetry` / `ursim_get_robot_voltage` / `ursim_get_robot_current` / `ursim_get_joint_temperatures` / `ursim_get_speed_scaling` / `ursim_get_tcp_force` / `ursim_get_tool_telemetry` | 关节电流/电压/角速度、TCP 线速度与受力/力矩、工具加速度计、速度倍率、整机电压电流、关节温度、工具电流/电压、I/O 电流。**这些字段本来就在 500 Hz 的 RTDE 数据流里**，读取零代价、无需改配置。单点读取（整机电压/电流、关节温度）与一次性汇总（`ursim_get_runtime_telemetry`）并存：轮询某一项时用单点，诊断时用汇总 |
 | 速度倍率 | `ursim_set_speed_scaling` | 设置速度倍率（**1%–100%**，即 0.01–1.0；越界会被**钳到**该区间，客户端原始值仍会随回包返回）。仿真侧**原地修改运行中的实例、不重建**（位姿与关节角保持不变，新倍率从下一段运动开始生效）；真机侧发 URScript `set_speed_slider` 并读回控制器**实测**值 —— 机器人静止时实测读 0 属正常，**不是**「未生效」的证据。⚠️ 影响此后所有运动的速度 |
 | 传送带 | `ursim_get_conveyor` / `ursim_set_conveyor_tick` / `ursim_set_conveyor_tracking` | 传送带 tick 读取 / 设置、**线性或圆盘跟踪的开启与停止** |
-| 运动 | `ursim_movej` / `ursim_movel` / `ursim_movep` / `ursim_movec` / `ursim_servoj` / `ursim_move_optimized` / `ursim_move_x` / `ursim_move_y` / `ursim_move_z` / `ursim_move_tool_x` / `ursim_move_tool_y` / `ursim_move_tool_z` | 关节空间 / 直线 / 路径 / **真正的圆弧**（旧实现内部把 `movetype` 写死成 `'p'`，实际发的是 `movep` 且丢弃途经点；0.6.0 起补上手册的 `mode` 参数：0 插补姿态 / 1 固定姿态）/ 连续流 / **OptiMove 平滑运动**（`optimovej`/`optimovel`，jerk 受限、振动更小；⚠️ 它的 `a`/`v` 是**能力比例** (0,1] 而不是 rad/s 或 m/s）/ 沿轴直线运动 —— `_move_*` 沿**基座**轴，`_move_tool_*` 沿**当前工具**轴（worker 侧用旋转矩阵换算，不依赖 URScript 的 `pose_trans`）。**默认 a/v 已改回官方手册值**（`movej` 1.4 / 1.05，`movel` 1.2 / 0.25；旧代码默认 `movel` v=1 m/s，是手册默认的 4 倍） |
+| 运动 | `ursim_movej` / `ursim_movel` / `ursim_movep` / `ursim_movec` / `ursim_servoj` / `ursim_move_optimized` / `ursim_move_x` / `ursim_move_y` / `ursim_move_z` / `ursim_move_tool_x` / `ursim_move_tool_y` / `ursim_move_tool_z` | 关节空间 / 直线 / 路径 / **真正的圆弧**（旧实现内部把 `movetype` 写死成 `'p'`，实际发的是 `movep` 且丢弃途经点；现在会把手册的 `mode` 参数传给控制器：0 插补姿态 / 1 固定姿态）/ 连续流 / **OptiMove 平滑运动**（`optimovej`/`optimovel`，jerk 受限、振动更小；⚠️ 它的 `a`/`v` 是**能力比例** (0,1] 而不是 rad/s 或 m/s）/ 沿轴直线运动 —— `_move_*` 沿**基座**轴，`_move_tool_*` 沿**当前工具**轴（worker 侧用旋转矩阵换算，不依赖 URScript 的 `pose_trans`）。**默认 a/v 已改回官方手册值**（`movej` 1.4 / 1.05，`movel` 1.2 / 0.25；旧代码默认 `movel` v=1 m/s，是手册默认的 4 倍） |
 | 方向点动 | `ursim_jog_rotate` | 绕指定轴**增量**旋转 TCP：`axis` 只认 `rx` / `ry` / `rz`（不是 `x`/`y`/`z` —— 那三个在别的工具里表示平移）；`frame="tool"`（默认）绕**工具自身**轴、`frame="base"` 绕**基座**轴（`rx`/`ry`/`rz` ↔ 基座 x/y/z）。真机与仿真**共用同一份几何**（同一套旋转合成 ⇒ 同一个目标位姿），TCP 位置保持不变。⚠️ 会驱动机械臂运动 |
 | 连续多段 | `ursim_run_sequence` | **一条命令走完整条多段轨迹，段与段之间不停顿。** `segments` 是一串 `{"type":"joint","q":[…]}` / `{"type":"cartesian","pose":[…]}`；可选的 `v`/`a`（默认 0.25 / 1.2）作用于整条序列，`t`（≥0，默认 0 = 用 `a`/`v`）设定**整条轨迹**的时长，与 `r`（交融半径）一样**只在仿真里建模** —— 真机路径逐段发 `movej`/`movel`（`r` 就是途经点的交融半径），并在回包里明说 `t` 已被忽略。★ 仿真里每一段都转成关节航点后**拼成一条折线、只规划一次**，整条序列共用一条时间剖面：20 段就是一次加速、一次减速，而不是二十次起停。任一段的任一细分点不可达就**整条序列失败**（绝不跳过那一段继续走） |
 | 运动规划 | `ursim_motion_version` / `ursim_get_freedrive_status` | 设置 **Motion Version**（手册第 14 章）与 **jerk 增益**（0.01-1.0，只作用于 jerk 受限的剖面：版本 2 的 movej/movel 与 optimovej/optimovel）：版本 2 规划时把速度/加速度**钳到硬件上限**、交融半径重叠时**动态收缩**，而不是像版本 1 那样跳过整段运动并给 "Overlapping Blends" 警告。⚠️ 新机型与 PolyScope X **只支持版本 2**；CB3 没有这个设置。⚠️ 这两个设置**没有回读通道**，只报告本次设置值。`ursim_get_freedrive_status` 读取当前姿态在 freedrive 下离**奇异点**的距离（0 正常 / 1 接近 / 2 太接近——**不是** freedrive 的开关状态），据此提示操作员换路径 |
@@ -105,8 +105,9 @@ host 侧路由（均限定 loopback 调用方）：
 | `GET /nonead-ursim/twin/state[?ip=<ip>][&detail=1][&io=1][&reg=int|double|bit&from=0&count=8]` | 实时位姿（关节角 / TCP / 型号）。`detail=1` 附带 dashboard 侧状态（安全模式、运行状态、速度倍率、关节温度/电流等）；`io=1` 附带 16 路数字输出、16 路数字输入与两路模拟输入；`reg=<集合>&from=&count=` 附带**一片**寄存器（`count` 上限 16 —— 它们是逐下标 getter）。位姿通道始终独立轮询：`detail`/`io`/`reg` 任何一路失败都不会把它带走，只在自己的字段里写 `{error}` |
 | `GET /nonead-ursim/twin/asset?model=<urXX>` | GLB 网格，带内容哈希 `ETag` + `immutable`，支持 `If-None-Match` → 304 |
 | `GET /nonead-ursim/twin/models` | 本地实际存在的模型清单 |
-| `GET /nonead-ursim/twin/sim` | 离线仿真的当前状态（是否开启、型号、起始姿态、倍率、可用型号）、能力清单，以及**配置里的模式**（`motion_mode` 加 `real_robots` 白名单）—— 面板的模式角标读的就是它。无副作用 |
-| `POST /nonead-ursim/twin/sim` | **本插件唯一的写路由**：`{"enabled":true,"model":"ur10e","preset":"upright","speed_scaling":1}` 开仿真、`{"enabled":false}` 关。写守卫比只读路由更严（除回环信任围栏外**必须带 `Origin`**、`content-type: application/json`、请求体 ≤4 KB）。它的副作用被限制在**回环地址上的运动学虚拟机器人**，任何真机都不会因此收到指令 | 同一条路由还承担**面板的 I/O 写**（`{"io":{"kind":"digital_out","n":3,"value":true}}` —— `digital_out` 收布尔值，`analog_out` 收工程单位下的有限数并可选 `full_scale` 10/20），且**只在离线仿真运行时**才受理：否则回 `409 SIM_NOT_RUNNING`。面板写通道不面向真机 —— 真机 I/O 仍走工具，那里有声明面白名单与审批门（开启时）。 |
+| `GET /nonead-ursim/twin/sim` | 离线仿真的当前状态（是否开启、型号、起始姿态、倍率、可用型号）、能力清单，以及**配置里的模式**（`motion_mode` 加 `real_robots` 白名单）—— 面板的模式角标读的就是它。只读，无副作用 |
+| `POST /nonead-ursim/twin/sim` | **本插件两条写路由之一**：`{"enabled":true,"model":"ur10e","preset":"upright","speed_scaling":1}` 开仿真、`{"enabled":false}` 关。写守卫比只读路由更严（除回环信任围栏外**必须带 `Origin`**、`content-type: application/json`、请求体 ≤4 KB）。它的副作用被限制在**回环地址上的运动学虚拟机器人**，任何真机都不会因此收到指令。同一条路由还承担**面板的 I/O 写**（`{"io":{"kind":"digital_out","n":3,"value":true}}` —— `digital_out` 收布尔值，`analog_out` 收工程单位下的有限数并可选 `full_scale` 10/20），且**只在离线仿真运行时**才受理：否则回 `409 SIM_NOT_RUNNING`。面板写通道不面向真机 —— 真机 I/O 仍走工具，那里有声明面白名单与审批门（开启时） |
+| `POST /nonead-ursim/twin/jog` | **另一条写路由 —— 面板实时控制，仅离线仿真**：一个 JSON 指令对象，`mode` 取值共八种 —— `step`（`axis` 取 `x`/`y`/`z`，`frame` 取 `base`/`tool`，`distance`）、`rotate`（`axis`、`delta_rad`）、`pose`（`pose`）、`joint`（`q`）、`home`、`speed`（`fraction`）、`velocity`（六元 `twist`，可选 `frame` 与 `ttl_ms` 看门狗）、`stop`。任何非回环虚拟机器人的目标都回 `403 SIM_ONLY`，且这道判定**排在 body 解析之前** —— 真机部署无论 body 写什么都不会被面板驱动；拒绝顺序为 405 → 403 信任围栏 → 403 `SIM_ONLY` → 400 解析 → 派发 |
 
 失败响应带**机器可读的 `code`**（例如 `no_robot` / `robot_not_connected` / `ambiguous_robot` / `worker_unavailable` / `robot_error`）并回显本次解析到的 `ip`，界面据此给出不同的提示与处置建议（以前四种完全不同的故障都渲染成同一句「未连接机器人」）。读**暂时**拿不到（worker 正忙着执行运动指令是最常见的原因）时不会报 `robot_error`：宿主回放最后一笔已知读数并标记 `stale:true`（最多 30 s），仿真保留画面并显示停滞提示。
 
@@ -122,7 +123,7 @@ host 侧路由（均限定 loopback 调用方）：
    // C:\Users\<you>\.dsh\profiles\web\package.json
    {
      "dependencies": {
-       "dsh-nonead-ursim": "^0.2.4"
+       "dsh-nonead-ursim": "^0.3.1"
      },
      "dsh": {
        "profile": {
@@ -200,13 +201,14 @@ npm run verify:models # 校验 14 个 GLB 的结构契约
   解释器没有 `numpy` 时，依赖 Python 的项会以
   **SKIP + 原因**出现，绝不会显示成通过。
 
-最近一次完整回归（**2026-10-19**，v0.2.4）的实测结论：`npm run check` 全通过；`npm test`
+最近一次完整回归（**2026-10-20**，v0.3.1）的实测结论：`npm run check` 全通过；`npm test`
 **59/59**（48 个测试文件 + 11 道门禁，0 失败 0 跳过）；`npm run verify:host` 报告
 **89/89** 工具经宿主真实 DSL 注册；`npm run verify:models` 14/14 模型通过；另做了一轮
-UR12e 离线仿真的端到端冒烟（读回、运动、I/O、遥测、不支持指令拒绝、参数校验）。证据、复现命令
-与**真机未覆盖边界**见 [docs/test-report-2026-10-19.md](./docs/test-report-2026-10-19.md)。
+UR12e 离线仿真的端到端冒烟（读回、运动、面板点动/位姿/关节控制、带看门狗的速度流、I/O、
+遥测、不支持指令拒绝、参数校验）。证据、复现命令
+与**真机未覆盖边界**见 [docs/test-report-2026-10-20.md](./docs/test-report-2026-10-20.md)。
 
-> 0.6.0 新增 `scripts/pdf-extract2.py`：**只用标准库**从 `ScriptManual/*.pdf` 抽文本到
+> `scripts/pdf-extract2.py`：**只用标准库**从 `ScriptManual/*.pdf` 抽文本到
 > `ScriptManual/txt/*.txt`（两个 PolyScope 手册的字符码是 glyph id，必须走字体自带的
 > `ToUnicode` CMap 才能解出文字）。它是本版所有签名/默认值/范围的可复核来源：
 > 有疑问时重新抽取一次，直接查手册原文。
@@ -215,7 +217,7 @@ UR12e 离线仿真的端到端冒烟（读回、运动、I/O、遥测、不支�
 > **逐字节**比对：产物落后于源码（改了界面但没重建）会直接让检查失败，而不是静默发布。
 > 它绝不覆盖提交产物 —— `scripts/build-client.mjs` 为此支持 `BUILD_CLIENT_OUT`。
 
-> 0.5.0 之前 `npm test` **只跑一次 worker ping**，仓库里另外 20 多个 `*.test.mjs` 一个都不跑 ——
+> 独立版本线之前 `npm test` **只跑一次 worker ping**，仓库里另外 20 多个 `*.test.mjs` 一个都不跑 ——
 > 所以"npm test 绿了"完全不能说明插件是好的。现在统一由 `scripts/run-tests.mjs` 枚举执行并汇总。
 
 `npm test` 会返回 `selftest passed.` 或非零退出。若 `python` 不在 PATH，用环境变量指定：

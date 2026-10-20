@@ -168,6 +168,13 @@ export const STATUS_CONNECTED = '已连接'
 export const STATUS_FALLBACK_SUFFIX = '（无内置模型，使用近似几何体）'
 /** 渲染异常前缀（帧内异常被吞掉并显示，不影响循环存活）。 */
 export const STATUS_ERROR_PREFIX = '渲染异常：'
+/**
+ * 渲染异常在错误行上的**最短驻留时间**（毫秒）。
+ *
+ * 以前是"下一帧成功就清空"——60 Hz 下等于亮 16 ms，人眼根本读不到；而它恰恰是"这一帧为什么
+ * 没画出来"的唯一线索。现在至少留 5 s（或直到用户下一次操作），长到能看清、又不至于占住错误行。
+ */
+export const ERROR_HOLD_MS = 5000
 /** 模型加载失败前缀。 */
 export const STATUS_LOAD_FAILED = '模型加载失败：'
 /** 3D 不可用（没有 WebGL）时的回退文案：数值通道仍然可用。 */
@@ -634,6 +641,13 @@ export function mountTwinPanel({
   /** C1/C4 的"上次结果"：只在变化时动 DOM/材质（材质克隆是真实开销）。 */
   let lastRiskText = null
   let lastOverKey = null
+  /** 模式角标的"上次显示"（模式 + 文案 + title）：`step()` 每帧都调，值没变就不写 DOM（P2）。 */
+  let lastBadgeKey = null
+  /** 面板根节点上 `data-ursim-twin-sim` 的上次写入值：每帧无条件写属性会持续触发样式重算（P2）。 */
+  let lastSimAttr = null
+  /** 错误行当前驻留的文案（空串=没有错误）与它的最早清除时刻（面板时钟毫秒）。 */
+  let heldErrorText = ''
+  let errorHoldUntilMs = 0
   /** 最近一次"尺寸还没量出来"的重试计数（见 ensureSized）。 */
   let pendingResize = false
   /** 3D 上下文是否已丢失（丢失后不再尝试渲染，只显示提示）。 */
@@ -767,6 +781,17 @@ export function mountTwinPanel({
   const hudTcp = makeEl(doc, 'div', 'ursim-twin-hud-row', 'data-ursim-twin-tcp')
   // dashboard 侧状态（detail=1）：安全模式/机器人模式/程序状态/速度倍率一行，温度与母线一行。
   const hudDetail = makeEl(doc, 'div', 'ursim-twin-hud-row', 'data-ursim-twin-detail')
+  /*
+   * 高频行对读屏**闭嘴**（P2）。
+   *
+   * 上面 HUD 容器是 `aria-live="polite"`：它的任何文本变化都会被播报。而下面这几行每 100 ms 就被
+   * 整行重写一次（关节角/TCP/detail），读屏会在每个节拍把整段数字重新念一遍 —— 满屏数字被念成
+   * 一串噪音，真正要报的"状态"反而淹在里面。所以逐行关掉 live，只让状态行（及风险/停滞提示）
+   * 继续作为可播报的内容。容器本身保持 polite（既有测试与语义都依赖它）。
+   */
+  hudJoints.setAttribute('aria-live', 'off')
+  hudTcp.setAttribute('aria-live', 'off')
+  hudDetail.setAttribute('aria-live', 'off')
   const hudPower = makeEl(doc, 'div', 'ursim-twin-hud-row', 'data-ursim-twin-power')
   /** 奇异点/可操作度提示行（0.1.11，C1）。 */
   const hudRisk = makeEl(doc, 'div', 'ursim-twin-hud-row', 'data-ursim-twin-risk-row')
@@ -1094,6 +1119,15 @@ export function mountTwinPanel({
       poseSettled = false
       dirty = true
     },
+    /**
+     * 控件层的错误（目前是"停止指令发不出去"）也写到同一条错误行。
+     * 以前左轨只在宿主节点上留一个 `data-ursim-stop-failed` 属性，界面上一个字都没有 ——
+     * 而"按了松手却没能停下"恰恰是最必须被看见的那种失败。
+     */
+    reportError(message) {
+      if (typeof message !== 'string' || message === '') return
+      holdError(message)
+    },
   }
   const leftControls = mountLeftRail(doc, leftRail.body, railDeps)
   const rightControls = mountRightRail(doc, rightRail.body, railDeps)
@@ -1105,6 +1139,38 @@ export function mountTwinPanel({
   root.appendChild(status)
   root.appendChild(errorLine)
   container.appendChild(root)
+
+  /*
+   * 错误行的写入统一走这两个入口（P2）。
+   *
+   * 以前渲染异常只在 catch 里写一行，下一帧成功就立刻清空 —— 60 Hz 下**等于亮 16 ms**，人眼
+   * 什么都看不到；而它恰恰是"这一帧为什么没画出来"的唯一线索。现在写入即驻留 ERROR_HOLD_MS，
+   * 期间即使帧恢复正常也不擦；用户下一次动手（pointerdown/keydown）立即清掉，因为那时他已经
+   * 在看控件、错误提示反而成了噪音。
+   */
+  function holdError(text) {
+    heldErrorText = text
+    errorHoldUntilMs = now() + ERROR_HOLD_MS
+    errorLine.textContent = text
+  }
+
+  function clearError() {
+    if (heldErrorText === '' && errorLine.textContent === '') return
+    heldErrorText = ''
+    errorHoldUntilMs = 0
+    errorLine.textContent = ''
+  }
+
+  function clearErrorIfExpired(atMs) {
+    if (heldErrorText === '') return
+    if (atMs < errorHoldUntilMs) return
+    clearError()
+  }
+
+  // 捕获阶段监听：先清错误行，再让控件自己的处理器写新的错误/命令。
+  const onUserAction = () => clearError()
+  root.addEventListener('pointerdown', onUserAction, true)
+  root.addEventListener('keydown', onUserAction, true)
 
   /* 未连接态：不显示空 3D（隐藏工具栏/视图/HUD，只留状态文案）。
      ⚠️ 仿真开关行**不在此列**：打开面板即自动进仿真，而未连接正是一次失败时最常见的样子，
@@ -1557,9 +1623,14 @@ export function mountTwinPanel({
       SIM_SPEEDS.map((value) => ({ value: String(value), label: `${Math.round(value * 100)}%` })),
       String(simConfig.speed_scaling))
     for (const select of [simModelSelect, simPresetSelect, simSpeedSelect]) select.disabled = simApplying
-    simNote.textContent = simRestoreError !== ''
+    const idleNote = simRestoreError !== ''
       ? S.simRestoreFailed(simRestoreError)
       : (simApplying ? S.simApplying : (simActive ? S.simUnsupported : S.simUses))
+    // 仿真开着时补一句"收起面板会停掉它"：dispose 里确实会停（`stopSimOnDispose`），但那时面板
+    // 已经销毁、没地方再说；等用户发现虚拟机器人自己停了才去猜是最差的顺序。
+    simNote.textContent = simActive && simRestoreError === ''
+      ? `${idleNote} ${S.simCollapseStops}`
+      : idleNote
     renderSimCaps()
   }
 
@@ -1596,8 +1667,17 @@ export function mountTwinPanel({
    * `withRegisters` 只在**展开的那一刻**为真：寄存器是逐下标 getter（一次 24 次往返），
    * 没有理由跟着 HUD 节拍刷新。数字位则很便宜（两条 op），随节拍刷新才能看到变化。
    */
+  let ioRequestToken = 0
   async function refreshIo(withRegisters) {
     if (typeof request !== 'function') return
+    /*
+     * 序号去重（P2）：这个函数有两条并发调用路径 —— 展开 I/O 块时的全量读（含寄存器，要串行
+     * 好几个往返），以及 HUD 1 Hz 的只读数字位。后者可能在前者还没回来时又发一次请求；没有序号
+     * 时**晚到的旧响应会覆盖新数据**（展开瞬间最明显：读数刚刷新，又被上一拍的响应盖回去）。
+     * 谁手里的 token 最新，谁才有写权限；其余响应直接丢弃。
+     */
+    const token = ++ioRequestToken
+    const stale = () => disposed || token !== ioRequestToken
     const snap = state?.getSnapshot?.() ?? {}
     const ip = typeof snap.ip === 'string' ? snap.ip : ''
     const prefix = ip === '' ? '' : `ip=${encodeURIComponent(ip)}&`
@@ -1606,7 +1686,7 @@ export function mountTwinPanel({
     try {
       const res = await request(`${TWIN_STATE_PATH}?${prefix}io=1`, { cache: 'no-store' })
       const body = await res.json()
-      if (disposed) return
+      if (stale()) return
       renderIo(body?.io ?? null)
       if (withRegisters !== true) return
       for (const set of REGISTER_SETS) {
@@ -1614,11 +1694,12 @@ export function mountTwinPanel({
           cache: 'no-store',
         })
         const b2 = await r2.json()
-        if (disposed) return
+        if (stale()) return
         renderRegisters(b2?.registers ?? null, set)
       }
     } catch (e) {
-      writeIoBits([S.ioFailed(e instanceof Error ? e.message : String(e))])
+      // 失败同样要按 token 判断：过期请求的报错不该盖掉更新那次的结果。
+      if (!stale()) writeIoBits([S.ioFailed(e instanceof Error ? e.message : String(e))])
     }
   }
 
@@ -1703,20 +1784,38 @@ export function mountTwinPanel({
    */
   function renderModeBadge(simNow) {
     const mode = motionMode === 'real' ? 'real' : (simNow === true ? 'sim' : 'idle')
+    const text = mode === 'real'
+      ? (realRobots.length > 0 ? S.realModeBadge(realRobots.join('、')) : S.realModeBadgeEmpty)
+      : (mode === 'sim' ? S.simBadge : S.modeBadgeIdle)
+    const title = mode === 'real' ? S.realModeBadgeTitle : (mode === 'sim' ? S.simBadgeTitle : S.modeBadgeIdleTitle)
+    /*
+     * 值没变就一个 DOM 写都不做（P2）。
+     *
+     * 本函数由 `step()` **每帧**调用（约 60 Hz），而角标实际几百帧才变一次。以前每次都重写
+     * attribute + textContent + title，持续触发样式重算与无障碍树更新 —— 纯浪费。用"模式 + 文案"
+     * 做键去重：文案里已包含 IP 白名单（真机模式），所以键相同 ⇒ 显示完全相同。
+     */
+    const key = `${mode}\u0000${text}\u0000${title}`
+    if (key === lastBadgeKey) return
+    lastBadgeKey = key
     simBadge.setAttribute('data-ursim-twin-mode', mode)
-    if (mode === 'real') {
-      simBadge.textContent = realRobots.length > 0
-        ? S.realModeBadge(realRobots.join('、'))
-        : S.realModeBadgeEmpty
-      simBadge.setAttribute('title', S.realModeBadgeTitle)
-    } else if (mode === 'sim') {
-      simBadge.textContent = S.simBadge
-      simBadge.setAttribute('title', S.simBadgeTitle)
-    } else {
-      simBadge.textContent = S.modeBadgeIdle
-      simBadge.setAttribute('title', S.modeBadgeIdleTitle)
-    }
+    simBadge.textContent = text
+    simBadge.setAttribute('title', title)
     simBadge.style.display = ''
+  }
+
+  /**
+   * 面板根节点上的"是否正在展示仿真"属性（样式表据此给画面描紫边）。
+   *
+   * `step()` 每帧都会走到这里，但值只在开关仿真/断连时变化 —— 重复 `setAttribute` 会让浏览器
+   * 每帧重算样式（约 60 次/秒），所以用 `lastSimAttr` 去重；两条写入点（断连清空、每帧同步）
+   * 共用这一个入口，避免一处更新缓存、另一处绕过。
+   */
+  function setRootSimAttr(simNow) {
+    const value = simNow === true ? 'true' : 'false'
+    if (value === lastSimAttr) return
+    lastSimAttr = value
+    root.setAttribute('data-ursim-twin-sim', value)
   }
 
   /**
@@ -1946,7 +2045,7 @@ export function mountTwinPanel({
         root.setAttribute('data-ursim-twin-hazard', 'false')
         // 未连接就谈不上"正在展示一台虚拟机器人"：水印必须跟着消失。
         // 但角标本身**不隐藏** —— 真机模式下断连也仍然是真机模式（P0：没有角标 ≠ 安全）。
-        root.setAttribute('data-ursim-twin-sim', 'false')
+        setRootSimAttr(false)
         renderModeBadge(false)
         lastHudMs = -Infinity
       }
@@ -2313,7 +2412,7 @@ export function mountTwinPanel({
       renderSimBar()
       refreshStatus()
     }
-    root.setAttribute('data-ursim-twin-sim', simNow ? 'true' : 'false')
+    setRootSimAttr(simNow)
     renderModeBadge(simNow)
 
     // 安全模式只在 detail 通道（慢节拍）变化，连接态本身没变 —— 但它必须能改写状态行，
@@ -2475,10 +2574,11 @@ export function mountTwinPanel({
     if (disposed || hidden) return
     try {
       step(now())
-      if (errorLine.textContent !== '') errorLine.textContent = ''
+      // 错误行驻留期间不碰它；过了驻留窗口、且这一帧没再抛错，才允许清空。
+      clearErrorIfExpired(now())
     } catch (e) {
-      // 单帧异常不得打死循环，也不得静默：写到错误行上（下一帧成功会自动清掉）。
-      errorLine.textContent = `${STATUS_ERROR_PREFIX}${e instanceof Error ? e.message : String(e)}`
+      // 单帧异常不得打死循环，也不得静默：驻留 ERROR_HOLD_MS（以前下一帧就擦掉 = 亮 16 ms）。
+      holdError(`${STATUS_ERROR_PREFIX}${e instanceof Error ? e.message : String(e)}`)
     } finally {
       // 后台标签不再续帧（回到前台由 `onVisibility` → `wake()` 重新起链）。
       if (disposed || hidden) frameId = null
@@ -2507,6 +2607,10 @@ export function mountTwinPanel({
     }
     win?.removeEventListener?.('resize', onResize)
     win?.removeEventListener?.('visibilitychange', onVisibility)
+    // 错误行的"用户一动手就清"监听也必须摘掉：它们挂在 root 上，而 root 会被清空，
+    // 保留闭包只会让整个面板对象被这两个监听吊住、无法回收。
+    root.removeEventListener?.('pointerdown', onUserAction, true)
+    root.removeEventListener?.('keydown', onUserAction, true)
     stopThemeWatch?.()
     resizeObserver?.disconnect?.()
     resizeObserver = null

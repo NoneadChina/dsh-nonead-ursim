@@ -86,6 +86,10 @@ class FakeModel:
     def IoCurrent(self):
         return 0.05
 
+    def SpeedScaling(self):
+        # 控制器「此刻实测」的倍率：与请求值故意不同，用来证明回包里的 actual 不是 fraction 的复制品。
+        return 0.25
+
 
 class FakeRobot:
     def __init__(self):
@@ -101,6 +105,10 @@ class FakeRobot:
 
     def movej(self, q, a=None, v=None, t=None, r=None, wait=True, **kw):
         self.lib_calls.append(("movej", list(q), a, v, t, r))
+
+    def get_actual_tcp_pose(self):
+        # 非零姿态：base 系与 tool 系的旋转合成顺序不同，只有姿态非恒等时两者才可区分。
+        return [0.1, 0.2, 0.3, 0.3, 0.1, 0.0]
 
 
 robot = FakeRobot()
@@ -191,6 +199,12 @@ CASES = {
     "conveyor_tracking_stop": ("conveyor_tracking", {"ip": "1.2.3.4", "action": "stop"}),
     "movel": ("movel", {"ip": "1.2.3.4", "pose": [0.2, 0.3, 0.5, 0, 0, 3.14]}),
     "movej": ("movej", {"ip": "1.2.3.4", "q": [0, 1.57, -1.57, 3.14, -1.57, 1.57]}),
+    # 0.3.x 面板控制：绕轴小增量旋转（tool 系 / base 系的合成顺序必须不同）
+    "jog_rotate_tool": ("jog_rotate", {"ip": "1.2.3.4", "axis": "rz", "delta_rad": 0.2, "frame": "tool"}),
+    "jog_rotate_base": ("jog_rotate", {"ip": "1.2.3.4", "axis": "rz", "delta_rad": 0.2, "frame": "base"}),
+    # 速度倍率：0.5 原样下发；9 被钳到 1.0（requested 保留原值）
+    "set_speed_scaling": ("set_speed_scaling", {"ip": "1.2.3.4", "fraction": 0.5}),
+    "set_speed_scaling_clamped": ("set_speed_scaling", {"ip": "1.2.3.4", "fraction": 9}),
 }
 
 ur_worker._movel_confirm = lambda ip, pose, ms=60000: (True, "stub-arrived")
@@ -372,6 +386,52 @@ check("传送带工具如实标注未经真机验证",
       results["conveyor_tracking_linear"]["data"].get("hardware_verified") is False,
       str(results["conveyor_tracking_linear"]["data"]))
 
+# --------------------------------------------- jog_rotate / set_speed_scaling（0.3.x 面板控制）
+def _pose_from_command(cmd):
+    """从 `movel(p[...],…)` 回显里取出目标位姿。"""
+    import re as _re
+    m = _re.search(r"p\[([^\]]+)\]", cmd or "")
+    return [float(x) for x in m.group(1).split(",")] if m else None
+
+
+tool_jog = results["jog_rotate_tool"]
+base_jog = results["jog_rotate_base"]
+tool_target = _pose_from_command(tool_jog["data"]["command"])
+base_target = _pose_from_command(base_jog["data"]["command"])
+
+check("jog_rotate 走 movel 并回显同一条命令",
+      tool_jog["ok"] and (tool_jog["data"]["command"] or "").startswith("movel(p["),
+      str(tool_jog["data"]))
+check("jog_rotate 的 target_pose 与命令里的位姿是同一组数",
+      tool_target is not None
+      # 命令按 %.4f 格式化（URScript 字面量），所以按 1e-4 比较而不是精确相等。
+      and _same([tool_target], [tool_jog["data"]["jog_rotate"]["target_pose"]], tol=1e-4),
+      str(tool_jog["data"]))
+check("jog_rotate 不改变 TCP 位置（纯旋转点动）",
+      tool_target is not None and _same([tool_target[:3]], [[0.1, 0.2, 0.3]]),
+      str(tool_target))
+check("jog_rotate 的 from_pose 是控制器实读位姿",
+      _same([tool_jog["data"]["jog_rotate"]["from_pose"]], [[0.1, 0.2, 0.3, 0.3, 0.1, 0.0]]),
+      str(tool_jog["data"]["jog_rotate"]["from_pose"]))
+check("jog_rotate tool 系与 base 系给出不同目标姿态（R·Δ 与 Δ·R 不可交换）",
+      tool_target is not None and base_target is not None
+      and not _same([tool_target[3:6]], [base_target[3:6]], tol=1e-9),
+      "%s vs %s" % (tool_target and tool_target[3:6], base_target and base_target[3:6]))
+check("jog_rotate 下发的 movel 带 wait=False（点动不该阻塞读回）",
+      any(call[0] == "movel" for call in lib_calls["jog_rotate_tool"]),
+      str(lib_calls["jog_rotate_tool"]))
+
+ss = results["set_speed_scaling"]
+check("set_speed_scaling 原样下发 set_speed_slider(0.500000)",
+      (ss["program"] or "").strip() == "set_speed_slider(0.500000)", str(ss["program"]))
+check("set_speed_scaling 的 actual 是控制器实测值，不是 fraction 的复制品",
+      ss["data"]["fraction"] == 0.5 and ss["data"]["requested"] == 0.5
+      and ss["data"]["actual"] == 0.25, str(ss["data"]))
+ssc = results["set_speed_scaling_clamped"]
+check("set_speed_scaling 把 9 钳到 1.0，同时保留 requested=9",
+      (ssc["program"] or "").strip() == "set_speed_slider(1.000000)"
+      and ssc["data"]["fraction"] == 1.0 and ssc["data"]["requested"] == 9, str(ssc["data"]))
+
 # ---------------------------------------------------------------- validation must fail closed
 def expects_value_error(name, op, params):
     try:
@@ -411,6 +471,26 @@ expects_value_error("motion_version 什么都不给", "motion_version", {"ip": "
 expects_value_error("jerk 增益越界（下限 0.01）", "motion_version",
                     {"ip": "1.2.3.4", "jerk_gain_scaling": 0.001})
 expects_value_error("servoj t 低于 0.002", "servoj", {"ip": "1.2.3.4", "q": [0] * 6, "t": 0.001})
+# jog_rotate：轴名只认 rx/ry/rz（x/y/z 是平移的名字，混用会让调用方以为在"沿轴移动"），
+# 增量必须非 0、有穷、且不超过 π（再大逆解可能换手，真机上不可预期）。
+expects_value_error("jog_rotate axis=x（平移名混入旋转）", "jog_rotate",
+                    {"ip": "1.2.3.4", "axis": "x", "delta_rad": 0.1})
+expects_value_error("jog_rotate delta_rad=0", "jog_rotate",
+                    {"ip": "1.2.3.4", "axis": "rz", "delta_rad": 0})
+expects_value_error("jog_rotate delta_rad 超 π", "jog_rotate",
+                    {"ip": "1.2.3.4", "axis": "rz", "delta_rad": 4.0})
+expects_value_error("jog_rotate delta_rad=inf", "jog_rotate",
+                    {"ip": "1.2.3.4", "axis": "rz", "delta_rad": float("inf")})
+expects_value_error("jog_rotate frame=world", "jog_rotate",
+                    {"ip": "1.2.3.4", "axis": "rz", "delta_rad": 0.1, "frame": "world"})
+# set_speed_scaling：非数值 / NaN / 缺参一律 fail-closed（不能"尽力而为"地变成一条运动）
+expects_value_error("set_speed_scaling fraction 非数值", "set_speed_scaling",
+                    {"ip": "1.2.3.4", "fraction": "fast"})
+expects_value_error("set_speed_scaling fraction=NaN", "set_speed_scaling",
+                    {"ip": "1.2.3.4", "fraction": float("nan")})
+expects_value_error("set_speed_scaling 缺 fraction", "set_speed_scaling", {"ip": "1.2.3.4"})
+expects_value_error("set_speed_scaling fraction 是布尔值", "set_speed_scaling",
+                    {"ip": "1.2.3.4", "fraction": True})
 
 # servoj 的新范围必须被接受（Poly5 的 0.002 / 0.01）
 robot.programs.clear()

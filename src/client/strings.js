@@ -172,6 +172,9 @@ export const zh = {
   simApplying: '正在切换仿真…',
   simFailed: (reason) => `仿真开关失败：${reason}`,
   simUnsupported: '仿真只实现运动学（运动类工具 + 位姿读回）；其余指令会明确回报「无仿真语义」。',
+  // 收起面板会销毁面板（dispose 里停掉这台仿真）：必须在收起**之前**说出来，否则虚拟机器人
+  // 突然停了，用户只会以为是自己碰坏了什么。
+  simCollapseStops: '收起面板会停止这台仿真。',
   simActiveStatus: (model) => `离线仿真 · ${model}`,
   simWatermark: '离线仿真（非真机）',
   /* ---- 左轨点动控件（feat/twin-control-panel）---- */
@@ -213,6 +216,9 @@ export const zh = {
   controlsInvalidRollback: '数值无效：已回滚到最新一帧',
   controlsRejectedCommand: '宿主拒绝了这次命令',
   controlsNoPoseData: '尚无位姿数据',
+  // 提交被拒（busy）与 stop 发送失败：以前都是静默的，现在必须有一句话（P2）。
+  controlsBusyRetry: '上一条命令还在飞行中：这次没有下发，请稍后重试',
+  controlsStopFailed: (reason) => `停止指令发送失败：${reason}`,
 }
 
 /** 英文文案。键集合必须与 `zh` 完全一致（有测试钉住）。 */
@@ -363,6 +369,7 @@ export const en = {
   simApplying: 'Switching simulation…',
   simFailed: (reason) => `Simulation switch failed: ${reason}`,
   simUnsupported: 'The simulation implements kinematics only (motion tools + pose readback); every other command reports "no simulation semantics".',
+  simCollapseStops: 'Collapsing the panel stops this simulation.',
   simActiveStatus: (model) => `Offline simulation · ${model}`,
   simWatermark: 'Offline simulation (not a real robot)',
   /* ---- left-rail jog controls (feat/twin-control-panel) ---- */
@@ -405,6 +412,8 @@ export const en = {
   controlsInvalidRollback: 'Invalid value: rolled back to the latest frame',
   controlsRejectedCommand: 'The host rejected this command',
   controlsNoPoseData: 'No pose data yet',
+  controlsBusyRetry: 'The previous command is still in flight: nothing was sent, please retry',
+  controlsStopFailed: (reason) => `Failed to send the stop command: ${reason}`,
 }
 
 /** 支持的语言。 */

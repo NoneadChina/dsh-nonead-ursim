@@ -24,6 +24,17 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const testDir = join(root, 'test');
 const skipPython = process.argv.includes('--skip-python');
+/*
+ * 跳过项是否算通过。
+ *
+ * 默认**不算**：README 承诺「SKIP 绝不是 PASS」，而旧实现只看 `failedAll.length`
+ * 就 `exit 0` —— 在没有 numpy 的机器上，22 项被跳过、一条命令都没跑，`npm test`
+ * 依然回 0，CI/发版脚本会把"没验证"当成"验证通过"。
+ *
+ * `--allow-skip` 是显式的知情同意（例如本地只想跑 Node 侧、或明确知道环境缺依赖），
+ * 它只把退出码改回 0，汇总里仍然逐条打印 SKIP 与原因。
+ */
+const allowSkip = process.argv.includes('--allow-skip') || skipPython;
 
 /**
  * 需要「可用的 Python」的用例。
@@ -161,4 +172,13 @@ console.log(
     `失败 ${failedAll.length}，跳过 ${skippedAll.length}`,
 );
 
-process.exit(failedAll.length === 0 ? 0 : 1);
+if (skippedAll.length > 0) {
+  console.log(
+    `\n⚠️ 有 ${skippedAll.length} 项被跳过 —— 它们**没有被验证**。` +
+      (allowSkip
+        ? '（已传 --allow-skip，本次按知情跳过处理）'
+        : '按 README 的承诺，跳过不算通过：退出码非 0。确知环境缺依赖时可加 --allow-skip 显式接受。'),
+  );
+}
+
+process.exit(failedAll.length > 0 ? 1 : skippedAll.length > 0 && !allowSkip ? 2 : 0);

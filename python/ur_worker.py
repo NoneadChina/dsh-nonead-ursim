@@ -832,6 +832,26 @@ def _bounded_int(raw, key, lo, hi, what):
     return v
 
 
+def _bool_arg(raw, what="value"):
+    """把 I/O 值解析成 bool —— **绝不**用 `bool(raw)`。
+
+    `bool("false")` 是 `True`：字符串 "false" / "0" 会把数字输出置**高**。本工具的参数来自
+    LLM、面板与脚本三种来源，字符串型布尔并不罕见；而数字输出连着实打实的执行机构
+    （夹爪、气缸），错一个方向就是撞机。所以这里只认明确写法，其余一律 BADARG。
+    """
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, int) and not isinstance(raw, bool) and raw in (0, 1):
+        return bool(raw)
+    if isinstance(raw, str):
+        text = raw.strip().lower()
+        if text in ("true", "1"):
+            return True
+        if text in ("false", "0"):
+            return False
+    raise ValueError("%s 必须是布尔值（true/false），收到 %r" % (what, raw))
+
+
 def _nonneg_float(raw, key, what, allow_zero=True):
     """Coerce `p[key]` to a non-negative float or raise ValueError.
 
@@ -1515,11 +1535,23 @@ def op_list_programs(p):
     # RejectPolicy：未知主机密钥**直接拒绝**。旧写法 AutoAddPolicy 会无差别接受任何主机密钥，
     # 那等于把这条 SSH 通道对中间人透明 —— 而这个 op 恰恰要在控制器上执行命令。
     ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
+    # ⚠️ 但没有 `load_system_host_keys()` 时，SSHClient 的已知密钥表是**空的** ⇒ RejectPolicy
+    # 对**每一台**机器都抛 "Server not found in known_hosts" ⇒ `list_programs` 永远连不上
+    # （旧实现就是这样，功能整体不可用）。加载本机已知密钥既恢复了功能，又保住了
+    # "未知主机必须人工先登记"的防线。首次连接某台控制器时，操作员先执行：
+    #   ssh-keyscan <ip> >> ~/.ssh/known_hosts
+    try:
+        ssh.load_system_host_keys()
+    except Exception as exc:
+        _log("加载本机 known_hosts 失败（将只接受 ~/.ssh/known_hosts 之外的显式登记）：%r" % (exc,))
     try:
         ssh.connect(hostname=ip, port=22, username=username, password=password,
                     timeout=8)
     except Exception as e:
-        return err("SSH 连接 %s:%d 失败（%s）。请确认机器人已启动 SSH 服务，或检查 username/password。" % (ip, 22, e))
+        ssh.close()
+        return err("SSH 连接 %s:%d 失败（%s）。请确认机器人已启动 SSH 服务、检查 username/password；"
+                   "若提示主机密钥未知，请先在本机登记：ssh-keyscan %s >> ~/.ssh/known_hosts"
+                   % (ip, 22, e, ip))
 
     def sh(cmd, timeout=20):
         try:
@@ -1547,10 +1579,14 @@ def op_list_programs(p):
                         '-path "*/URSim_Linux-*/programs.*/*.urp" -type f 2>/dev/null')
             dirs_note = "~/URSim_Linux-*/programs.*"
 
-    out, errout = sh(scan_cmd)
+    try:
+        out, errout = sh(scan_cmd)
+    finally:
+        # 无论扫描成功与否都要关会话：控制器侧可用的 SSH 会话数有限，泄漏的会话会一直
+        # 挂到 TCP keepalive 超时；旧实现只在 happy path 上 close()，异常路径直接漏掉。
+        ssh.close()
     files = [line.strip() for line in out.split("\n") if line.strip().endswith(".urp")]
     programs = [{"path": f, "name": f.rsplit("/", 1)[-1]} for f in files]
-    ssh.close()
     if errout and "find" not in errout and "No such" not in errout:
         return err("程序列表获取失败。%s" % errout)
     return ok({"message": "程序列表（%s）共 %s 个：%s" % (
@@ -1883,9 +1919,26 @@ def op_movel(p):
                "data": data})
 
 
+def _travel_distance(p, what="distance"):
+    """取"沿轴位移（米）"参数 —— 必须是**有穷**数值。
+
+    旧实现各处直接 `float(p["distance"])`：参数缺失抛 KeyError（兜底成看不出原因的 HUGE），
+    NaN/Infinity 则被加进 TCP 位姿 ⇒ 目标位姿带 NaN ⇒ URScript 里出现 `nan`，
+    控制器要么拒绝执行、要么进入未定义行为。这是**运动**入口，必须当场拒绝。
+    """
+    raw = p.get("distance")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        raise ValueError("%s 必须是数值（米），收到 %r" % (what, raw))
+    if not math.isfinite(value):
+        raise ValueError("%s 必须是有穷数值，收到 %s" % (what, value))
+    return value
+
+
 def _axis_move(p, axis):
     ip = str(p["ip"])
-    distance = float(p["distance"])
+    distance = _travel_distance(p)
     robot, _ = ensure_connected(ip)
     _assert_remote_control(ip, "沿轴移动")
     pose = [float(x) for x in robot.get_actual_tcp_pose()]
@@ -2031,6 +2084,10 @@ def op_move_tool_z(p):
 # jog_rotate 的轴名 → TCP 姿态向量的分量下标（面板方向盘发的是 rx/ry/rz）
 _JOG_ROTATE_AXES = {"rx": 0, "ry": 1, "rz": 2}
 
+# 单次点动旋转的上限：180°。旋转向量的"最短路径"在 ±π 处二义（转 +π 与 −π 姿态相同），
+# 再大就既没有物理意义，也会让目标位姿离当前姿态远到逆解跳到另一组构型（换手）。
+_MAX_JOG_ROTATE_RAD = math.pi
+
 
 def _jog_rotate_args(p):
     """解析 `jog_rotate` 的参数 → `(轴下标, 轴名, delta_rad, frame)`；不合法一律 ValueError（⇒ BADARG）。
@@ -2052,6 +2109,11 @@ def _jog_rotate_args(p):
         raise ValueError("jog_rotate 的 delta_rad 必须是有穷数值，收到 %s" % delta_rad)
     if delta_rad == 0.0:
         raise ValueError("jog_rotate 的 delta_rad 不能为 0（增量旋转必须真的转一点）")
+    if not (abs(delta_rad) <= _MAX_JOG_ROTATE_RAD):
+        # 没有上界时，一次 jog_rotate(6.0) 就能把 TCP 姿态甩到半个球面之外：逆解可能跳到
+        # 另一组构型（换手），真机上这一下是不可预期的剧烈运动 —— 点动必须是小增量。
+        raise ValueError("jog_rotate 的 delta_rad 绝对值不能超过 π（180°），收到 %s；"
+                         "需要更大转角请分成多次点动" % delta_rad)
     raw_frame = p.get("frame", "tool")
     frame = str(raw_frame).strip().lower() if raw_frame is not None else ""
     if frame not in ("tool", "base"):
@@ -2536,7 +2598,7 @@ def op_get_digital_in(p):
 def op_set_digital_out(p):
     ip = str(p["ip"])
     which = str(p.get("which", "std")).lower()
-    value = bool(p["value"])
+    value = _bool_arg(p.get("value"))
     robot, _ = ensure_connected(ip)
     # 全部数字输出都走 URScript（与 tool/analog/payload/TCP 的既有做法一致），
     # 不走 RTDE *输入*：控制器会拒绝第二次 SETUP_INPUTS（"An input parameter is
@@ -4216,8 +4278,15 @@ def _sim_settle(sim, p):
     started = time.time()
     while not sim.is_steady():
         if (time.time() - started) * 1000.0 >= budget:
+            # 超时**必须把运动停住**：调用方拿到的是一句"没有走完"，若机械臂还在走，
+            # 之后就同时出现两件错事 —— (1) 界面继续动，与失败回包矛盾；
+            # (2) 下一条运动指令在"上一个目标还没到达"时覆盖轨迹，实际走出的路径与任何
+            #     一条指令描述的都不一样。真机侧确认循环超时也是先停再回报。
+            sim.stop_twist()
+            sim.stop()
             return False, ("运动在 %.0fms 内没有走完（仿真：轨迹太长或速度太小；"
-                           "可加大 a/v、用 t 指定时长，或把预算调大）" % budget)
+                           "可加大 a/v、用 t 指定时长，或把预算调大）"
+                           "—— 已按当前姿态冻结，未继续执行剩余轨迹" % budget)
         time.sleep(0.02)
     return True, "已到达目标（仿真）"
 
@@ -4472,7 +4541,7 @@ def _sim_servoj(sim, p):
 
 def _sim_axis_move(sim, p, axis):
     """沿**基座**轴平移（与真机 `_axis_move` 同一套算术，也用同一组 URBasic 默认 a=0.5/v=0.25）。"""
-    distance = float(p["distance"])
+    distance = _travel_distance(p)
     pose = _sim_pose(sim)
     target = list(pose)
     target[axis] = target[axis] + distance
@@ -4482,7 +4551,7 @@ def _sim_axis_move(sim, p, axis):
 
 def _sim_tool_axis_move(sim, p, axis):
     """沿**工具系**轴平移：把工具系位移用当前姿态的旋转矩阵换算到基座系（与真机同一算法）。"""
-    distance = float(p["distance"])
+    distance = _travel_distance(p)
     pose = _sim_pose(sim)
     delta_tool = [0.0, 0.0, 0.0]
     delta_tool[axis] = distance
@@ -4639,6 +4708,12 @@ def _sim_movec(sim, p):
     poses, note = _arc_poses(start, via, to)
     sim.move_cartesian(poses, v, a)
     extra = _sim_r_note(r, {"mode": mode, "sim_note": note})
+    if mode == 1:
+        # mode=1 是"姿态相对圆弧切线固定"（真机的固定姿态圆弧）。`_arc_poses` 一律把姿态从
+        # 起点经 via 线性插到终点，**没有**这个模型。不能默默按 mode=0 走完却回一句
+        # "圆弧已到达" —— 那等于让调用方以为固定姿态已经生效。
+        extra["mode_note"] = ("仿真不建模 mode=1（固定姿态圆弧）：姿态按 mode=0 的分段线性插值"
+                              "执行，实际姿态轨迹与真机不同。")
     return _sim_move_reply(sim, p, "圆弧运动到 %s" % _round_pose(to), to, extra)
 
 
@@ -4768,7 +4843,11 @@ def _arc_poses(start, via, to, max_steps=240):
     sweep = phi_c if phi_b <= phi_c else phi_c - 2.0 * math.pi
     arc_len = abs(sweep) * radius
     steps = max(8, min(max_steps, int(math.ceil(arc_len / 0.01))))
-    u_frac = (phi_b / sweep) if abs(sweep) > 1e-12 else 0.5
+    # via 的角要换算到**同一个有符号扫描区间**：sweep<0（顺时针）时起点角 0 对应的扫描终点
+    # 是负角，via 的 `phi_b ∈ (0, 2π)` 必须平移一个整周 (-2π)，否则 `phi_b / sweep` 是负数，
+    # 被下面的 clamp 钳成 0 ⇒ 姿态段从"起点→via"退化成 0，第一帧就跳到 via 的姿态。
+    phi_b_signed = phi_b - 2.0 * math.pi if sweep < 0 else phi_b
+    u_frac = (phi_b_signed / sweep) if abs(sweep) > 1e-12 else 0.5
     u_frac = min(1.0, max(0.0, u_frac))
     poses = []
     for k in range(1, steps + 1):
@@ -4843,7 +4922,7 @@ def _sim_output_bits(state):
 
 def _sim_set_digital_out(sim, p):
     which = str(p.get("which", "std")).lower()
-    value = bool(_sim_require(p, "value", "布尔值"))
+    value = _bool_arg(_sim_require(p, "value", "布尔值"))
     state = _sim_io(sim)
     if which == "config":
         n = _bounded_int(_sim_require(p, "n", "端口号"), "n", 8, 15, "config 端口号")
@@ -5378,7 +5457,18 @@ def respond(payload):
     # JSON** —— Node 的 JSON.parse 会抛，而 lib/worker.js 的 `_onLine` 对解析失败的行
     # 是静默丢弃的，调用方只会看到一句笼统的 "timed out"。宁可在这里大声失败
     # （由 main() 的 except 兜住并回报一个可读错误）。
-    body = json.dumps(payload, ensure_ascii=False, default=_json_default, allow_nan=False)
+    try:
+        body = json.dumps(payload, ensure_ascii=False, default=_json_default, allow_nan=False)
+    except Exception as exc:
+        # 回包序列化失败时**也必须**写出一行可解析的 JSON：调用方正等着这个 `id` 的应答，
+        # 少写一帧就只能等宿主 60s 超时。更糟的是旧实现让异常继续往上抛 —— 此时 main()
+        # 的 except 已经用掉了，单线程 worker 会带着"还有请求没应答"的状态直接退出，
+        # 宿主看到的是通道反复重连（每次重连还会丢掉真机的 RTDE 会话）。
+        # 兜底行用 ensure_ascii：连编码都不能再出问题。
+        req_id = payload.get("id") if isinstance(payload, dict) else None
+        body = json.dumps({"id": req_id, "ok": False, "data": None,
+                           "error": "worker 无法序列化回包（%s）" % type(exc).__name__,
+                           "code": "SERIALIZE"}, ensure_ascii=True)
     _write_protocol_line(body)
 
 
@@ -5636,7 +5726,12 @@ def main():
     # 方式（包括手工 `python ur_worker.py` 接管道）都按 UTF-8 读。旧解释器没有 reconfigure
     # 时忽略此步（PYTHONUTF8 那条仍然生效）。
     try:
-        sys.stdin.reconfigure(encoding="utf-8", errors="strict")
+        # ⚠️ `errors` 必须是 `replace` 而不是 `strict`：`for line in sys.stdin` 的解码发生在
+        # **主循环之外**（迭代器内部），一个坏字节抛 UnicodeDecodeError 会直接冒出 main()，
+        # 进程**静默退出** —— 宿主那边只表现为"通道断了又重连"，且丢掉了这条请求的应答。
+        # 协议帧是 JSON：把坏字节降级成 U+FFFD 之后，`json.loads` 会给出可读的 BADARG，
+        # 调用方拿到的是错误码而不是一条断掉的通道。
+        sys.stdin.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
     # 仿真遥测的推送线程：与运动命令**并行**（RTDE 缓存由 URBasic 自己的接收线程更新），
@@ -5648,8 +5743,14 @@ def main():
         if not line:
             continue
         req_id = None
+        req = None
         try:
             req = json.loads(line)
+            if not isinstance(req, dict):
+                # 标量/数组同样是"读不懂的请求"：显式拒绝比让 `req.get` 抛 AttributeError
+                # 再被兜底成 UNKNOWN 更有信息量，也保证下面 `req.get("op")` 不会炸。
+                raise WorkerError("BADARG",
+                                  "请求必须是 JSON 对象，收到 %s" % type(req).__name__)
             req_id = req.get("id")
             # 供 _connect_or_exit() 在自杀前回报「哪一条请求、什么原因」。
             _CURRENT_REQUEST_ID = req_id

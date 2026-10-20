@@ -198,7 +198,7 @@ function verify() {
     failures.push(`仿真归属不一致（声明 vs python 的 SIM_OPS/SIM_PASSTHROUGH_OPS）：${simMismatch.join(', ')}`);
   }
 
-  // ⑤ 数据可从代码完整重建（既有的 87 工具契约仍成立）
+  // ⑤ 数据可从代码完整重建（既有的 89 工具契约仍成立）
   const rows = [...observed.values()];
   notes.push(
     `op ${rows.length} 个：受门禁 ${rows.filter((r) => r.gated).length}、` +
@@ -206,6 +206,19 @@ function verify() {
       `仿真透传 ${rows.filter((r) => r.sim === SIM_PASSTHROUGH).length}、` +
       `仿真不支持 ${rows.filter((r) => r.sim === SIM_UNSUPPORTED).length}`,
   );
+
+  // ⑥ 生成物 docs/tool-matrix.md 必须与代码/声明表**逐字节**一致。
+  //    旧实现只校验 json：md 可以停在任意旧版本（工具数、门禁数、归属全过时），
+  //    而 md 的页眉又写着"由本脚本校验" —— 那是一句没有实现的承诺。
+  let docActual = null;
+  try {
+    docActual = readFileSync(DOC, 'utf8');
+  } catch {
+    // 缺失按"不一致"处理，错误信息里会给出重新生成的命令。
+  }
+  if (docActual !== renderDoc(observed, declared)) {
+    failures.push(`${DOC} 与代码/声明表不一致（跑 node scripts/tool-matrix.mjs --write 重新生成）`);
+  }
 
   for (const note of notes) console.log(`note  ${note}`);
   if (failures.length > 0) {

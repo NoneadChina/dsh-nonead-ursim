@@ -69,6 +69,9 @@ export const TWIN_CSS = `
   height: 100%;
   min-height: 0;
   overflow: hidden;
+  /* 容器查询的锚点（见文件末尾的 @container）：面板宽度取决于宿主右栏，而不是 viewport，
+     所以"窄了就降列宽"必须按**面板自身**的宽度判断。 */
+  container-type: inline-size;
   background: radial-gradient(circle at 50% 25%, var(--ursim-canvas-inner) 0%, var(--ursim-canvas-outer) 72%);
   color: var(--ursim-text);
   font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace;
@@ -178,6 +181,30 @@ body[data-ds-dark-theme] .ursim-twin-panel {
   width: 100%;
   height: 100%;
   outline: none;
+}
+/*
+ * 键盘焦点必须可见（P2）：以前全文只有上面那条 outline:none，Tab 走一圈完全看不出焦点落在
+ * 哪个按钮/输入框上 —— 而这里每个按钮都会真下发命令。只在 :focus-visible 时画环：鼠标点击
+ * 不出现，键盘导航必出现。画布用负 offset，否则环会被 .ursim-twin-panel 的 overflow 裁掉。
+ */
+.ursim-twin-canvas:focus-visible {
+  outline: 2px solid var(--ursim-accent);
+  outline-offset: -2px;
+}
+.ursim-twin-toolbar-button:focus-visible,
+.ursim-twin-rail-toggle:focus-visible,
+.ursim-twin-layer-toggle:focus-visible,
+.ursim-twin-sim-toggle:focus-visible,
+.ursim-twin-sim select:focus-visible,
+.ursim-twin-io-summary:focus-visible,
+.ursim-twin-sim-caps-summary:focus-visible,
+.ursim-twin-ctl-button:focus-visible,
+.ursim-twin-ctl-seg-button:focus-visible,
+.ursim-twin-ctl-step:focus-visible,
+.ursim-twin-ctl-pose-input:focus-visible,
+.ursim-twin-ctl-joint-range:focus-visible {
+  outline: 2px solid var(--ursim-accent);
+  outline-offset: 2px;
 }
 .ursim-twin-hud {
   flex: 0 0 auto;
@@ -501,7 +528,10 @@ body[data-ds-dark-theme] .ursim-twin-panel {
   display: grid;
   grid-template-columns: 40px 26px minmax(0, 1fr) 26px 56px;
   align-items: center;
-  gap: 2px;
+  /* 间隙 2px → 12px：每枚 ± 按钮都真下发 1°，贴在一起时误触一次机械臂就动。
+     按钮本身 32px、轨道仍是 26px（测试钉死），用负 margin 让按钮居中溢出轨道 ——
+     相邻按钮的命中区之间因此还剩 12 − 3 − 3 = 6px 净间隙，视觉上也分得开。 */
+  gap: 12px;
   height: 30px;
 }
 .ursim-twin-ctl-joint-name {
@@ -512,8 +542,12 @@ body[data-ds-dark-theme] .ursim-twin-panel {
   text-overflow: ellipsis;
 }
 .ursim-twin-ctl-step {
-  width: 26px;
-  height: 26px;
+  /* 命中区 26×26 → 32×32：这是"每点一次真下发 1°"的按钮，26px 在触屏/触控板上太容易点偏。
+     列轨道保持 26px（见 .ursim-twin-ctl-joint-row），用负 margin 让按钮居中溢出轨道 ——
+     既放大命中区，又不挤压滑块与读数列。 */
+  width: 32px;
+  height: 32px;
+  margin: -1px -3px;
   padding: 0;
   font: inherit;
   font-size: 11px;
@@ -523,6 +557,8 @@ body[data-ds-dark-theme] .ursim-twin-panel {
   border: 1px solid var(--ursim-border);
   border-radius: 4px;
   cursor: pointer;
+  /* 触屏上不要 300 ms 双击缩放延迟：点动要求"按下即动"。 */
+  touch-action: manipulation;
 }
 .ursim-twin-ctl-step:hover:not(:disabled) {
   border-color: var(--ursim-accent);
@@ -551,6 +587,52 @@ body[data-ds-dark-theme] .ursim-twin-panel {
   outline-offset: 1px;
 }
 .ursim-twin-ctl-joint-value[data-ursim-invalid='true'] { color: var(--ursim-danger); }
+/*
+ * 长按点动的"速度流"模式（P2）。
+ *
+ * data-ursim-jog-mode 由 twin-controls.js 在长按 250 ms 后从 step 切到 velocity —— 那是唯一
+ * 说明"现在不是一步一动，而是在持续往下发速度"的信号。以前只写属性、没有任何样式：手指按着
+ * 的时候界面毫无变化，用户无从判断松手会不会立刻停。这里给点动板描边 + 按钮变色，让"正在连续
+ * 运动"在余光里也看得见（松手即回 step，描边随之消失）。
+ */
+[data-ursim-jog-mode='velocity'] .ursim-twin-ctl-pad {
+  border-radius: 6px;
+  box-shadow: 0 0 0 2px var(--ursim-warn);
+}
+[data-ursim-jog-mode='velocity'] .ursim-twin-ctl-button {
+  border-color: var(--ursim-warn);
+}
+/*
+ * 窄面板响应式（P2）。
+ *
+ * 两条轨都展开时列宽是 180 + 280 + 350 = 810px（twin-controls.js 的 stageColumns()），而面板宽度
+ * 由宿主右栏决定，常常不到 810 —— 以前只能靠外面的 overflow:hidden 硬裁，右轨（位姿/关节输入，
+ * 唯一能精确下发数值的地方）整个掉出可视区。
+ *
+ * 为什么用容器查询而不是 JS：inline 的 grid-template-columns 由 stageColumns() 按"轨道是否收起"
+ * 拼出，测试也按 inline 宽度断言；把宽度判断塞进 JS 会让"列宽"有两个真源。容器查询只看面板
+ * 自身宽度，inline 那份保持原样，两者职责不重叠。
+ */
+@container (max-width: 819px) {
+  /* 主要省的是中间 3D 列：280 → 200（再窄就只剩网格线了）。两条侧轨维持原宽 ——
+     左轨的点动板是 3×52px 固定网格、右轨的位姿输入 min-width 76px，缩轨只会把控件裁掉。 */
+  .ursim-twin-stage { grid-template-columns: 180px minmax(200px, 1fr) 350px !important; }
+  /* 收起态必须继续生效：否则窄面板上"收起左轨"看起来毫无变化（还被 !important 顶回 180px）。 */
+  .ursim-twin-stage:has(> [data-ursim-twin-rail='left'][data-collapsed='true']) {
+    grid-template-columns: 24px minmax(200px, 1fr) 350px !important;
+  }
+  .ursim-twin-stage:has(> [data-ursim-twin-rail='right'][data-collapsed='true']) {
+    grid-template-columns: 180px minmax(200px, 1fr) 24px !important;
+  }
+  .ursim-twin-stage:has(> [data-ursim-twin-rail='left'][data-collapsed='true']):has(> [data-ursim-twin-rail='right'][data-collapsed='true']) {
+    grid-template-columns: 24px minmax(200px, 1fr) 24px !important;
+  }
+}
+@container (max-width: 729px) {
+  /* 再窄连 730px 都放不下：改成横向滚动，而不是像以前那样把右轨裁没了。
+     （裁切 = 用户以为控件不存在；滚动 = 控件还在，只是要划一下。） */
+  .ursim-twin-stage { overflow-x: auto; }
+}
 `.trim()
 
 /**
