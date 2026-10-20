@@ -8,6 +8,11 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.3.3] - 2026-10-20
+
+### Changed
+
+- **The single control rail is 600 px wide instead of 700 px** (user feedback after seeing it on screen). The jog pads were rescaled to match: buttons 64 → **60 px**, so a pad is 3 × 60 + 2 × 6 = 192 px and the two pads still sit side by side (2 × 192 + 10 = 394 px) inside the 397 px left column (600 − 1 border − 20 padding − 172 right column − 10 gap). Nothing else moved: the layout order, the 172 px right column for `坐标系` and the step sizes, the joint row (56 / 32 / 1fr / 32 / 64) and the collapsed state (24 px) are unchanged.
 ## [0.3.2] - 2026-10-20
 
 A review round over the whole plugin — host, worker, panel, docs, gates — fixing 33 defects. Four of them changed behaviour a user could feel: releasing a jog button could leave the velocity stream running, opening the panel could kill the worker, the simulated arm's state could tear across threads, and the README promised a test semantics the runner did not implement. On top of the fixes, the panel dropped from two control rails to one 700 px rail laid out like the teach pendant.

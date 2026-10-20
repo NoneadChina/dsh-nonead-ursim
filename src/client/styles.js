@@ -367,7 +367,7 @@ body[data-ds-dark-theme] .ursim-twin-panel {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: pre-wrap;
 }
-/* ── 控制轨（2026-10-20 合并为单条右轨，轨宽 700px）─────────────────────────
+/* ── 控制轨（2026-10-20 合并为单条右轨，轨宽 600px）─────────────────────────
    布局按用户给的参照图自上而下：
      只读读数行 → TCP 位姿六格（X/Y/Z 一行、RX/RY/RZ 一行）+ 右侧「坐标系」竖排两档
      → 两块方向盘（TCP 位置 / TCP 方向）+ 右侧两档步长竖排 → 六行关节（◀ 滑块 ▶ 角度）。
@@ -439,17 +439,17 @@ body[data-ds-dark-theme] .ursim-twin-panel {
 }
 .ursim-twin-ctl-pad {
   display: grid;
-  /* 3 × 64 + 2 × 6 = 204：两盘并排 2 × 204 + 10 = 418 ≤ 左列可用宽度（700 − 1 边框 −
-     20 内边距 − 172 右列 − 10 列间距 ≈ 497）。 */
-  grid-template-columns: repeat(3, 64px);
-  grid-template-rows: repeat(3, 64px);
+  /* 3 × 60 + 2 × 6 = 192：两盘并排 2 × 192 + 10 = 394 ≤ 左列可用宽度（600 − 1 边框 −
+     20 内边距 − 172 右列 − 10 列间距 ≈ 397）。 */
+  grid-template-columns: repeat(3, 60px);
+  grid-template-rows: repeat(3, 60px);
   gap: 6px;
   justify-content: start;
 }
 .ursim-twin-ctl-cell { display: block; }
 .ursim-twin-ctl-button {
-  width: 64px;
-  height: 64px;
+  width: 60px;
+  height: 60px;
   padding: 0;
   font: inherit;
   font-size: 13px;
@@ -652,7 +652,7 @@ body[data-ds-dark-theme] .ursim-twin-panel {
 /*
  * 窄面板（P2 容错）。
  *
- * 单条轨固定 700px、中间 3D 列最少 280px，因此面板宽度不足 ≈ 980px 时整条轨会掉出可视区。
+ * 单条轨固定 600px、中间 3D 列最少 280px，因此面板宽度不足 ≈ 880px 时整条轨会掉出可视区。
  * 这里不改列宽（inline 的 grid-template-columns 由 stageColumns() 拼出，测试按它断言，
  * 塞进样式会让"列宽"出现两个真源），而是允许横向滚动：控件还在，只是要划一下。
  */
