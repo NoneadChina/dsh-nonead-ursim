@@ -367,12 +367,13 @@ body[data-ds-dark-theme] .ursim-twin-panel {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: pre-wrap;
 }
-/* ── 控制轨（2026-10-20 合并为单条右轨，轨宽 600px）─────────────────────────
+/* ── 控制轨（2026-10-20 合并为单条右轨，轨宽 500px）─────────────────────────
    布局按用户给的参照图自上而下：
      只读读数行 → TCP 位姿六格（X/Y/Z 一行、RX/RY/RZ 一行）+ 右侧「坐标系」竖排两档
-     → 两块方向盘（TCP 位置 / TCP 方向）+ 右侧两档步长竖排 → 六行关节（◀ 滑块 ▶ 角度）。
-   主区是两列 grid：左列（位姿 + 方向盘）自适应，右列固定 172px（坐标系 + 步长），
+     → 两块方向盘（TCP 位置 / TCP 方向）+ 右侧步长 → 六行关节（◀ 滑块 ▶ 角度）。
+   主区是两列 grid：左列（位姿 + 方向盘）自适应，右列固定 104px（坐标系 + 步长），
    对应参照图右侧那条竖带 —— 坐标系与步长必须落在同一列，否则两者左右会错开。
+   步长两块（mm / °）按用户要求改成**上下**堆叠（原先是左右并排两列）。
    状态只走属性：按钮可用性交给 disabled、档位交给 aria-pressed、整块状态交给
    data-ursim-ctl-state —— 这里没有任何 inline 样式，运行期也不写 style.*。 */
 .ursim-twin-rail-body[data-ursim-twin-rail-body='right'] {
@@ -407,7 +408,7 @@ body[data-ds-dark-theme] .ursim-twin-panel {
 /* 主区两列：左 = 位姿 + 方向盘，右 = 坐标系 + 步长。 */
 .ursim-twin-ctl-main {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 172px;
+  grid-template-columns: minmax(0, 1fr) 104px;
   gap: 10px;
   align-items: start;
   margin: 0 0 8px;
@@ -439,17 +440,17 @@ body[data-ds-dark-theme] .ursim-twin-panel {
 }
 .ursim-twin-ctl-pad {
   display: grid;
-  /* 3 × 60 + 2 × 6 = 192：两盘并排 2 × 192 + 10 = 394 ≤ 左列可用宽度（600 − 1 边框 −
-     20 内边距 − 172 右列 − 10 列间距 ≈ 397）。 */
-  grid-template-columns: repeat(3, 60px);
-  grid-template-rows: repeat(3, 60px);
+  /* 3 × 54 + 2 × 6 = 174：两盘并排 2 × 174 + 10 = 358 ≤ 左列可用宽度（500 − 1 边框 −
+     20 内边距 − 104 右列 − 10 列间距 = 365）。 */
+  grid-template-columns: repeat(3, 54px);
+  grid-template-rows: repeat(3, 54px);
   gap: 6px;
   justify-content: start;
 }
 .ursim-twin-ctl-cell { display: block; }
 .ursim-twin-ctl-button {
-  width: 60px;
-  height: 60px;
+  width: 54px;
+  height: 54px;
   padding: 0;
   font: inherit;
   font-size: 13px;
@@ -523,10 +524,11 @@ body[data-ds-dark-theme] .ursim-twin-panel {
   border-right: 0;
   border-bottom: 1px solid var(--ursim-border-subtle);
 }
-/* 步长：两列（mm / °），每列内部竖排三档。 */
+/* 步长：两块（mm 在上、° 在下）上下堆叠，每块内部竖排三档。
+   用户明确要求"不要左右结构，改成上下结构"——所以这里不是两列 grid，而是纵向 flex。 */
 .ursim-twin-ctl-steps {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   gap: 8px;
 }
 .ursim-twin-ctl-stepcol { min-width: 0; }
@@ -578,10 +580,10 @@ body[data-ds-dark-theme] .ursim-twin-panel {
 /* 关节：名称 56 + ◀ 32 + 滑块 + ▶ 32 + 角度 64，行高 34。 */
 .ursim-twin-ctl-joint-row {
   display: grid;
-  grid-template-columns: 56px 32px minmax(0, 1fr) 32px 64px;
+  grid-template-columns: 52px 30px minmax(0, 1fr) 30px 60px;
   align-items: center;
-  /* 间隙 10px：◀ / ▶ 每枚都真下发 1°，贴太近时误触一次机械臂就动。 */
-  gap: 10px;
+  /* 间隙 8px：◀ / ▶ 每枚都真下发 1°，贴太近时误触一次机械臂就动。 */
+  gap: 8px;
   height: 34px;
 }
 .ursim-twin-ctl-joint-name {
@@ -592,9 +594,9 @@ body[data-ds-dark-theme] .ursim-twin-panel {
   text-overflow: ellipsis;
 }
 .ursim-twin-ctl-step {
-  /* 命中区 32×32：这是"每点一次真下发 1°"的按钮，再小在触屏/触控板上容易点偏。 */
-  width: 32px;
-  height: 32px;
+  /* 命中区 30×30：这是"每点一次真下发 1°"的按钮，再小在触屏/触控板上容易点偏。 */
+  width: 30px;
+  height: 30px;
   margin: 0;
   padding: 0;
   font: inherit;
@@ -652,7 +654,7 @@ body[data-ds-dark-theme] .ursim-twin-panel {
 /*
  * 窄面板（P2 容错）。
  *
- * 单条轨固定 600px、中间 3D 列最少 280px，因此面板宽度不足 ≈ 880px 时整条轨会掉出可视区。
+ * 单条轨固定 500px、中间 3D 列最少 280px，因此面板宽度不足 ≈ 790px 时整条轨会掉出可视区。
  * 这里不改列宽（inline 的 grid-template-columns 由 stageColumns() 拼出，测试按它断言，
  * 塞进样式会让"列宽"出现两个真源），而是允许横向滚动：控件还在，只是要划一下。
  */

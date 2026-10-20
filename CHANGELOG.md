@@ -8,6 +8,13 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.3.4] - 2026-10-20
+
+### Changed
+
+- **The single control rail is 500 px wide** (user feedback after the 600 px round). The rail was rescaled as a whole, not just narrowed: the side column holding `坐标系` and the step sizes went 172 → **104 px**, so the two jog pads still fit side by side with 54 px buttons (500 − 1 border − 20 padding − 104 side column − 10 gap = 365 px available; 2 × (3 × 54 + 2 × 6) + 10 = 358 px). The joint row is now 52 / 30 / 1fr / 30 / 60 with an 8 px gap, and the ± step buttons are 30 px.
+- **`步长 mm` and `步长 °` are stacked vertically** instead of sitting side by side: `.ursim-twin-ctl-steps` is a column flex container now, and each block keeps its own column of step buttons. Nothing else moved — the layout order, the 24 px collapsed state and the jog / hold behaviour are unchanged.
+
 ## [0.3.3] - 2026-10-20
 
 ### Changed
