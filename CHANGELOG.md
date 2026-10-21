@@ -8,6 +8,12 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.3.10] - 2026-10-21
+
+### Changed
+
+- **Version line maintenance** (user request): no functional change — the repository content is identical to `v0.3.9`. This release only advances the version number in `package.json` and in the two root entries of `package-lock.json`, which had been stuck at `0.3.1` even though the package itself went 0.3.1 → 0.3.9. Doing it now keeps a later fix free to ship as `0.3.11` without renumbering, and the lockfile root finally agrees with the manifest. No tool, route, panel behaviour or message changed.
+
 ## [0.3.9] - 2026-10-20
 
 ### Changed
