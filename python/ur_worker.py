@@ -5577,6 +5577,17 @@ def _twin_push_loop():
                     "conn": ROBOT_CONN_SEQ.get(ip) if sim is None else round(sim.created_at, 3),
                     # 这一帧来自离线仿真吗？（宿主/界面据此打仿真水印；真机帧不带此字段）
                     **({"simulated": True} if sim is not None else {}),
+                    # 型号：仿真侧是纯内存字段（`VirtualRobot.model`），取一次字符串零成本。
+                    #
+                    # ⚠️ **这是"运动期间不再卡顿"的最后一块拼图**：宿主以前每帧（缓存失效后）
+                    # 都要 `get_robot_model` 去问 dashboard —— 那条读要排进单线程 stdin 队列，
+                    # 机器人一动就排到预算耗尽（2.5 s）才超时，整帧于是退化成"回放上一帧"
+                    # ⇒ 界面「数据已停止更新 Ns」。推送行自带型号后，宿主在运动期间**一次
+                    # 型号读都不用发**。
+                    #
+                    # 真机帧不带：型号来自 dashboard 命令，推送线程只读 RTDE 缓存、不做任何
+                    # 网络往返（这是它能 20 Hz 活着的前提）。真机那边由宿主的代次 + TTL 兜底。
+                    **({"model": _sim_module().canonical_model_name(sim.model)} if sim is not None else {}),
                     "ts": int(time.time() * 1000),
                     "data": snapshot,
                 }, ensure_ascii=False, default=_json_default, allow_nan=False))

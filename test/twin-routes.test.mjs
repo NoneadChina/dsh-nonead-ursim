@@ -332,9 +332,10 @@ test('拿不到连接代次时按 TTL 兜底重读（推送关掉 / 旧版 worke
   assert.equal(stale.body.model, 'UR20');
 });
 
-test('读不到型号（空串）时不得把它写进缓存冒充"未知型号"', async () => {
+test('读不到型号（空串）时不得把它写进缓存冒充"未知型号"，并且退避窗口过后必须重读', async () => {
   const store = new Map();
   let asked = 0;
+  let nowMs = 0;
   const fake = {
     call: async (op, params) => {
       if (op === 'get_robot_model') {
@@ -350,12 +351,225 @@ test('读不到型号（空串）时不得把它写进缓存冒充"未知型号"
     modelFor: (ip) => store.get(ip) ?? null,
     setModelFor: (ip, entry) => store.set(ip, entry),
     telemetryEpoch: () => '1:1',
+    now: () => nowMs,
+    modelBackoffMs: 5000,
   });
   const r = await h({ ip: '1.2.3.4' });
   assert.equal(r.body.model, '');
   assert.equal(store.size, 0, '空型号不得进缓存');
+  assert.equal(asked, 1);
+
+  // 退避窗口内：**不再发**型号读（否则运动期间每帧都要排 2.5 s 队列）。
   await h({ ip: '1.2.3.4' });
-  assert.equal(asked, 2, '上一次没读到 ⇒ 下次必须再读，而不是记住"没有型号"');
+  assert.equal(asked, 1, '退避窗口内不得重读');
+
+  // 过了退避窗口：必须重读，而不是记住"没有型号"。
+  nowMs = 5001;
+  await h({ ip: '1.2.3.4' });
+  assert.equal(asked, 2, '上一次没读到 ⇒ 退避过后必须再读，而不是记住"没有型号"');
+});
+
+/*
+ * ── 运动期间的"零往返"（0.3.11）────────────────────────────────────────────
+ *
+ * 背景（实测，15 s 连续运动）：推送通道本身是健康的（20 Hz、龄期 ≤52 ms、零缺失），
+ * 但帧路径**仍会提交** worker 读 —— `get_robot_model`（缓存失效后每帧一次）与详情节拍
+ * （每 2 s 一次的 `status` + `get_target_values`）。这些读在运动期间排在单线程 stdin
+ * 队列里，等满 2.5 s 预算才超时；超时是抛异常 ⇒ 外层 catch 回放陈旧帧 ⇒ 界面
+ * 「数据已停止更新 Ns」。SSE 实测只跑到 6.4 Hz，最大间隔 2606 ms。
+ *
+ * 下面三条把"运动期间帧路径一次 worker 调用都不发、且失败也不许把帧打成陈旧"钉住。
+ */
+
+test('★ 推送行自带型号时，帧路径一次型号读都不发（冷缓存 / TTL 过期 / 代次变化都一样）', async () => {
+  let asked = 0;
+  const calls = [];
+  let now = 1000;
+  const store = new Map();
+  const counting = {
+    call: async (op, params) => {
+      calls.push(op);
+      if (op === 'get_robot_model') asked += 1;
+      return worker.call(op, params);
+    },
+  };
+  let pushed = {
+    at: 1000,
+    ts: 1000,
+    q: [0, 0, 0, 0, 0, 0],
+    tcp: [0, 0, 0.5, 0, 0, 0],
+    epoch: '1:5',
+    simulated: true,
+    model: 'UR12e',
+  };
+  const h = createTwinStateHandler({
+    worker: counting,
+    connectedIps: () => new Set(['1.2.3.4']),
+    modelFor: (ip) => store.get(ip) ?? null,
+    setModelFor: (ip, entry) => store.set(ip, entry),
+    telemetry: () => ({ ...pushed, at: now }),
+    now: () => now,
+  });
+
+  const r1 = await h({ ip: '1.2.3.4' });
+  assert.equal(r1.body.model, 'UR12e', '型号直接取推送行');
+  assert.equal(r1.body.simulated, true);
+  assert.equal(asked, 0, '★ 推送给了型号 ⇒ 不得再去问 dashboard');
+  assert.deepEqual(calls, [], '★ 这一帧必须零 worker 往返（运动期间才可能连续出帧）');
+
+  // TTL 早过期、连接代次也变了：仍然零往返 —— 型号是静态事实，推送每 50 ms 都在给。
+  now += 60000;
+  pushed = { ...pushed, epoch: '2:9' };
+  const r2 = await h({ ip: '1.2.3.4' });
+  assert.equal(r2.body.model, 'UR12e');
+  assert.equal(asked, 0, '★ 推送自带型号 ⇒ 永远不需要型号读');
+  assert.deepEqual(calls, [], '★ 仍然零往返');
+
+  // 顺手写回缓存：别的路径（工具返回值 / 后续帧）也能直接用。
+  assert.equal(store.get('1.2.3.4')?.name, 'UR12e');
+  assert.equal(store.get('1.2.3.4')?.simulated, true);
+});
+
+test('★ 型号读超时不得把整帧退化成陈旧回放：用上一次已知型号，并按退避重试', async () => {
+  let asked = 0;
+  let now = 1000;
+  const store = new Map([['1.2.3.4', { name: 'UR5e', epoch: '1:1', at: 0, simulated: false }]]);
+  const hanging = {
+    call: (op) => {
+      if (op === 'get_robot_model') {
+        asked += 1;
+        // 运动期间的样子：请求提交进去了，但要等运动结束才被处理 ⇒ 远晚于有界预算才返回。
+        // （用一个**ref 着的**定时器挂住，别让事件循环空掉 —— 否则 `node --test` 会以
+        //  "Promise resolution is still pending" 把这个文件后面所有用例一起判失败。）
+        return new Promise((resolve) => {
+          setTimeout(() => resolve({ message: '', data: { robot_model: '' } }), 200);
+        });
+      }
+      return worker.call(op);
+    },
+  };
+  const h = createTwinStateHandler({
+    worker: hanging,
+    connectedIps: () => new Set(['1.2.3.4']),
+    modelFor: (ip) => store.get(ip) ?? null,
+    setModelFor: (ip, entry) => store.set(ip, entry),
+    // 代次都对不上 ⇒ 每帧都"想"读型号；这正是运动期间卡顿的来源
+    telemetry: () => ({
+      at: now, ts: now, q: [0, 0, 0, 0, 0, 0], tcp: [0, 0, 0.5, 0, 0, 0], epoch: '1:2',
+    }),
+    now: () => now,
+    modelReadBudgetMs: 20,
+    modelBackoffMs: 5000,
+  });
+
+  const r1 = await h({ ip: '1.2.3.4' });
+  assert.equal(asked, 1, '冷/失效缓存要试一次');
+  assert.equal(r1.body.model, 'UR5e', '★ 读不到就用上一次已知型号兜底');
+  assert.equal(r1.body.stale, undefined, '★ 绝不能因为"问不到型号"把整帧标成陈旧');
+  assert.equal(r1.body.q.length, 6, '★ 位姿通道必须完好');
+
+  await h({ ip: '1.2.3.4' });
+  assert.equal(asked, 1, '★ 退避窗口内不得再提交型号读（否则每帧白付一次排队）');
+});
+
+test('★ 详情不阻塞帧：有缓存就直接用，后台刷新按最小间隔节流', async () => {
+  let statusCalls = 0;
+  let now = 1000;
+  const slowDetail = {
+    call: async (op) => {
+      if (op === 'status') {
+        statusCalls += 1;
+        // 第二次起故意慢 200 ms：帧路径若还在等它，这一帧就会被拖到 200 ms 以上。
+        if (statusCalls > 1) await new Promise((resolve) => { setTimeout(resolve, 200); });
+        return { message: '', data: { safety_mode: 'NORMAL', robot_mode: 'RUNNING' } };
+      }
+      if (op === 'get_target_values') {
+        return { message: '', data: { target_q: [0, 0, 0, 0, 0, 0] } };
+      }
+      return worker.call(op);
+    },
+  };
+  const h = createTwinStateHandler({
+    worker: slowDetail,
+    connectedIps: () => new Set(['1.2.3.4']),
+    telemetry: () => ({
+      at: now, ts: now, q: [0, 0, 0, 0, 0, 0], tcp: [0, 0, 0.5, 0, 0, 0], epoch: '1:1',
+    }),
+    now: () => now,
+    detailBackoffMs: 5000,
+    // 先把后台刷新按住 60 s，单独验证"帧不等详情"这件事。
+    detailRefreshMinMs: 60000,
+  });
+  const query = { ip: '1.2.3.4', detail: '1' };
+
+  // 第一帧：没有缓存 ⇒ 允许一次有界等待（空闲时它是很快的一次真读）
+  const first = await h(query);
+  assert.equal(statusCalls, 1);
+  assert.equal(typeof first.body.detail, 'object');
+
+  // 第二帧：缓存命中 ⇒ 立刻返回缓存，绝不等那次慢读
+  const t0 = Date.now();
+  const second = await h(query);
+  const elapsed = Date.now() - t0;
+  assert.deepEqual(second.body.detail, first.body.detail, '★ 直接用上一笔详情');
+  assert.ok(elapsed < 150, `★ 有缓存时详情不再让帧排队（实测 ${elapsed} ms）`);
+  assert.equal(statusCalls, 1, '★ 节流窗口内不提交后台刷新');
+  assert.equal(second.body.stale, undefined, '★ 详情慢不是"数据停滞"');
+
+  // 窗口过去：后台刷新照常发起，但这一帧**仍然**不等它
+  now += 60001;
+  const t1 = Date.now();
+  const third = await h(query);
+  const elapsed3 = Date.now() - t1;
+  assert.equal(statusCalls, 2, '★ 刷新窗口过了才提交一次');
+  assert.ok(elapsed3 < 150, `★ 后台刷新同样不让帧排队（实测 ${elapsed3} ms）`);
+  assert.deepEqual(third.body.detail, first.body.detail, '本帧展示的还是上一笔，新的后台读不阻塞它');
+});
+
+test('★ 详情超时后退避：运动期间不再每 2 s 提交一次把读槽位占满', async () => {
+  let statusCalls = 0;
+  let now = 1000;
+  const transient = () => {
+    const e = new Error('worker 正忙');
+    e.code = 'WORKER_TIMEOUT';
+    return e;
+  };
+  const busy = {
+    call: async (op) => {
+      if (op === 'status') {
+        statusCalls += 1;
+        throw transient();
+      }
+      if (op === 'get_target_values') throw transient();
+      return worker.call(op);
+    },
+  };
+  const h = createTwinStateHandler({
+    worker: busy,
+    connectedIps: () => new Set(['1.2.3.4']),
+    telemetry: () => ({
+      at: now, ts: now, q: [0, 0, 0, 0, 0, 0], tcp: [0, 0, 0.5, 0, 0, 0], epoch: '1:1',
+    }),
+    now: () => now,
+    detailBackoffMs: 5000,
+  });
+
+  // 模拟 SSE 的详情慢节拍：每 2 s 一帧，共 12 s
+  const frames = [];
+  for (let t = 1000; t <= 11000; t += 2000) {
+    now = t;
+    frames.push(await h({ ip: '1.2.3.4', detail: '1' }));
+  }
+  assert.equal(frames.length, 6);
+  assert.ok(statusCalls <= 2, `★ 12 s 内最多提交 2 次详情读（实际 ${statusCalls} 次）`);
+  assert.equal(statusCalls, 2, '第一次 + 退避到期后那次');
+  // 一帧都不能少：退避只影响详情这个加分项
+  for (const frame of frames) {
+    assert.equal(frame.status, 200);
+    assert.equal(frame.body.stale, undefined, '★ 详情失败不得牵连位姿通道');
+    assert.equal(frame.body.q.length, 6);
+    assert.equal(typeof frame.body.detail?.error, 'string', '降级成"这一拍没有新详情"');
+  }
 });
 
 test('拿不到代次也拿不到龄期的裸字符串按可信记忆处理（兼容既有调用方）', () => {
@@ -1317,10 +1531,11 @@ test('★ P0-2：一帧 16 个寄存器读（count 上限）不得出现 WORKER_
 });
 
 test('★ P0-2：I/O 某一拍读失败时用上一笔成功读数降级，而不是整块变成错误行', async () => {
-  const state = { fail: false };
+  const state = { fail: false, ioCalls: 0 };
   const worker = {
     call: async (op) => {
       if (/digital|analog/.test(op)) {
+        state.ioCalls += 1;
         // 模拟"这一拍撞上读类闸门 / worker 正被运动命令占住"。
         if (state.fail) {
           const error = new Error('读类闸门忙，这一拍读不到');
@@ -1348,11 +1563,14 @@ test('★ P0-2：I/O 某一拍读失败时用上一笔成功读数降级，而�
   assert.equal(first.body.io.digital_out[0], true);
 
   state.fail = true;
+  const callsBefore = state.ioCalls;
   const second = await handler({ ip: '9.9.9.9', io: '1' });
   assert.equal(second.body.connected, true, '★ 失败的一拍不得毁掉位姿通道');
-  assert.match(String(second.body.io.error), /读类闸门忙/, '必须如实说明这一拍为什么读不到');
-  assert.equal(second.body.io.digital_out.length, 16, '★ 失败的一拍必须带上上一笔成功读数');
+  // 有缓存之后就不再让帧等 I/O（与详情同一策略）：直接给上一笔，连错误行都不必糊上去。
+  assert.equal(second.body.io.error, undefined, '★ 有缓存时直接给上一笔，不拿错误行糊住面板');
+  assert.equal(second.body.io.digital_out.length, 16, '★ 必须带上上一笔成功读数');
   assert.equal(second.body.io.digital_out[0], true, '缓存里的值必须原样保留');
+  assert.ok(state.ioCalls > callsBefore, '★ 后台仍然试着刷新一次（失败只是不更新缓存）');
 });
 
 // ── 面板控制（jog）路由的请求校验 ───────────────────────────────────────────

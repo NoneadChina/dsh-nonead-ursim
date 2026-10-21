@@ -868,6 +868,9 @@ test('★ 仿真帧走的是与真机同一条推送通道，并自带 simulated
   assert.equal(out.push.push, 'telemetry')
   assert.equal(out.push.ip, '127.0.0.1')
   assert.equal(out.push.simulated, true, '仿真帧必须带 simulated（仿真据此打水印）')
+  assert.equal(out.push.model, 'UR5e',
+    '★ 仿真帧必须自带型号：宿主据此在运动期间**一次** get_robot_model 都不用发'
+    + '（少这一项，帧路径在运动中会被单线程 worker 排队到超时 ⇒ 界面「数据已停止更新」）')
   assert.equal(typeof out.push.conn, 'number', '必须带连接代次（宿主据此判断型号缓存作不作数）')
   assert.equal(out.push.data.q.length, 6)
   assert.equal(out.push.id, undefined, '推送行不能有 id')

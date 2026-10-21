@@ -33,9 +33,10 @@ function makeWorker() {
 }
 
 /** 喂一条**没有 id** 的推送协议行（真实 worker 的 `_twin_push_loop` 长这样）。 */
-function feedPush(worker, { ip = IP, ts = 111, conn, q = Q, tcp = TCP } = {}) {
+function feedPush(worker, { ip = IP, ts = 111, conn, model, q = Q, tcp = TCP } = {}) {
   const line = { push: 'telemetry', ip, ts, data: { q, tcp } }
   if (conn !== undefined) line.conn = conn
+  if (model !== undefined) line.model = model
   worker._onLine(JSON.stringify(line))
 }
 
@@ -99,4 +100,27 @@ test('dispose() 连同代次一起清空（不给已死会话留"连接没变"�
   assert.ok(worker.latestTelemetry(IP))
   worker.dispose()
   assert.equal(worker.latestTelemetry(IP), undefined)
+})
+
+test('★ 推送行自带型号 ⇒ 缓存下来（帧路径就不用再去问 worker，运动期间才不会被排队）', () => {
+  const worker = makeWorker()
+  feedPush(worker, { conn: 1, model: 'UR12e' })
+
+  const telemetry = worker.latestTelemetry(IP)
+  assert.equal(telemetry.model, 'UR12e', '型号要跟位姿一起缓存下来')
+  assert.deepEqual(telemetry.q, Q, '带型号不得影响位姿缓存')
+  assert.equal(telemetry.epoch, '0:1', '带型号不得影响代次')
+})
+
+test('推送行不带型号（真机 / 旧版 worker）⇒ model 为 undefined，绝不编一个出来', () => {
+  const worker = makeWorker()
+  feedPush(worker, { conn: 1 })
+  assert.equal(worker.latestTelemetry(IP).model, undefined, '没有型号时必须明说"不知道"')
+
+  // 空串 / 非字符串 / 全空白同样按"不知道"处理：别把空型号写进缓存冒充已知。
+  worker.respawnCount = 1
+  feedPush(worker, { conn: 2, model: '   ' })
+  assert.equal(worker.latestTelemetry(IP).model, undefined, '空白型号等同没有')
+  feedPush(worker, { conn: 3, model: 42 })
+  assert.equal(worker.latestTelemetry(IP).model, undefined, '非字符串型号等同没有')
 })

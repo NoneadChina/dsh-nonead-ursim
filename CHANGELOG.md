@@ -8,6 +8,12 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.3.11] - 2026-10-21
+
+### Fixed
+
+- **The panel no longer reports "data stopped updating / channel stalled" while the arm is moving** (user report: still appeared during long runs, though far less often than before). Three causes, all of them reads that the frame path submitted to the single-threaded worker even though a fresh 20 Hz push was already in hand: (1) `get_robot_model` was re-read on **every** frame once its cache went stale, and each attempt waited out the full 2.5 s read timeout — with no negative caching, so the next frame retried and a 2.5 s hiccup became a continuous stall; (2) the 2 s detail beat (`status` + `get_target_values`) occupied one of the three `twin-read` slots for 2.5 s each time during motion, starving the pose reads; (3) `io` / `registers` reads had no bound at all. Fixes: simulated push rows now carry `model` (free on the worker side — `ur_sim` already knows it), so during motion the frame path needs **zero** worker round-trips; the model read is bounded to 250 ms, falls back to the last known model (a model name is a static fact) and backs off for 5 s after a failure; detail and I/O now return the **cached value immediately and refresh in the background**, so a pose frame never waits for them (background refreshes are throttled to a 2 s minimum interval, failures only set a backoff and never surface as `frame-error`); `registers` reads are bounded by the detail budget. A timed-out read can no longer degrade a whole frame into a `stale` replay. Verified against a real worker driving a real simulation through a 15 s `run_sequence`: SSE delivered **176 frames, zero `stale`, zero `frame-error`, max frame gap 110 ms**, with **zero** worker round-trips inside a frame and a p50 latency of 2 ms; pushes arrived at 20 Hz with a 51 ms maximum age and no gaps.
+
 ## [0.3.10] - 2026-10-21
 
 ### Changed
