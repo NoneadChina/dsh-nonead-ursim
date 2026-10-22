@@ -42,3 +42,8 @@ python/sitecustomize.py
 ScriptManual/*.pdf
 ScriptManual/_fonts/
 
+# 演示用机器人轨迹产物（用户 2026-10-22 要求不入库）：大象轮廓的生成链脚本、
+# 中间 JSON 与导出的 URScript 只留本机，避免被 `git add -A` 带上天。
+.tmp-elephant/
+elephant_ur20.script
+
