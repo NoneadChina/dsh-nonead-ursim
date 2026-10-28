@@ -8,6 +8,12 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.3.12] - 2026-10-28
+
+### Added
+
+- **The panel speaks eight languages and follows the app's language setting** (user request): Simplified Chinese, English, Japanese, Spanish, French, German, Russian and Brazilian Portuguese; `pt-BR` shares the `pt` dictionary the app itself uses, and Traditional Chinese still resolves to Simplified (refined once zh-Hant entries exist). The language is **not guessed**: the app's locale service writes the active language into `<html lang>` (`zh` becomes `zh-CN`, every other id is written as-is), and the panel reads that first, then an injected `__DSH_LOCALE__`, and only then `navigator.language` — so switching the language in the app switches the panel with it; anything unrecognised falls back to Chinese (a Chinese user must never be silently downgraded to English). No reload is needed: the panel now reads through `liveStrings()`, a Proxy that re-resolves the current `<html lang>` on every property access, so the next render is already in the new language. Each language carries 143 keys (including the safety-mode / robot-mode / program-state enumeration tables) and all eight key sets are exactly symmetric; the tests pin three things: key symmetry with matching value types, every interpolated key producing text in every language without losing the model name / IP / joint name, and no Chinese left behind in the Latin-script languages. The client bundle grows from 727.2 KB to 801.3 KB because it now ships six more dictionaries.
+
 ## [0.3.11] - 2026-10-21
 
 ### Fixed
