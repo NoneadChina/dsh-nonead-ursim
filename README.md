@@ -233,17 +233,15 @@ npm run verify:models # validate the structural contract of the 14 GLBs
   sides by *parsing* them (the snapshot that carries `op` for every tool, and `ast` for the handler),
   so parameter names, required-ness and types are all cross-checked.
 
-The most recent full run (**2026-10-20**, v0.3.9): `npm run check` green; `npm test` **59/59**
+The most recent full run (**2026-10-28**, v0.3.12): `npm run check` green; `npm test` **59/59**
 (48 test files + 11 gates, 0 failed / 0 skipped); `npm run verify:host` reports **89/89** tools
-registered through the host's real DSL; `npm run verify:models` passes 14/14 models; plus a live
-UR12e offline-simulation smoke run (readback, motion, jog/pose/joint panel control, velocity stream
-with watchdog, I/O, telemetry, unsupported-command refusal, argument validation). The evidence, the
+registered through the host's real DSL and all six panel routes; `npm run verify:models` passes
+14/14 models (20.86 MB total); `npm pack --dry-run` lists 51 files with a 15.5 MB tarball. **No
+end-to-end smoke run this time**: on this test host the host process's `python` resolves to the
+Windows Store stub, so the simulation worker exits immediately with `code=9009` (`verify:host`
+reports that as a note); point `pythonBin` at a real interpreter to re-run it. The evidence, the
 reproduction commands and the **true-robot coverage
-boundary** are recorded in [docs/test-report-2026-10-20.md](./docs/test-report-2026-10-20.md).
-
-After 0.3.11 and 0.3.12 (zero worker round-trips on the frame path, and the panel's eight-language i18n)
-`npm run check` and `npm test` were run again: exit code 0 and **59/59** (0 failed / 0 skipped). `verify:host`
-and `verify:models` were not re-run on those releases, so the 89/89 and 14/14 above remain the 0.3.9 record.
+boundary** are recorded in [docs/test-report-2026-10-28.md](./docs/test-report-2026-10-28.md).
 
 > `scripts/pdf-extract2.py` extracts text from `ScriptManual/*.pdf` into
 > `ScriptManual/txt/*.txt` using **only the standard library** (the PolyScope manuals encode
