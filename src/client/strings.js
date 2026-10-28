@@ -16,7 +16,15 @@
  * ## 结构约定
  *
  * `zh` 与 `en` 必须是**完全对称**的键集合（有测试钉住），带插值的键写成函数。
+ * 其余 6 种语言的词典在 `./locales/` 下，键集合与 `en` 逐一对称（同样有测试钉住）。
  */
+
+import { de } from './locales/de.js'
+import { es } from './locales/es.js'
+import { fr } from './locales/fr.js'
+import { ja } from './locales/ja.js'
+import { pt } from './locales/pt.js'
+import { ru } from './locales/ru.js'
 
 /** 中文文案（也是缺省语言）。 */
 export const zh = {
@@ -419,20 +427,24 @@ export const en = {
   controlsStopFailed: (reason) => `Failed to send the stop command: ${reason}`,
 }
 
-/** 支持的语言。 */
-export const SUPPORTED_LOCALES = Object.freeze(['zh', 'en'])
+/** 支持的语言（与桌面程序的 Language 设置一一对应：zh / en / ja / es / fr / de / ru / pt）。 */
+export const SUPPORTED_LOCALES = Object.freeze(['zh', 'en', 'ja', 'es', 'fr', 'de', 'ru', 'pt'])
 
 /** 缺省语言（拿不到任何线索时用中文 —— 产品的主用户群）。 */
 export const DEFAULT_LOCALE = 'zh'
 
+/** 语言 → 词典。 */
+const DICTIONARIES = Object.freeze({ zh, en, ja, es, fr, de, ru, pt })
+
 /**
  * 把一个 BCP-47 语言标签规整成受支持的语言。
  *
- * 只认主语言子标签（`zh-CN` → `zh`、`en-US` → `en`）；繁体（`zh-TW`/`zh-Hant`）也先归到
- * `zh` —— 有繁体词条时再细化，但**绝不能因为认不出就退回英文**（那对中文用户是退化）。
+ * 只认主语言子标签（`zh-CN` → `zh`、`pt-BR` → `pt`、`en-US` → `en`）；繁体
+ * （`zh-TW`/`zh-Hant`）也先归到 `zh` —— 有繁体词条时再细化，但**绝不能因为认不出就退回英文**
+ * （那对中文用户是退化）。
  *
- * @param {string} tag 例如 `navigator.language`
- * @returns {'zh'|'en'} 受支持的语言
+ * @param {string} tag 例如 `navigator.language`、`document.documentElement.lang`
+ * @returns {'zh'|'en'|'ja'|'es'|'fr'|'de'|'ru'|'pt'} 受支持的语言
  */
 export function resolveLocale(tag) {
   if (typeof tag !== 'string' || tag.trim() === '') return DEFAULT_LOCALE
@@ -447,7 +459,32 @@ export function resolveLocale(tag) {
  * @returns {typeof zh}
  */
 export function stringsFor(locale) {
-  return resolveLocale(locale) === 'en' ? en : zh
+  return DICTIONARIES[resolveLocale(locale)] ?? zh
+}
+
+/**
+ * 运行环境的语言线索，按优先级：
+ *
+ * 1. **宿主活动的语言**：语言服务把活动语言写进 `<html lang>`（`syncDocumentLanguage()`：
+ *    `zh` 写成 `zh-CN`，其余直接写 id）—— 这就是「与桌面程序语言一致」的实际来源；
+ * 2. 原生壳注入的 `globalThis.__DSH_LOCALE__`（字符串，或带 `current` 的对象）；
+ * 3. `navigator.language`（普通浏览器、宿主没有语言服务时）。
+ *
+ * @param {object} [env] 注入点（测试用）；缺省读 `globalThis.navigator`
+ * @returns {string} 语言标签
+ */
+export function detectLocale(env) {
+  const navigatorLike = env ?? globalThis.navigator
+  const documentLike = globalThis.document
+  const htmlLang = documentLike?.documentElement?.lang
+  if (typeof htmlLang === 'string' && htmlLang.trim() !== '') return htmlLang
+  const injected = globalThis.__DSH_LOCALE__
+  const injectedValue = typeof injected === 'string' ? injected : injected?.current
+  if (typeof injectedValue === 'string' && injectedValue.trim() !== '') return injectedValue
+  if (typeof navigatorLike?.language === 'string' && navigatorLike.language.trim() !== '') {
+    return navigatorLike.language
+  }
+  return DEFAULT_LOCALE
 }
 
 /**
@@ -457,6 +494,50 @@ export function stringsFor(locale) {
  * @returns {typeof zh}
  */
 export function activeStrings(env) {
-  const navigatorLike = env ?? globalThis.navigator
-  return stringsFor(navigatorLike?.language)
+  return stringsFor(detectLocale(env))
 }
+
+/**
+ * 随宿主语言变化的文案表：每次读取属性都重新解析当前语言。
+ *
+ * 三个面板模块在顶层只取一次 `S`；若绑死 `activeStrings()`，桌面切语言后要刷新页面才生效。
+ * 这里返回 Proxy —— `S.statusConnected` 每次取值都按当前 `<html lang>` 解析，于是切换语言后
+ * 下一次渲染就是新语言，调用点代码不需要改动。
+ *
+ * @param {object} [env] 注入点（测试用）
+ * @returns {typeof zh}
+ */
+export function liveStrings(env) {
+  const read = (table, prop) => {
+    const value = table[prop]
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? new Proxy(value, { get: (target, key) => target[key] })
+      : value
+  }
+  return new Proxy({}, { get: (_target, prop) => read(activeStrings(env), prop) })
+}
+
+/**
+ * 订阅宿主语言变化（`<html lang>` 变化），返回取消函数。
+ *
+ * 宿主切语言时只更新它自己的 React 树与 `<html lang>`；插件面板是自建 DOM，需要在回调里重渲染。
+ * 没有 MutationObserver 的环境（Node 测试）返回空操作。
+ *
+ * @param {(lang: string) => void} callback
+ * @returns {() => void}
+ */
+export function onLocaleChange(callback) {
+  const documentLike = globalThis.document
+  const Observer = globalThis.MutationObserver
+  if (!documentLike?.documentElement || typeof Observer !== 'function') return () => {}
+  let last = documentLike.documentElement.lang
+  const observer = new Observer(() => {
+    const next = documentLike.documentElement.lang
+    if (next === last) return
+    last = next
+    callback(next)
+  })
+  observer.observe(documentLike.documentElement, { attributes: true, attributeFilter: ['lang'] })
+  return () => observer.disconnect()
+}
+

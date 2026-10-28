@@ -87,7 +87,7 @@ import {
   mountRightRail,
   stageColumns,
 } from './twin-controls.js'
-import { activeStrings } from './strings.js'
+import { liveStrings } from './strings.js'
 import { resolveTheme, watchTheme } from './theme.js'
 
 /**
@@ -96,10 +96,11 @@ import { resolveTheme, watchTheme } from './theme.js'
  * ⚠️ **必须定义在模块最前面**：下面的 `SAFETY_TEXT = S.safetyMode` 等映射表在**模块求值期**
  * 就会读它，放到后面会直接 TDZ 报错（`Cannot access 'S' before initialization`）。
  *
- * 模块级只取一次：面板是长期驻留的，运行期不会换语言。`STATUS_*` 等导出常量刻意保持
+ * 用 `liveStrings()` 而不是绑死的 `activeStrings()`：桌面切换语言时改的是 `<html lang>`，
+ * 面板下一次渲染就取到新语言，不需要刷新页面。`STATUS_*` 等导出常量刻意保持
  * 中文原样 —— 它们是大量既有测试的断言目标，而运行时一律走这里。
  */
-const S = activeStrings()
+const S = liveStrings()
 import { captureTwinPng, downloadDataUrl, screenshotFileName } from './robot/screenshot.js'
 
 /* ------------------------------------------------------------------ *

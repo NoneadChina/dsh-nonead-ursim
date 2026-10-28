@@ -27,10 +27,10 @@
  * 只是不跨会话保持。
  */
 
-import { activeStrings } from './strings.js'
+import { liveStrings } from './strings.js'
 
-/** 当前语言的文案表（模块级：`JOG_SPECS` 的标签在建表时就要用到）。 */
-const S = activeStrings()
+/** 当前语言的文案表（模块级：`JOG_SPECS` 的标签在建表时就要用到；`liveStrings()` 每次取值按当前 `<html lang>` 解析）。 */
+const S = liveStrings()
 
 /**
  * 控制轨宽度（px）—— 与 `stageColumns()` 同一份真源。

@@ -45,7 +45,7 @@
  */
 
 import { subscribeMutations } from './mutation-hub.js'
-import { activeStrings } from './strings.js'
+import { liveStrings } from './strings.js'
 
 /* ------------------------------------------------------------------ *
  * 真实锚点与标记常量
@@ -76,7 +76,7 @@ export const RIGHT_CLOSE_ATTRIBUTE = 'data-dsh-ursim-twin-right-close'
 export const RIGHT_PANEL_HOST_ATTRIBUTE = 'data-dsh-ursim-twin-right-panel'
 
 /** 入口卡片文案（与左栏入口保持一致）。 */
-const S = activeStrings()
+const S = liveStrings()
 
 /** 入口标题（跟随当前语言）。 */
 export const RIGHT_ENTRY_LABEL = S.dockLabel
