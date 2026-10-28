@@ -1,6 +1,6 @@
 # dsh-nonead-ursim
 
-**一个让 DSH 用自然语言直接控制 Universal Robots（UR）机械臂的插件，由拓德科技（Nonead）基于自研的 nUR MCP Server 同源逻辑开发。**（[Suzhou Nonead Robot Technology Co., Ltd.](https://www.nonead.com)）
+**一个让 DSH 用自然语言直接控制 Universal Robots（UR）机械臂的插件，由拓德科技（Nonead）基于自研的 nUR MCP Server 同源逻辑开发。**（[Suzhou Nonead Robot Technology Co., Ltd.](https://www.nonead.com)）· 已发布到 npm：[dsh-nonead-ursim](https://www.npmjs.com/package/dsh-nonead-ursim)（当前 0.3.12）
 
 本插件与该公司的 `Nonead-Universal-Robots-MCP`（见「参考实现」一节）同源，把「用 AI 控制 UR 机器人」的能力以**原生 DSH 工具**的形式接入：插件启动一个常驻的 Python worker（内部复用 vendored 的 `URBasic` 库），工具通过该 worker 与机器人通信，`connect` 一次后即可在同一 IP 上持续发指令。
 
@@ -117,7 +117,18 @@ host 侧路由（均限定 loopback 调用方）：
 
 ## 安装到 DSH profile
 
-### 方式一：作为 bundle 手动安装
+### 方式一：从 npm 安装（推荐）
+
+本插件已发布到 npm，包名 `dsh-nonead-ursim`（[npmjs.com/package/dsh-nonead-ursim](https://www.npmjs.com/package/dsh-nonead-ursim)，当前 `latest` 为 **0.3.12**）。一条命令即可装进目标 profile：
+
+```sh
+dsh plugin --profile web add dsh-nonead-ursim
+# 不走 CLI 时等价于：cd "$DSH_HOME/profiles/web" && pnpm add dsh-nonead-ursim
+```
+
+装完重启 DSH。`cordis.patch.yml` 会自动把插件行插入配置树，工具以 `ursim_*` 形式出现。需要固定版本时写 `dsh-nonead-ursim@0.3.12`。
+
+### 方式二：作为 bundle 手动安装
 
 1. 在目标 profile 的 `package.json` 中把本插件加入依赖：
 
@@ -125,7 +136,7 @@ host 侧路由（均限定 loopback 调用方）：
    // C:\Users\<you>\.dsh\profiles\web\package.json
    {
      "dependencies": {
-       "dsh-nonead-ursim": "^0.3.9"
+       "dsh-nonead-ursim": "^0.3.12"
      },
      "dsh": {
        "profile": {
@@ -147,7 +158,7 @@ host 侧路由（均限定 loopback 调用方）：
 
 3. 重启 DSH。插件的 `cordis.patch.yml` 会自动把插件行插入配置树，工具以 `ursim_*` 形式出现在模型工具列表中。
 
-### 方式二：本地路径（开发时）
+### 方式三：本地路径（开发时）
 
 把仓库路径加入 profile 依赖（pnpm 支持 `file:`），便于在本仓库迭代：
 
@@ -209,6 +220,8 @@ npm run verify:models # 校验 14 个 GLB 的结构契约
 UR12e 离线仿真的端到端冒烟（读回、运动、面板点动/位姿/关节控制、带看门狗的速度流、I/O、
 遥测、不支持指令拒绝、参数校验）。证据、复现命令
 与**真机未覆盖边界**见 [docs/test-report-2026-10-20.md](./docs/test-report-2026-10-20.md)。
+
+0.3.11 与 0.3.12 之后（帧路径零 worker 往返、面板 8 语言 i18n）实跑过 `npm run check` 与 `npm test`：前者退出码 0，后者 **59/59**（0 失败 0 跳过）；`verify:host` 与 `verify:models` 未在这两版重跑，上面的 89/89 与 14/14 仍是 0.3.9 那次的记录。
 
 > `scripts/pdf-extract2.py`：**只用标准库**从 `ScriptManual/*.pdf` 抽文本到
 > `ScriptManual/txt/*.txt`（两个 PolyScope 手册的字符码是 glyph id，必须走字体自带的

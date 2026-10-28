@@ -1,6 +1,6 @@
 # dsh-nonead-ursim
 
-**A DeepSeek Harness (DSH) plugin that lets you control Universal Robots (UR) collaborative arms directly from natural language, developed by Suzhou Nonead Robot Technology Co., Ltd. based on the same logic as the company's own nUR MCP Server.** ([Suzhou Nonead Robot Technology Co., Ltd.](https://www.nonead.com))
+**A DeepSeek Harness (DSH) plugin that lets you control Universal Robots (UR) collaborative arms directly from natural language, developed by Suzhou Nonead Robot Technology Co., Ltd. based on the same logic as the company's own nUR MCP Server.** ([Suzhou Nonead Robot Technology Co., Ltd.](https://www.nonead.com)) · published on npm as [dsh-nonead-ursim](https://www.npmjs.com/package/dsh-nonead-ursim) (current 0.3.12)
 
 This plugin shares the same ancestry as the company's `Nonead-Universal-Robots-MCP` (see "Reference implementation" below). It exposes the "control a UR robot with AI" capability as **native DSH tools**: the plugin starts a persistent Python worker (which internally reuses the vendored `URBasic` library), and tools talk to the robot through that worker. After a single `connect`, you can keep issuing commands to the same IP.
 
@@ -130,7 +130,18 @@ Failure responses carry a **machine-readable `code`** (e.g. `no_robot` / `robot_
 
 ## Install into a DSH profile
 
-### Option 1 — install as a bundle (manual)
+### Option 1 — install from npm (recommended)
+
+The plugin is published on npm as `dsh-nonead-ursim` ([npmjs.com/package/dsh-nonead-ursim](https://www.npmjs.com/package/dsh-nonead-ursim); `latest` is **0.3.12**). One command installs it into the target profile:
+
+```sh
+dsh plugin --profile web add dsh-nonead-ursim
+# without the CLI this is: cd "$DSH_HOME/profiles/web" && pnpm add dsh-nonead-ursim
+```
+
+Restart DSH afterwards. `cordis.patch.yml` inserts the plugin line automatically and the tools appear as `ursim_*`. Pin a version with `dsh-nonead-ursim@0.3.12` when you need one.
+
+### Option 2 — install as a bundle (manual)
 
 1. Add the plugin as a dependency in your target profile's `package.json`:
 
@@ -138,7 +149,7 @@ Failure responses carry a **machine-readable `code`** (e.g. `no_robot` / `robot_
    // C:\Users\<you>\.dsh\profiles\web\package.json
    {
      "dependencies": {
-       "dsh-nonead-ursim": "^0.3.9"
+       "dsh-nonead-ursim": "^0.3.12"
      },
      "dsh": {
        "profile": {
@@ -160,7 +171,7 @@ Failure responses carry a **machine-readable `code`** (e.g. `no_robot` / `robot_
 
 3. Restart DSH. The plugin's `cordis.patch.yml` automatically inserts the plugin line into the config tree, and the tools appear in the model's tool list as `ursim_*`.
 
-### Option 2 — local path (development)
+### Option 3 — local path (development)
 
 Add the repository path to the profile dependency (pnpm supports `file:`) to iterate in this repository:
 
@@ -229,6 +240,10 @@ UR12e offline-simulation smoke run (readback, motion, jog/pose/joint panel contr
 with watchdog, I/O, telemetry, unsupported-command refusal, argument validation). The evidence, the
 reproduction commands and the **true-robot coverage
 boundary** are recorded in [docs/test-report-2026-10-20.md](./docs/test-report-2026-10-20.md).
+
+After 0.3.11 and 0.3.12 (zero worker round-trips on the frame path, and the panel's eight-language i18n)
+`npm run check` and `npm test` were run again: exit code 0 and **59/59** (0 failed / 0 skipped). `verify:host`
+and `verify:models` were not re-run on those releases, so the 89/89 and 14/14 above remain the 0.3.9 record.
 
 > `scripts/pdf-extract2.py` extracts text from `ScriptManual/*.pdf` into
 > `ScriptManual/txt/*.txt` using **only the standard library** (the PolyScope manuals encode
