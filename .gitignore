@@ -47,3 +47,6 @@ ScriptManual/_fonts/
 .tmp-elephant/
 elephant_ur20.script
 
+
+# Python 日志用例的临时工作目录（test/*.test.mjs 每次运行都会建一个，必须忽略）
+ur-log-test-*/
