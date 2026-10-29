@@ -1,6 +1,8 @@
 # dsh-nonead-ursim
 
-**一个让 DSH 用自然语言直接控制 Universal Robots（UR）机械臂的插件，由拓德科技（Nonead）基于自研的 nUR MCP Server 同源逻辑开发。**（[Suzhou Nonead Robot Technology Co., Ltd.](https://www.nonead.com)）· 已发布到 npm：[dsh-nonead-ursim](https://www.npmjs.com/package/dsh-nonead-ursim)（当前 0.3.12）
+> 📦 **已发布到 npm**：[`dsh-nonead-ursim`](https://www.npmjs.com/package/dsh-nonead-ursim) · 最新版 **0.3.12** · 安装：`dsh plugin --profile web add dsh-nonead-ursim`
+
+**一个让 DSH 用自然语言直接控制 Universal Robots（UR）机械臂的插件，由拓德科技（Nonead）基于自研的 nUR MCP Server 同源逻辑开发。**（[Suzhou Nonead Robot Technology Co., Ltd.](https://www.nonead.com)）
 
 本插件与该公司的 `Nonead-Universal-Robots-MCP`（见「参考实现」一节）同源，把「用 AI 控制 UR 机器人」的能力以**原生 DSH 工具**的形式接入：插件启动一个常驻的 Python worker（内部复用 vendored 的 `URBasic` 库），工具通过该 worker 与机器人通信，`connect` 一次后即可在同一 IP 上持续发指令。
 

@@ -1,6 +1,8 @@
 # dsh-nonead-ursim
 
-**A DeepSeek Harness (DSH) plugin that lets you control Universal Robots (UR) collaborative arms directly from natural language, developed by Suzhou Nonead Robot Technology Co., Ltd. based on the same logic as the company's own nUR MCP Server.** ([Suzhou Nonead Robot Technology Co., Ltd.](https://www.nonead.com)) · published on npm as [dsh-nonead-ursim](https://www.npmjs.com/package/dsh-nonead-ursim) (current 0.3.12)
+> 📦 **Published on npm**: [`dsh-nonead-ursim`](https://www.npmjs.com/package/dsh-nonead-ursim) · latest **0.3.12** · install: `dsh plugin --profile web add dsh-nonead-ursim`
+
+**A DeepSeek Harness (DSH) plugin that lets you control Universal Robots (UR) collaborative arms directly from natural language, developed by Suzhou Nonead Robot Technology Co., Ltd. based on the same logic as the company's own nUR MCP Server.** ([Suzhou Nonead Robot Technology Co., Ltd.](https://www.nonead.com))
 
 This plugin shares the same ancestry as the company's `Nonead-Universal-Robots-MCP` (see "Reference implementation" below). It exposes the "control a UR robot with AI" capability as **native DSH tools**: the plugin starts a persistent Python worker (which internally reuses the vendored `URBasic` library), and tools talk to the robot through that worker. After a single `connect`, you can keep issuing commands to the same IP.
 
