@@ -1,6 +1,6 @@
 # dsh-nonead-ursim
 
-> 📦 **Published on npm**: [`dsh-nonead-ursim`](https://www.npmjs.com/package/dsh-nonead-ursim) · latest **0.3.12** · install: `dsh plugin --profile web add dsh-nonead-ursim`
+[![npm](https://img.shields.io/npm/v/dsh-nonead-ursim.svg)](https://www.npmjs.com/package/dsh-nonead-ursim)
 
 **A DeepSeek Harness (DSH) plugin that lets you control Universal Robots (UR) collaborative arms directly from natural language, developed by Suzhou Nonead Robot Technology Co., Ltd. based on the same logic as the company's own nUR MCP Server.** ([Suzhou Nonead Robot Technology Co., Ltd.](https://www.nonead.com))
 
