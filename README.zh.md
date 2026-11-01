@@ -1,6 +1,8 @@
 # dsh-nonead-ursim
 
-[![npm](https://img.shields.io/npm/v/dsh-nonead-ursim.svg)](https://www.npmjs.com/package/dsh-nonead-ursim)
+[![npm version](https://img.shields.io/npm/v/dsh-nonead-ursim.svg?logo=npm&logoColor=white&label=npm)](https://www.npmjs.com/package/dsh-nonead-ursim) [![npm downloads](https://img.shields.io/npm/dm/dsh-nonead-ursim.svg?logo=npm&logoColor=white&label=downloads)](https://www.npmjs.com/package/dsh-nonead-ursim) [![CI](https://img.shields.io/github/actions/workflow/status/NoneadChina/dsh-nonead-ursim/ci.yml?branch=main&label=CI&logo=github)](https://github.com/NoneadChina/dsh-nonead-ursim/actions) [![tag](https://img.shields.io/github/v/tag/NoneadChina/dsh-nonead-ursim?label=tag&logo=git&logoColor=white)](https://github.com/NoneadChina/dsh-nonead-ursim/tags) [![stars](https://img.shields.io/github/stars/NoneadChina/dsh-nonead-ursim?logo=github)](https://github.com/NoneadChina/dsh-nonead-ursim/stargazers) [![license](https://img.shields.io/badge/license-AGPL--3.0%20%2F%20Commercial-orange)](./LICENSE)
+
+[![node](https://img.shields.io/badge/node-%3E%3D22.15-339933?logo=node.js&logoColor=white)](https://nodejs.org) [![python](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org) [![tools](https://img.shields.io/badge/tools-89-blue)](./docs/tool-matrix.md) [![languages](https://img.shields.io/badge/languages-8-8A2BE2)](./src/client/strings.js) [![robot](https://img.shields.io/badge/Universal%20Robots-UR3e%20~%20UR30-00A3E0)](./docs/tool-matrix.md)
 
 **一个让 DSH 用自然语言直接控制 Universal Robots（UR）机械臂的插件，由拓德科技（Nonead）基于自研的 nUR MCP Server 同源逻辑开发。**（[Suzhou Nonead Robot Technology Co., Ltd.](https://www.nonead.com)）
 
