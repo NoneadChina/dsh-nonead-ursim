@@ -8,6 +8,12 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.3.13] - 2026-11-02
+
+### Changed
+
+- **Version-line bump** (user request): the **code is identical to `0.3.12`**; this release only advances the version — `version` in `package.json` and both root entries in `package-lock.json` (the top-level `version` and `packages[""].version`) move to `0.3.13`. The four README-only commits that landed on `main` after 0.3.12 are folded into this release note: the npm published badge moved to its own line under the H1, the top badge switched to the npm version badge, the status badges grew to 11, and a Chinese / English switch link was added at the top. No changes to tools, routes, simulation ops, panel behaviour or messages — users already on 0.3.12 do not need to reinstall for this release.
+
 ## [0.3.12] - 2026-10-28
 
 ### Added
