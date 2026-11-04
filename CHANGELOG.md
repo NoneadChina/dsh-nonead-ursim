@@ -8,6 +8,21 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.3.14] - 2026-11-04
+
+### Changed
+
+- **Host compatibility re-verified against the current DSH, backward compatibility kept** (user request: "this plugin needs to fit the current version and still work with the previous ones"). The running host (Nonead DSH Desktop) ships `@deepseek-ai/dsh` / `dsh-tools` **0.2.2-alpha.3**, `cordis` **4.0.6-alpha.2** and `schemastery` **3.18.6-alpha.2**, while the declared ranges stopped at the previous families — so `verify:host` reported all four peer checks red even though every functional check was green (89/89 tools, 6 routes, client-bundle contract). The ranges now add `^0.2.2-alpha.3`, `^4.0.6-alpha.2` and `^3.18.6-alpha.2` **and keep every earlier family** (`^0.1.2-rc.1`, `^0.1.7-rc.2`, `^0.2.0-rc.2`, `^0.2.1-alpha.5`, `^4.0.2`, `^4.0.5-alpha.2`, `^3.18.2`, `^3.18.5-alpha.2`) — no host that used to be supported stops being supported. `package.json` and the root `peerDependencies` entry of `package-lock.json` carry the same string, because `npm ci` validates against the lock. Why a comparator per family is unavoidable: semver only lets a prerelease version satisfy a range when that range contains a comparator with the **same** `major.minor.patch` tuple, so `^0.2.1-alpha.5` can never match `0.2.2-alpha.3`.
+- **`npm run verify:host` now works out of the box on a packaged host.** The running app keeps its modules in `resources/app.asar`, which plain Node cannot read, so the check used to either fail to find a host or silently fall back to the repository's own dev copy of `@deepseek-ai/dsh-tools`. It now recognises both install shapes, scans the drives for `<install>/resources/app.asar` when the well-known locations miss (this machine installs to `D:\Software\Nonead DSH Desktop`), and for a packaged host re-executes itself through the host's own executable with `ELECTRON_RUN_AS_NODE=1` — the very runtime the plugin loads in. If it does end up on the repository's dev copy it says so explicitly instead of passing quietly.
+
+### Added
+
+- **`test/host-peer-matrix.test.mjs`** pins the supported host-version matrix (dsh / dsh-tools `0.1.2-rc.1` → `0.2.2-alpha.3`, cordis `4.0.2` → `4.0.6-alpha.2`, schemastery `3.18.2` → `3.18.6-alpha.2`) plus `package.json` ↔ `package-lock.json` peer parity, so a future host bump can neither silently drop an older family nor update only one of the two files.
+
+### Unchanged
+
+- No tool, route, simulation op, panel behaviour or message changed; tools still register **89/89** and the six twin routes are unchanged.
+
 ## [0.3.13] - 2026-11-02
 
 ### Changed

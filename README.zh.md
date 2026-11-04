@@ -203,30 +203,35 @@ pip install -r requirements.txt
 
 ```sh
 npm run test:python   # python ur_worker.py --selfcheck：校验 Python/numpy/paramiko/URBasic/RTDE 配置
-npm test              # 跑全部 48 个测试文件 **以及全部门禁脚本**，最后汇总
+npm test              # 跑全部 49 个测试文件 **以及全部门禁脚本**，最后汇总
 npm run test:node     # 只跑 Node 侧：跳过需要 Python 的测试文件**与门禁**
 npm run check         # 只跑静态 + 跨语言门禁，不跑测试文件
 npm run verify:host   # 用宿主真实的 schema DSL 校验全部工具注册与 peer 版本
 npm run verify:models # 校验 14 个 GLB 的结构契约
 ```
 
+`npm run verify:host` 用宿主**真实**的 value-schema DSL 编译全部工具参数、驱动宿主路由注册，并校验 `dsh.client` 声明与客户端 bundle 的 `__ModuleLoader__` id；退出码 `0` 表示插件与该宿主可用。对运行中的宿主（`@deepseek-ai/dsh` / `dsh-tools` **0.2.2-alpha.3**、`cordis` **4.0.6-alpha.2**、`schemastery` **3.18.6-alpha.2**）实测报告 **4/4 项 peer 通过 + 89/89 工具注册**。
+
+两种安装形态都支持：打包宿主的模块在 `resources/app.asar` 里，普通 Node 读不到，脚本会用宿主自己的可执行文件加 `ELECTRON_RUN_AS_NODE=1` 重跑自己（也就是插件实际加载的运行时）；常见安装位置找不到时逐盘扫描（本机装在 `D:\Software\Nonead DSH Desktop`）。若最终只能用仓库自带的 `@deepseek-ai/dsh-tools` dev 副本，会**明确标注**，而不是悄悄给出一个绿的结果。
+
+受支持的宿主范围 —— 逐条保留、不替换：`dsh` / `dsh-tools` `0.1.2-rc.1` → `0.2.2-alpha.3`，`cordis` `4.0.2` → `4.0.6-alpha.2`，`schemastery` `3.18.2` → `3.18.6-alpha.2`。宿主升到新的预发布族时，给 `package.json` 与 `package-lock.json` 根条目的 `peerDependencies` **各补一条该族的比较子**（semver 只放行「范围内存在同 `major.minor.patch` 三元组比较子」的预发布版本），再把版本加进 `test/host-peer-matrix.test.mjs` —— 任何受支持族丢了比较子、或两个文件不一致，它都会失败。
+
 `npm test` 跑两类东西，两类都必须过：
 
-- **48 个测试文件**（端到端协议自检、审批门禁、仿真路由、客户端状态机、FK、vendored 库回归）。
-  名单来自 `test/test-manifest.json`（依赖 Python 17 / 仅 Node 31），并由 `check:manifest` 保证"会调用 Python 的用例"不会被漏登记。
+- **49 个测试文件**（端到端协议自检、审批门禁、仿真路由、客户端状态机、FK、vendored 库回归）。
+  名单来自 `test/test-manifest.json`（依赖 Python 17 / 仅 Node 32），并由 `check:manifest` 保证"会调用 Python 的用例"不会被漏登记。
 - **11 个门禁脚本**：`check-test-manifest` / `check-package-metadata` / `check-client-bundle` /
   `check-doc-tools` / `tool-matrix` / `check-doc-links`（Node），以及 `check-worker-ops` /
   `check-tool-params` / `check-rtde-recipe` / `check-approval-gate` / `check-new-ops`（Python）。
   解释器没有 `numpy` 时，依赖 Python 的项会以
   **SKIP + 原因**出现，绝不会显示成通过。
 
-最近一次完整回归（**2026-10-28**，v0.3.12）的实测结论：`npm run check` 全通过；`npm test`
-**59/59**（48 个测试文件 + 11 道门禁，0 失败 0 跳过）；`npm run verify:host` 报告
-**89/89** 工具经宿主真实 DSL 注册、6 条面板路由齐全；`npm run verify:models` 14/14 模型通过
-（合计 20.86 MB）；`npm pack --dry-run` 为 51 个文件、tarball 15.5 MB。**本版没有做端到端冒烟**：
-测试主机的宿主进程里 `python` 指向 Windows Store 存根，仿真 worker 直接以 `code=9009` 退出
-（`verify:host` 对此有 note），把 `pythonBin` 指向真实解释器即可复测。证据、复现命令
-与**真机未覆盖边界**见 [docs/test-report-2026-10-28.md](./docs/test-report-2026-10-28.md)。
+最近一次完整回归（**2026-11-04**，v0.3.14）的实测结论：`npm run check` 全通过；`npm test`
+**60/60**（49 个测试文件 + 11 道门禁，0 失败 0 跳过）；`npm run verify:host` 对运行中的宿主
+（`dsh` / `dsh-tools` 0.2.2-alpha.3、`cordis` 4.0.6-alpha.2、`schemastery` 3.18.6-alpha.2）报告
+**4/4 项 peer 通过 + 89/89** 工具经宿主真实 DSL 注册、6 条面板路由齐全。**本版没有做端到端冒烟**：
+面板交互未人工点验。此前的证据、复现命令与**真机未覆盖边界**见
+[docs/test-report-2026-10-28.md](./docs/test-report-2026-10-28.md)。
 
 > `scripts/pdf-extract2.py`：**只用标准库**从 `ScriptManual/*.pdf` 抽文本到
 > `ScriptManual/txt/*.txt`（两个 PolyScope 手册的字符码是 glyph id，必须走字体自带的

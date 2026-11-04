@@ -218,7 +218,7 @@ Verify the plugin and Python runtime without touching a real robot:
 
 ```sh
 npm run test:python   # python ur_worker.py --selfcheck: verify Python/numpy/paramiko/URBasic/RTDE config
-npm test              # run all 48 test files AND every check gate (see below), then summarise
+npm test              # run all 49 test files AND every check gate (see below), then summarise
 npm run test:node     # Node-side only: skips the test files *and* the gates that need Python
 npm run check         # all static + cross-language gates without running the test files
 npm run verify:host   # validate every tool schema through the host's real value-schema DSL, plus peer ranges
@@ -227,9 +227,9 @@ npm run verify:models # validate the structural contract of the 14 GLBs
 
 `npm test` runs two kinds of thing, and both must pass:
 
-- **48 test files** under `test/` (e2e protocol self-check, approval gate, simulation routes, client
+- **49 test files** under `test/` (e2e protocol self-check, approval gate, simulation routes, client
   state machine, FK, vendored-library regressions) — enumerated from `test/test-manifest.json`
-  (Python-dependent 17 / Node-only 31), which `check:manifest` keeps honest so a Python-using file can
+  (Python-dependent 17 / Node-only 32), which `check:manifest` keeps honest so a Python-using file can
   never be silently unlisted.
 - **11 check gates**: `check-test-manifest` / `check-package-metadata` / `check-client-bundle` /
   `check-doc-tools` / `tool-matrix` / `check-doc-links` (Node) and `check-worker-ops` /
@@ -239,14 +239,12 @@ npm run verify:models # validate the structural contract of the 14 GLBs
   sides by *parsing* them (the snapshot that carries `op` for every tool, and `ast` for the handler),
   so parameter names, required-ness and types are all cross-checked.
 
-The most recent full run (**2026-10-28**, v0.3.12): `npm run check` green; `npm test` **59/59**
-(48 test files + 11 gates, 0 failed / 0 skipped); `npm run verify:host` reports **89/89** tools
-registered through the host's real DSL and all six panel routes; `npm run verify:models` passes
-14/14 models (20.86 MB total); `npm pack --dry-run` lists 51 files with a 15.5 MB tarball. **No
-end-to-end smoke run this time**: on this test host the host process's `python` resolves to the
-Windows Store stub, so the simulation worker exits immediately with `code=9009` (`verify:host`
-reports that as a note); point `pythonBin` at a real interpreter to re-run it. The evidence, the
-reproduction commands and the **true-robot coverage
+The most recent full run (**2026-11-04**, v0.3.14): `npm run check` green; `npm test` **60/60**
+(49 test files + 11 gates, 0 failed / 0 skipped); `npm run verify:host` against the running host
+(`dsh` / `dsh-tools` 0.2.2-alpha.3, `cordis` 4.0.6-alpha.2, `schemastery` 3.18.6-alpha.2) reports
+**4/4 peer checks and 89/89** tools registered through the host's real DSL, with all six panel
+routes. **No end-to-end smoke run this time**: the panel was not clicked through by hand. Earlier
+evidence, the reproduction commands and the **true-robot coverage
 boundary** are recorded in [docs/test-report-2026-10-28.md](./docs/test-report-2026-10-28.md).
 
 > `scripts/pdf-extract2.py` extracts text from `ScriptManual/*.pdf` into
@@ -273,11 +271,15 @@ UR_PYTHON=C:\\Python312\\python.exe npm test
 Run the **host compatibility check** before a release and whenever the DSH runtime is upgraded — it validates the plugin against an installed host instead of a copy of its keyword list:
 
 ```sh
-npm run verify:host                                # auto-discovers a real DSH installation
-node scripts/check-host-compat.mjs <node_modules>  # or an explicit host
+npm run verify:host                                          # auto-discovers a real DSH installation
+node scripts/check-host-compat.mjs <node_modules | app.asar> # or an explicit host
 ```
 
-It checks the peer ranges against the installed versions, compiles **every** tool parameter schema with the host's real value-schema DSL (a rejected schema silently drops that tool), drives the host route registration, and validates the `dsh.client` declaration plus the client bundle's `__ModuleLoader__` id. Exit code `0` means this plugin works with that host. Against DSH 0.1.7-rc.2 it reports **89/89 tools registered**.
+It checks the peer ranges against the installed versions, compiles **every** tool parameter schema with the host's real value-schema DSL (a rejected schema silently drops that tool), drives the host route registration, and validates the `dsh.client` declaration plus the client bundle's `__ModuleLoader__` id. Exit code `0` means this plugin works with that host. Against the current host (`@deepseek-ai/dsh` / `dsh-tools` **0.2.2-alpha.3**, `cordis` **4.0.6-alpha.2**, `schemastery` **3.18.6-alpha.2**) it reports **4/4 peer checks and 89/89 tools registered**.
+
+Both install layouts are handled. A packaged host keeps its modules in `resources/app.asar`, which plain Node cannot read, so the script re-executes itself through the host's own executable with `ELECTRON_RUN_AS_NODE=1` — the runtime the plugin actually loads in; when the well-known install locations miss, it scans the drives (this machine installs to `D:\Software\Nonead DSH Desktop`). If no host is found it falls back to the repository's own dev copy of `@deepseek-ai/dsh-tools` and **says so explicitly**, rather than quietly reporting a green result for the wrong host.
+
+Supported host ranges — every one of them is kept, none is replaced: `dsh` / `dsh-tools` `0.1.2-rc.1` → `0.2.2-alpha.3`, `cordis` `4.0.2` → `4.0.6-alpha.2`, `schemastery` `3.18.2` → `3.18.6-alpha.2`. When a new host jumps to a new prerelease family, add **one comparator for that family** to both `package.json` and the root `peerDependencies` of `package-lock.json` (semver only lets a prerelease version match a range containing a comparator with the same `major.minor.patch` tuple), then add the version to `test/host-peer-matrix.test.mjs`, which fails if any supported family loses its comparator or if the two files disagree.
 
 > The first `ursim_connect` to a robot has an ~20s RTDE readiness wait; on timeout it returns a clear error rather than hanging.
 

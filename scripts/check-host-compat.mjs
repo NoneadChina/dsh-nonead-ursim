@@ -9,20 +9,24 @@
  * 校验项：
  *   1. peer 范围：用宿主自带的 semver 比对 package.json 的 peerDependencies 与宿主实装版本；
  *   2. 工具 schema：用宿主**真实**的 @deepseek-ai/dsh-tools 编译全部工具参数 schema，并数出注册数；
- *   3. 仿真只读路由：驱动 `ctx.inject(['webServer'], …)`，确认两条路由的注册形状；
+ *   3. 仿真只读路由：驱动 `ctx.inject(['webServer'], …)`，确认六条路由的注册形状；
  *   4. dsh.client 声明与客户端 bundle：类型契约、`exports["./client"]` 可解析、bundle 以包名注册。
  *
  * 用法：
- *   node scripts/check-host-compat.mjs [hostNodeModules]
- *   缺省依次尝试 $DSH_HOST_NODE_MODULES、常见安装根下**任意含 DSH 的目录**\resources\app\node_modules、
- *   ../dsh-plugin-desktop/node_modules，最后才自插件目录向上查找。
+ *   node scripts/check-host-compat.mjs [hostNodeModules | app.asar]
+ *   缺省依次尝试 $DSH_HOST_NODE_MODULES、常见安装根下**任意含 DSH 的目录**的
+ *   `resources/app/node_modules` 或 `resources/app.asar`、扫盘找到的安装目录、
+ *   ../dsh-plugin-desktop/node_modules，最后才自插件目录向上查找（此时标注为 dev 副本）。
+ *
+ * 打包宿主（`resources/app.asar`）普通 Node 读不到，本脚本会用宿主自己的可执行文件
+ * 加 `ELECTRON_RUN_AS_NODE=1` 重跑自己 —— 也就是插件实际加载的运行时。
  *
  * 退出码：0 = 全部通过；1 = 存在失败；2 = 环境错误。
  */
-import { readdirSync, existsSync, readFileSync } from 'node:fs'
+import { readdirSync, existsSync, readFileSync, statSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { createRequire, registerHooks } from 'node:module'
-import { dirname, join, resolve as resolvePath } from 'node:path'
+import { basename, dirname, join, resolve as resolvePath } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const PLUGIN_ROOT = resolvePath(dirname(fileURLToPath(import.meta.url)), '..')
@@ -53,37 +57,103 @@ const fail = (title, detail) => {
 }
 const note = (text) => console.log(`note  ${text}`)
 
-/** 定位宿主 node_modules（含 @deepseek-ai/dsh-tools 的那个）。 */
-function findHostModules(argv) {
+/**
+ * 定位宿主 node_modules（含 @deepseek-ai/dsh-tools 的那个）。
+ *
+ * 返回 `{ kind, nodeModules, asarPath?, devCopy? }`：
+ *   - `kind: 'dir'`  —— 常规安装（`resources/app/node_modules`），普通 Node 直接可读；
+ *   - `kind: 'asar'` —— 打包安装（`resources/app.asar`）。asar 是**文件**不是目录，
+ *     普通 Node 的 `existsSync` / `readdirSync` / `import` 一律看不见里面的内容，
+ *     只有 Electron 运行时（宿主 exe 加 `ELECTRON_RUN_AS_NODE=1`）能读 ⇒ 需要自举。
+ *     当前宿主（Nonead DSH Desktop 2.x）就是这种形态，所以这不是可选项。
+ */
+function hasHost(dir) {
+  return typeof dir === 'string' && dir !== ''
+    && existsSync(join(dir, '@deepseek-ai', 'dsh-tools', 'package.json'))
+}
+
+/** 一个候选路径能不能当宿主：普通 node_modules 目录，或打包的 app.asar。 */
+function classifyHost(candidate) {
+  if (typeof candidate !== 'string' || candidate === '') return undefined
+  const resolved = resolvePath(candidate)
+  if (/\.asar$/i.test(resolved)) {
+    return existsSync(resolved)
+      ? { kind: 'asar', asarPath: resolved, nodeModules: join(resolved, 'node_modules') }
+      : undefined
+  }
+  return hasHost(resolved) ? { kind: 'dir', nodeModules: resolved } : undefined
+}
+
+/** 一个安装目录（如 `D:\Software\Nonead DSH Desktop`）里的宿主，两种安装形态都试。 */
+function classifyInstallDir(dir) {
+  return classifyHost(join(dir, 'resources', 'app', 'node_modules'))
+    ?? classifyHost(join(dir, 'resources', 'app.asar'))
+}
+
+/**
+ * 扫盘找安装目录。
+ *
+ * `%ProgramFiles%` 之类的环境变量只覆盖一部分机器：本机就装在 `D:\Software\Nonead DSH Desktop`，
+ * 既不在 Program Files 也不在 LocalAppData\Programs。于是旧版在这里必然落空、退到
+ * 「插件目录向上查找」拿到仓库自带的**旧 dev 副本**，给出误导性的 peer 结论。
+ * 这里逐盘看两级目录，命中「目录名含 dsh」的候选再按两种安装形态探测。
+ */
+function scanInstalledHosts() {
+  const roots = process.platform === 'win32'
+    ? 'CDEFGHIJKLMNOPQRSTUVWXYZ'.split('').map((letter) => `${letter}:\\`)
+    : ['/usr/share', '/usr/local', '/opt', '/Applications']
+  for (const root of roots) {
+    let firstLevel = []
+    try {
+      firstLevel = readdirSync(root, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const entry of firstLevel) {
+      if (entry.isDirectory() !== true) continue
+      const dir = join(root, entry.name)
+      // 一级目录名本身含 dsh（例如 `Program Files\DSH Desktop`）
+      if (/dsh/i.test(entry.name)) {
+        const found = classifyInstallDir(dir)
+        if (found !== undefined) return found
+      }
+      // 二级目录名含 dsh（例如 `D:\Software\Nonead DSH Desktop`）
+      let secondLevel = []
+      try {
+        secondLevel = readdirSync(dir, { withFileTypes: true })
+      } catch {
+        continue
+      }
+      for (const child of secondLevel) {
+        if (child.isDirectory() !== true || /dsh/i.test(child.name) !== true) continue
+        const found = classifyInstallDir(join(dir, child.name))
+        if (found !== undefined) return found
+      }
+    }
+  }
+  return undefined
+}
+
+function findHost(argv) {
   const candidates = [
     argv[2],
     process.env.DSH_HOST_NODE_MODULES,
-    // DSH Desktop 的实际安装位置：**必须排在上面那个 walk-up 之前**。
-    // 本仓库自己的 node_modules 里也有（devDependency 带进来的）@deepseek-ai/dsh-tools，
-    // 但那是**驱动脚本用的旧 dev 副本**（0.1.2-rc.1），不是运行插件的那份；用它去校验
-    // DSL 与 peer 版本会得到误导性的结论（例如 "0/67 注册成功"）。
     // Windows 上 Program Files 不在 PATH 里，所以候选路径写死并逐个探测存在性。
     'C:\\Program Files\\DSH Desktop\\resources\\app\\node_modules',
+    'C:\\Program Files\\DSH Desktop\\resources\\app.asar',
     'C:\\Program Files (x86)\\DSH Desktop\\resources\\app\\node_modules',
+    'C:\\Program Files (x86)\\DSH Desktop\\resources\\app.asar',
   ]
-  const hasHost = (dir) => typeof dir === 'string' && dir !== ''
-    && existsSync(join(dir, '@deepseek-ai', 'dsh-tools', 'package.json'))
-
   for (const candidate of candidates) {
-    if (hasHost(candidate)) return resolvePath(candidate)
+    const found = classifyHost(candidate)
+    if (found !== undefined) return found
   }
 
   /*
-   * 按**名字模式**扫安装根，而不是写死产品目录名（0.1.14 修）。
-   *
-   * 这里原本写死 `C:\\Program Files\\DSH Desktop\\...`，而本机实际目录是
+   * 这里原本写死 `C:\Program Files\DSH Desktop\...`，而本机实际目录是
    * `Nonead DSH Desktop` ⇒ 候选全部落空，`npm run verify:host` 直接报"请显式传路径"，
    * 于是这个"宿主 API 兼容性自审"实际上没人跑得起来 —— 一个静态检查工具**跑不起来**，
    * 比它查出问题更糟。
-   *
-   * ⚠️ 必须排在下面对 PLUGIN_ROOT 的"向上查找"之前：本仓库自己的 node_modules 里带着
-   * **旧 dev 副本**（0.1.2-rc.1）的 @deepseek-ai/dsh-tools，用它校验会得到误导性结论
-   * （例如"0/67 注册成功"）。
    */
   const installRoots = [
     process.env.ProgramFiles,
@@ -92,6 +162,8 @@ function findHostModules(argv) {
     '/Applications',
   ].filter((value) => typeof value === 'string' && value !== '')
   for (const root of installRoots) {
+    const found = classifyInstallDir(root)
+    if (found !== undefined) return found
     let entries = []
     try {
       entries = readdirSync(root, { withFileTypes: true })
@@ -100,22 +172,61 @@ function findHostModules(argv) {
     }
     for (const entry of entries) {
       if (entry.isDirectory() !== true || /dsh/i.test(entry.name) !== true) continue
-      const candidate = join(root, entry.name, 'resources', 'app', 'node_modules')
-      if (hasHost(candidate)) return resolvePath(candidate)
+      const inRoot = classifyInstallDir(join(root, entry.name))
+      if (inRoot !== undefined) return inRoot
     }
   }
 
-  const desktopSibling = resolvePath(PLUGIN_ROOT, '..', 'dsh-plugin-desktop', 'node_modules')
-  if (hasHost(desktopSibling)) return desktopSibling
+  const scanned = scanInstalledHosts()
+  if (scanned !== undefined) return scanned
 
+  const desktopSibling = resolvePath(PLUGIN_ROOT, '..', 'dsh-plugin-desktop', 'node_modules')
+  const sibling = classifyHost(desktopSibling)
+  if (sibling !== undefined) return sibling
+
+  /*
+   * ⚠️ 必须排在所有真实宿主探测**之后**：本仓库自己的 node_modules 里带着**旧 dev 副本**的
+   * @deepseek-ai/dsh-tools（`npm ci` 按 lock 装的是 0.2.0-rc.2），用它校验会得到误导性结论。
+   * 命中时打上 `devCopy`，调用方据此明确告诉用户"这是代理校验，不是运行中宿主"。
+   */
   let dir = PLUGIN_ROOT
   for (;;) {
     const candidate = join(dir, 'node_modules')
-    if (hasHost(candidate)) return candidate
+    const found = classifyHost(candidate)
+    if (found !== undefined) return { ...found, devCopy: true }
     const parent = dirname(dir)
     if (parent === dir) return undefined
     dir = parent
   }
+}
+
+/** 从 `<install>/resources/app.asar` 反推宿主可执行文件（自举用）。 */
+function hostExecutableFor(asarPath) {
+  const installRoot = dirname(dirname(asarPath))
+  let entries = []
+  try {
+    entries = readdirSync(installRoot, { withFileTypes: true })
+  } catch {
+    return undefined
+  }
+  const files = entries.filter((entry) => entry.isFile()).map((entry) => join(installRoot, entry.name))
+  const executables = files.filter((file) => /\.exe$/i.test(file))
+  if (executables.length > 0) {
+    // 优先与安装目录同名的 exe：`Nonead DSH Desktop\Nonead DSH Desktop.exe`
+    const wanted = basename(installRoot).toLowerCase()
+    const exact = executables.find((file) => basename(file).toLowerCase() === `${wanted}.exe`)
+    return exact ?? executables[0]
+  }
+  if (process.platform !== 'win32') {
+    for (const file of files) {
+      try {
+        if ((statSync(file).mode & 0o111) !== 0) return file
+      } catch {
+        continue
+      }
+    }
+  }
+  return undefined
 }
 
 function hostManifest(hostModules, name) {
@@ -137,10 +248,46 @@ function hostEntry(hostModules, specifier) {
   return typeof relative === 'string' ? pathToFileURL(join(packageDir, relative)).href : undefined
 }
 
-const hostModules = findHostModules(process.argv)
-if (hostModules === undefined) {
-  console.error('找不到宿主 node_modules；请显式传路径：node scripts/check-host-compat.mjs <host node_modules>')
+const host = findHost(process.argv)
+if (host === undefined) {
+  console.error('找不到宿主；请显式传路径：node scripts/check-host-compat.mjs <host node_modules | app.asar>')
   process.exit(2)
+}
+
+/*
+ * 打包安装（`resources/app.asar`）在普通 Node 下读不到内容：asar 是**文件**，
+ * `existsSync` / `import` 一律看不见里面的模块。于是本脚本在打包宿主（本机就是）上
+ * 只会"报错退出"—— 一条查不出来的检查，比没有更糟。这里用宿主自己的可执行文件
+ * 重跑一遍自己（`ELECTRON_RUN_AS_NODE=1`），也就是插件**实际运行的那个运行时**。
+ */
+if (host.kind === 'asar' && process.versions.electron === undefined) {
+  const manual = `set ELECTRON_RUN_AS_NODE=1 && "<安装目录>\\<宿主>.exe" "${fileURLToPath(import.meta.url)}" "${host.nodeModules}"`
+  if (process.env.DSH_HOST_COMPAT_BOOTSTRAPPED === '1') {
+    console.error(`宿主是打包形态（${host.asarPath}），但自举后仍不是 Electron 运行时。请手动执行：`)
+    console.error(`  ${manual}`)
+    process.exit(2)
+  }
+  const executable = hostExecutableFor(host.asarPath)
+  if (executable === undefined) {
+    console.error(`宿主是打包形态（${host.asarPath}），但没在安装目录里找到可执行文件。请手动执行：`)
+    console.error(`  ${manual}`)
+    process.exit(2)
+  }
+  console.log(`boot    用宿主运行时自举（app.asar 需要 Electron 的 fs）：${executable}`)
+  const child = spawnSync(executable, [fileURLToPath(import.meta.url), host.nodeModules], {
+    stdio: 'inherit',
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', DSH_HOST_COMPAT_BOOTSTRAPPED: '1' },
+  })
+  if (child.error !== undefined) {
+    console.error(`自举失败：${child.error.message}`)
+    process.exit(2)
+  }
+  process.exit(child.status ?? 2)
+}
+
+const hostModules = host.nodeModules
+if (host.devCopy === true) {
+  console.log('note    宿主来自插件目录内的 npm 产物（代理校验），**不代表正在运行的宿主**；装好后请重跑本检查')
 }
 console.log(`plugin  ${PLUGIN_ROOT}`)
 console.log(`host    ${hostModules}`)

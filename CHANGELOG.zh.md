@@ -6,6 +6,21 @@
 那份代码库的版本编号。此前那段历史已原样归档到 `CHANGELOG-archive.zh.md`；该文件在准备 0.1.1 时
 **已从本仓库移除**（可从导入源码的那个提交 `4c91704` 取回），并且从未进入过发布包。
 
+## [0.3.14] - 2026-11-04
+
+### 变更
+
+- **按当前 DSH 版本重新核对宿主兼容，并保持向后兼容**（用户要求：「本插件需要适配当前的版本，同时兼容之前的版本」）。运行中的宿主（Nonead DSH Desktop）实装 `@deepseek-ai/dsh` / `dsh-tools` **0.2.2-alpha.3**、`cordis` **4.0.6-alpha.2**、`schemastery` **3.18.6-alpha.2**，而声明的范围停在上一代 —— 于是 `verify:host` 的 4 项 peer 断言全红，功能项却全绿（89/89 工具、6 条路由、客户端 bundle 契约）。本次为 `0.2.2-alpha.3`、`4.0.6-alpha.2`、`3.18.6-alpha.2` 各补一条比较子，并**保留此前全部版本族**（`^0.1.2-rc.1`、`^0.1.7-rc.2`、`^0.2.0-rc.2`、`^0.2.1-alpha.5`、`^4.0.2`、`^4.0.5-alpha.2`、`^3.18.2`、`^3.18.5-alpha.2`）—— 曾经支持的宿主不会再变成不支持。`package.json` 与 `package-lock.json` 根条目写同一份声明，因为 `npm ci` 以锁文件为准。必须逐族补比较子的原因：semver 只放行「范围内存在**同一** `major.minor.patch` 三元组比较子」的预发布版本，所以 `^0.2.1-alpha.5` 永远匹配不到 `0.2.2-alpha.3`。
+- **`npm run verify:host` 在打包形态的宿主上开箱可用**。运行中的程序把模块放在 `resources/app.asar`，普通 Node 根本读不进去，于是这条检查以前要么找不到宿主、要么悄悄退到仓库自带的 `@deepseek-ai/dsh-tools` dev 副本上。现在两种安装形态都能识别：常见位置落空时逐盘扫描 `<安装目录>/resources/app.asar`（本机装在 `D:\Software\Nonead DSH Desktop`）；命中打包宿主时用宿主自己的可执行文件加 `ELECTRON_RUN_AS_NODE=1` 重跑自己 —— 也就是插件实际加载的那个运行时。若最终仍只能用仓库 dev 副本，会明确标注，而不是静默通过。
+
+### 新增
+
+- **`test/host-peer-matrix.test.mjs`** 钉住受支持的宿主版本矩阵（dsh / dsh-tools `0.1.2-rc.1` → `0.2.2-alpha.3`，cordis `4.0.2` → `4.0.6-alpha.2`，schemastery `3.18.2` → `3.18.6-alpha.2`）以及 `package.json` ↔ `package-lock.json` 的 peer 一致性：以后升级宿主既不会悄悄丢掉旧族，也不会只改两个文件中的一个。
+
+### 未改动
+
+- 工具、路由、仿真 op、面板行为与提示文案均无改动；工具注册仍是 **89/89**，6 条 twin 路由不变。
+
 ## [0.3.13] - 2026-11-02
 
 ### 变更

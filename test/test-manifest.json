@@ -50,6 +50,7 @@
     "twin-worker.test.mjs",
     "sim-persistence.test.mjs",
     "manipulability.test.mjs",
-    "twin-io.test.mjs"
+    "twin-io.test.mjs",
+    "host-peer-matrix.test.mjs"
   ]
 }
