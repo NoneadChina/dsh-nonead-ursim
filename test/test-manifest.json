@@ -51,6 +51,7 @@
     "sim-persistence.test.mjs",
     "manipulability.test.mjs",
     "twin-io.test.mjs",
+    "sidebar-native.test.mjs",
     "host-peer-matrix.test.mjs"
   ]
 }

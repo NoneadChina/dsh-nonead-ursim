@@ -8,6 +8,28 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.3.15] - 2026-11-13
+
+### Fixed
+
+- **The right-sidebar card is visible again** (user request: "the sidebar plugin still shows no plugin card"). Until now the client half never *registered* anything: it deep-cloned one of the host's own guide cards into `[data-sidebar-right-guide="true"]` and re-hid the original column. That container is React-owned, and the running profile installs `dsh-better-sidebar`, which takes over the guide body through the `sidebar.right.tab.guide` slot and builds its cards from the **host tab registry** (`ctx.sidebarRightTabs`). A DOM node living outside that React tree is therefore (a) never listed as a card and (b) wiped on the next re-render — exactly the reported symptom. The client half now registers officially, the way the host's own shipped guide types do: `ctx.sidebarRightTabs.register({ id, kind, priority: 'extension', keepMounted, title, guide: [{ id, order, title, description }] })` for the card + type, and `ctx.slots.inject('sidebar.right.pane.tab', …)` → `ctx.slots.register({ name: 'sidebar.right.pane.tab', key: id }, Body)` for the tab body, with `sidebar.right.pane.tab.title` left to the registry. The DOM injection is kept **only** as a fallback for hosts that expose neither service, and `globalThis.__URSIM_TWIN__.mode` records which path won (`sidebar-right-tab` vs `right-dock-dom`). Both registrations are released in the reverse order (slot body → slot seat → type) because dropping the type first makes the host discard the pane while its body is still mounted.
+- **The tab body renders through the host's React**, so the client bundle now externalises `react` (`--external:react`) instead of bundling a second copy — a duplicated React is what produces "Invalid hook call" at runtime. The component holds its container in a ref so the WebGL panel is mounted once per tab and disposed on unmount rather than rebuilt on every render.
+
+### Changed
+
+- **Host-compatibility window widened to 0.2.1 … 0.3.0** (user request: "adapt 0.2.1 to 0.3.0, currently 0.2.2-rc.2"). The running host ships `@deepseek-ai/dsh` / `dsh-tools` **0.2.2-rc.2**, `cordis` **4.1.0**, `schemastery` **3.19.0**, none of which the declared ranges covered. They now add `^0.2.1-rc.1`, `^0.2.2-rc.1`, `^0.2.2-rc.2` and **`^0.3.0-0`** for dsh / dsh-tools, plus `^4.1.0` (cordis) and `^3.19.0` (schemastery), while every earlier family stays declared. `0.3.0` itself is not published yet (npm `next` is `0.2.2-rc.2`), so `^0.3.0-0` reserves the whole 0.3 line **including prereleases**, which a plain `^0.3.0` would reject. As before, `package.json` and the root `peerDependencies` entry of `package-lock.json` carry the same string.
+- `dsh.client.inject` now declares `@deepseek-ai/dsh-client-ui-slots` and `@deepseek-ai/dsh-client-ui-sidebar-right`, so the host guarantees both services exist before the client half runs, and `dsh.manifestVersion: 1` is declared for documentation parity with the other bundles (current loaders do not enforce it).
+
+### Added
+
+- **`src/client/sidebar-native.js`** — the official seat: type + guide card + pane body, with idempotent disposal, `onUnavailable` hand-off to the DOM fallback, and localised `title` / `description` thunks (`strings.js` `dockLabel` / `dockDescription`) that re-read the locale on every call, so switching language does not require re-registration.
+- **`test/sidebar-native.test.mjs`** (7 cases) pins the registration shape, the mount/unmount life cycle, the release order, and the "half-registered seat" failure modes (missing `sidebarRightTabs` / missing `slots` / unsatisfied preconditions must leave nothing behind and must call `onUnavailable` exactly when the fallback is needed).
+- `test/host-peer-matrix.test.mjs` now also pins `0.2.1-rc.1`, `0.2.2-rc.1`, `0.2.2-rc.2`, `0.3.0`, `cordis 4.1.0` and `schemastery 3.19.0`.
+
+### Unchanged
+
+- No tool, route, simulation op or message changed; tools still register **89/89**, the six twin routes are unchanged, and hosts that expose neither service keep the previous DOM-injected entry.
+
 ## [0.3.14] - 2026-11-04
 
 ### Changed

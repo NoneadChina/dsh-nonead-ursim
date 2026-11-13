@@ -65,6 +65,12 @@ function runEsbuild({ headBanner, tailFooter }) {
       '--target=chrome110',
       '--minify',
       '--sourcemap',
+      // ⚠️ `react` 必须外置：它是**宿主**提供的基线模块（`__ModuleLoader__` 的 seed
+      // 词，dsh-client-ui-sidebar-right / dsh-better-sidebar 都直接 `require('react')`）。
+      // 打包进来会得到**第二份 React**：hooks 在宿主的 dispatcher 之外调用，
+      // 直接抛 "Invalid hook call"，而症状只是面板空白 —— 极难查。外置后 require
+      // 原样保留在工厂里，由宿主注入的那份实现解析。
+      '--external:react',
       // ⚠️ CLI 的 `--banner:js=` 收的是**内联文本**，不是文件路径：
       // 传路径时 esbuild 会把"路径"本身当横幅写进产物（首行就变成路径）。
       // 用 spawnSync 的数组参数传值，不经过 shell，换行/引号都不会被解释。
@@ -88,6 +94,8 @@ function runEsbuild({ headBanner, tailFooter }) {
       minify: true,
       sourcemap: true,
       logLevel: 'info',
+      // 与 CLI 分支的 `--external:react` 对齐（理由见那里）：react 由宿主提供。
+      external: ['react'],
       // Ruling 32（更正 Ruling 12 的范围）：esbuild **根本没有 `intro` 选项** —— 不止 CLI，
       // JS API 同样会直接抛 `Invalid option in build() call: "intro"`（此前误判为沙箱 spawn EPERM）。
       // 等价施加：把 INTRO 折进 `banner.js` 的下一行（顺序仍是 HEAD → INTRO → code → footer）。

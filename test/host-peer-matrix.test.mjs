@@ -34,11 +34,35 @@ const SUPPORTED_HOST_VERSIONS = {
   // 0.1.2-rc.1：仓库早期 devDependencies 里的宿主副本；0.1.7-rc.2：README 记录的 89/89 那台。
   // 0.2.0-rc.2：Beta 树实测（cordis 4.0.4 / schemastery 3.18.4）。
   // 0.2.1-alpha.5：Nonead DSH Desktop 2.1.6 实测（4.0.5-alpha.2 / 3.18.5-alpha.2）。
-  // 0.2.2-alpha.3：Nonead DSH Desktop 当前版实测（4.0.6-alpha.2 / 3.18.6-alpha.2）。
-  '@deepseek-ai/dsh': ['0.1.2-rc.1', '0.1.7-rc.2', '0.2.0-rc.2', '0.2.1-alpha.5', '0.2.2-alpha.3'],
-  '@deepseek-ai/dsh-tools': ['0.1.2-rc.1', '0.1.7-rc.2', '0.2.0-rc.2', '0.2.1-alpha.5', '0.2.2-alpha.3'],
-  '@deepseek-ai/cordis': ['4.0.2', '4.0.4', '4.0.5-alpha.2', '4.0.6-alpha.2'],
-  '@deepseek-ai/schemastery': ['3.18.2', '3.18.4', '3.18.5-alpha.2', '3.18.6-alpha.2'],
+  // 0.2.1-rc.1 / 0.2.2-rc.1：dsh-better-sidebar 的兼容表记录的宿主族（0.2.1-rc.x 对应它的 0.28.2）。
+  // 0.2.2-alpha.3：Nonead DSH Desktop 2.2.x 早期实测（4.0.6-alpha.2 / 3.18.6-alpha.2）。
+  // 0.2.2-rc.2：Nonead DSH Desktop 2.2.11 实测（cordis 4.1.0 / schemastery 3.19.0）—— 当前宿主。
+  // 0.3.0：尚未发布；这是用户要求的兼容窗口上界，范围用 `^0.3.0-0` 预留**整条** 0.3.x
+  //        谱系（`^0.3.0` 会把 0.3.0-rc.1 这类预发布挡在外面）。
+  '@deepseek-ai/dsh': [
+    '0.1.2-rc.1',
+    '0.1.7-rc.2',
+    '0.2.0-rc.2',
+    '0.2.1-alpha.5',
+    '0.2.1-rc.1',
+    '0.2.2-alpha.3',
+    '0.2.2-rc.1',
+    '0.2.2-rc.2',
+    '0.3.0',
+  ],
+  '@deepseek-ai/dsh-tools': [
+    '0.1.2-rc.1',
+    '0.1.7-rc.2',
+    '0.2.0-rc.2',
+    '0.2.1-alpha.5',
+    '0.2.1-rc.1',
+    '0.2.2-alpha.3',
+    '0.2.2-rc.1',
+    '0.2.2-rc.2',
+    '0.3.0',
+  ],
+  '@deepseek-ai/cordis': ['4.0.2', '4.0.4', '4.0.5-alpha.2', '4.0.6-alpha.2', '4.1.0'],
+  '@deepseek-ai/schemastery': ['3.18.2', '3.18.4', '3.18.5-alpha.2', '3.18.6-alpha.2', '3.19.0'],
 }
 
 /** semver 是宿主侧的传递依赖，缺失时退回纯字符串断言（见测试 2）。 */

@@ -3,16 +3,13 @@
  *
  * 装配顺序（**唯一** `state`，全客户端只此一条轮询链）：
  *   1. `createTwinState({ ip })` → `start()`（Task 6：轮询 host 只读状态路由 + 失败退避）
- *   2. `mountRightDockEntry(...)`：把「NoneadURSim」入口卡片注入**右栏**「开始」面板的引导列
- *      （位置在「工作区文件 / 新建终端 / 浏览器」三张卡片**下面**），并负责自愈与激活状态
- *   3. 大视图 `mountTwinPanel`（Task 8）由入口在**点击展开时**才挂进右栏的覆盖层，
- *      收起/离开面板时 dispose —— 不做无谓的 WebGL 初始化
- *
- * 呈现位置的历史：本插件原先把入口行注入**左栏**、大视图覆盖**中栏**，并在左栏入口行下面
- * 挂一个缩略 3D 插槽。现在改为**只在右栏**呈现（入口在三张引导卡片下面、3D 显示在右侧栏），
- * 因此左栏入口 + 中栏大视图（原 `sidebar-entry.js`）与缩略图（原 `thumbnail.js`）
- * **已随本次改版删除**，中栏的 `dsh-panel-activate` 协调协议也随之不再使用。
- * 仍在用的变更自愈 hub 已独立为 `./mutation-hub.js`。
+ *   2. **优先**走宿主官方席位（`./sidebar-native.js`）：`ctx.sidebarRightTabs.register(...)`
+ *      登记 tab 类型并带一个 `guide` 入口，`ctx.slots` 登记正文，大视图在正文里挂载。
+ *      引导页的卡片由注册表投影而来，因此宿主（含 `dsh-better-sidebar` 的接管版引导页）
+ *      会自己把「NoneadURSim」画出来 —— 这是 0.2.1+ 的正确路径。
+ *   3. 宿主没有 `sidebarRightTabs`（0.2.0 / 0.2.1-alpha 等老版本）时，退回
+ *      `mountRightDockEntry(...)` 的 DOM 注入：把入口卡片克隆进右栏引导列，点击时在
+ *      右栏覆盖层里 `mountTwinPanel`。这条路径只为兼容保留，不再新增逻辑。
  *
  * `apply(ctx, config)` 返回清理函数：dispose 所有挂载 + `state.stop()`（`ctx.effect` 语义）。
  * 调试标记 `globalThis.__URSIM_TWIN__` 在 Task 1 就已约定并保留（`loaded`/`at` 字段不许改），
@@ -31,6 +28,7 @@
 import { createTwinState } from './state.js'
 import { mountRightDockEntry } from './right-dock-entry.js'
 import { mountTwinPanel } from './twin-panel.js'
+import { registerSidebarTab } from './sidebar-native.js'
 
 export const name = 'ur-digital-twin-client'
 
@@ -49,6 +47,25 @@ export const SIM_IP = '127.0.0.1'
  */
 export function resolveRobotIp(_config, _globalScope = globalThis) {
   return SIM_IP
+}
+
+/**
+ * 宿主是否提供了官方右侧栏注册表。
+ *
+ * `ctx.get(...)` 是 cordis 的**可选**服务查询（不注入也能调），因此这里可以同步判断；
+ * 老宿主（没有该服务）返回 `false`，装配就退回 DOM 注入。`get` 缺失、或读取抛错
+ * 一律按"没有"处理 —— 这条函数不允许成为装配失败点。
+ *
+ * @param {object} ctx cordis 上下文
+ * @returns {boolean}
+ */
+export function hasNativeSidebar(ctx) {
+  if (!ctx || typeof ctx.get !== 'function') return false
+  try {
+    return ctx.get('sidebarRightTabs') !== undefined
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -76,6 +93,10 @@ export function apply(ctx, config) {
     ip,
     state,
     entry: undefined,
+    /** `'sidebar-right-tab'`（官方席位）或 `'right-dock-dom'`（老宿主兼容）。 */
+    mode: undefined,
+    /** 装配那一刻 `ctx.get('sidebarRightTabs')` 是否可见（仅诊断用）。 */
+    nativeVisible: false,
     error: null,
   }
   globalThis.__URSIM_TWIN__ = info
@@ -83,10 +104,14 @@ export function apply(ctx, config) {
   ctx.logger?.info?.('[ursim-twin] client half loaded')
 
   let entryHandle
+  let tabHandle
 
-  try {
-    state.start()
-
+  /**
+   * 退回 DOM 入口（老宿主兼容路径）。幂等：`registerSidebarTab` 的 `onUnavailable`
+   * 可能在装配之后才回调，而时序上又可能紧跟在那次同步调用后面 —— 重复挂会得到两张卡。
+   */
+  const mountDom = () => {
+    if (entryHandle !== undefined) return entryHandle
     entryHandle = mountRightDockEntry({
       doc,
       onToggle: (active) => {
@@ -94,9 +119,39 @@ export function apply(ctx, config) {
       },
       mountPanel: (container) => mountTwinPanel({ container, state }),
     })
-
+    info.mode = 'right-dock-dom'
     info.entry = entryHandle
-    ctx.logger?.info?.(`[ursim-twin] mounted (ip=${ip}, surface=right-dock)`)
+    return entryHandle
+  }
+
+  try {
+    state.start()
+
+    /*
+     * 官方席位优先：有 `ctx.inject` 就走注册表（服务何时可用由 cordis 注入等待，
+     * 不靠 `ctx.get` 的**时序**做判断 —— 那样会在服务晚到一帧时误判成"不支持"）。
+     * 登记句柄为 `undefined`（缺 react / 缺 state）或注入最终解析不到服务时，退回 DOM。
+     */
+    if (typeof ctx.inject === 'function') {
+      tabHandle = registerSidebarTab({
+        ctx,
+        state,
+        logger: ctx.logger,
+        mountPanel: (container) => mountTwinPanel({ container, state }),
+        onUnavailable: mountDom,
+      })
+      if (tabHandle !== undefined) {
+        info.mode = 'sidebar-right-tab'
+        info.entry = tabHandle
+      }
+    }
+
+    if (tabHandle === undefined) mountDom()
+
+    // 诊断标记：装配瞬间注册表服务是否已可见（`false` 但仍是 native 模式 = 宿主排在后面加载）。
+    info.nativeVisible = hasNativeSidebar(ctx)
+
+    ctx.logger?.info?.(`[ursim-twin] mounted (ip=${ip}, surface=${info.mode})`)
   } catch (error) {
     // 客户端半装配失败不得拖垮 shell：如实记录到调试标记，清理函数照常返回。
     info.error = error instanceof Error ? error.message : String(error)
@@ -104,6 +159,11 @@ export function apply(ctx, config) {
   }
 
   return () => {
+    try {
+      tabHandle?.dispose?.()
+    } catch {
+      /* 忽略 */
+    }
     try {
       entryHandle?.dispose?.()
     } catch {
@@ -114,6 +174,7 @@ export function apply(ctx, config) {
     } catch {
       /* 忽略 */
     }
+    tabHandle = undefined
     entryHandle = undefined
     delete globalThis.__URSIM_TWIN__
   }

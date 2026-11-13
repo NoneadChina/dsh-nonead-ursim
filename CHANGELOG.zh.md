@@ -6,6 +6,28 @@
 那份代码库的版本编号。此前那段历史已原样归档到 `CHANGELOG-archive.zh.md`；该文件在准备 0.1.1 时
 **已从本仓库移除**（可从导入源码的那个提交 `4c91704` 取回），并且从未进入过发布包。
 
+## [0.3.15] - 2026-11-13
+
+### 修复
+
+- **右侧栏的插件卡片重新可见**（用户要求：「同时适配一下侧边栏插件，现在还是看不到插件卡片」）。此前客户端半**从未注册过任何东西**：它把宿主自带的一张引导卡深度克隆进 `[data-sidebar-right-guide="true"]`，再把原生列内联隐藏。而那个容器归 React 所有，且当前 profile 装了 `dsh-better-sidebar` —— 它通过 `sidebar.right.tab.guide` 席位接管引导页正文，卡片来自**宿主 tab 注册表**（`ctx.sidebarRightTabs`）。因此一个不在那棵 React 树里的 DOM 节点既不会被列为卡片、又会在下一次重渲染时被抹掉 —— 正是用户看到的现象。现在改为官方注册，与宿主随包发布的引导类型走同一条路：用 `ctx.sidebarRightTabs.register({ id, kind, priority: 'extension', keepMounted, title, guide: [{ id, order, title, description }] })` 登记卡片与类型，用 `ctx.slots.inject('sidebar.right.pane.tab', …)` → `ctx.slots.register({ name: 'sidebar.right.pane.tab', key: id }, Body)` 登记页正文，标题交给注册表。**仅当**宿主两个服务都不存在时才退回原来的 DOM 注入；`globalThis.__URSIM_TWIN__.mode` 会记录实际生效的是哪条路（`sidebar-right-tab` / `right-dock-dom`）。两处登记按**反序**释放（先正文、再席位、最后类型）—— 先撤类型会让宿主立刻丢弃该页，而它的正文还挂着。
+- **页正文经由宿主的 React 渲染**，因此客户端 bundle 现在把 `react` 外置（`--external:react`）而不再打包第二份 —— 重复的 React 正是运行时 "Invalid hook call" 的来源。组件用 ref 持有容器，WebGL 面板按「每个 tab 挂载一次、卸载时释放」工作，不再每次渲染重建。
+
+### 变更
+
+- **宿主兼容窗口扩到 0.2.1 … 0.3.0**（用户要求：「插件需要适配 0.2.1 到 0.3.0，当前是 0.2.2-rc.2」）。运行中的宿主实装 `@deepseek-ai/dsh` / `dsh-tools` **0.2.2-rc.2**、`cordis` **4.1.0**、`schemastery` **3.19.0**，声明的范围一个都没覆盖。本次为 dsh / dsh-tools 补 `^0.2.1-rc.1`、`^0.2.2-rc.1`、`^0.2.2-rc.2` 与 **`^0.3.0-0`**，为 cordis 补 `^4.1.0`、schemastery 补 `^3.19.0`，同时保留此前全部版本族。`0.3.0` 本身尚未发布（npm `next` 仍是 `0.2.2-rc.2`），故用 `^0.3.0-0` 预留整条 0.3 线**并含预发布** —— 朴素的 `^0.3.0` 会把 `0.3.0-rc.x` 挡在外面。与以往一样，`package.json` 与 `package-lock.json` 根条目写同一份声明。
+- `dsh.client.inject` 现在声明 `@deepseek-ai/dsh-client-ui-slots` 与 `@deepseek-ai/dsh-client-ui-sidebar-right`，由宿主保证客户端半运行前这两个服务已就绪；并补上 `dsh.manifestVersion: 1`（当前加载器并不强制它，声明是为了与其他 bundle 的文档口径一致）。
+
+### 新增
+
+- **`src/client/sidebar-native.js`** —— 官方席位：类型 + 引导卡 + 页正文；释放幂等，服务缺失时通过 `onUnavailable` 交回 DOM 回退；`title` / `description` 是本地化 thunk（`strings.js` 的 `dockLabel` / `dockDescription`），每次调用重读语言，切语言无需重新注册。
+- **`test/sidebar-native.test.mjs`**（7 个用例）钉住登记形状、挂载/卸载生命周期、释放顺序，以及「半套登记」的失败面（缺 `sidebarRightTabs` / 缺 `slots` / 前置条件不满足时必须什么都不留下，且只在确实需要回退时调用 `onUnavailable`）。
+- `test/host-peer-matrix.test.mjs` 另钉 `0.2.1-rc.1`、`0.2.2-rc.1`、`0.2.2-rc.2`、`0.3.0`、`cordis 4.1.0`、`schemastery 3.19.0`。
+
+### 未改动
+
+- 工具、路由、仿真 op 与提示文案均无改动；工具注册仍是 **89/89**，6 条 twin 路由不变；两个服务都不存在的宿主继续用原来的 DOM 注入入口。
+
 ## [0.3.14] - 2026-11-04
 
 ### 变更
