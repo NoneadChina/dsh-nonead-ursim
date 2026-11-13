@@ -28,6 +28,12 @@ import {
   hostReact,
   registerSidebarTab,
 } from '../src/client/sidebar-native.js'
+import {
+  ARM_SEGMENTS,
+  ICON_VIEW_BOX,
+  WRIST_RADIUS,
+  createTabIcon,
+} from '../src/client/tab-icon.js'
 
 /** 静默 logger：断言只看被登记的东西，不看日志。 */
 const quiet = { info() {}, warn() {} }
@@ -46,8 +52,14 @@ function createFakeReact() {
       if (refs[cursor] === undefined) refs[cursor] = { current: initial }
       return refs[cursor++]
     },
-    createElement(type, props) {
-      const element = { type, props }
+    createElement(type, props, ...children) {
+      // 与 React 一致：children 归到 props.children 上（图标用第三实参传形状列表）。
+      const element = {
+        type,
+        props: children.length === 0
+          ? props
+          : { ...props, children: children.length === 1 ? children[0] : children },
+      }
       cursor = 0
       return element
     },
@@ -173,6 +185,24 @@ test('登记：类型 + guide 入口 + 正文槽位，key 与类型 id 一致', 
   assert.equal(typeof entry.title, 'function')
   assert.equal(typeof entry.description, 'function')
   assert.ok(entry.description().length > 0, '描述必须非空，否则卡片只剩标题')
+  assert.equal(typeof entry.icon, 'function', '引导卡片要带自定义图标（否则宿主退回通用立方体）')
+  const icon = entry.icon({ size: 22 })
+  assert.equal(icon.type, 'svg', '图标必须是 svg 元素')
+  assert.equal(icon.props.viewBox, ICON_VIEW_BOX, '与宿主产品图标同栅格')
+  assert.equal(icon.props.width, 22, '尺寸由宿主传入（有描述时 26，无描述 22）')
+  assert.equal(icon.props.fill, 'none', '纯描边图标，不填色')
+  const drawn = icon.props.children
+  const paths = drawn.filter((node) => node.type === 'path')
+  const circles = drawn.filter((node) => node.type === 'circle')
+  assert.equal(paths.length, ARM_SEGMENTS.length, '一条臂就是这四段折线')
+  assert.equal(circles.length, 1, '末端腕关节是一个实心圆点')
+  assert.equal(circles[0].props.r, WRIST_RADIUS)
+  assert.equal(circles[0].props.fill, 'currentColor', '圆点也走 currentColor，不被主题漏掉')
+  assert.equal(drawn.length, ARM_SEGMENTS.length + 1, '线段 + 关节圆点就是全部形状')
+  assert.ok(
+    paths.every((node) => node.props.stroke === 'currentColor'),
+    '全部描边走 currentColor，图标跟随主题变色',
+  )
 
   const slotInject = calls.find((call) => call.op === 'slots.inject')
   assert.ok(slotInject, '正文槽位要等宿主声明后再登记')
@@ -263,4 +293,16 @@ test('入口前置条件不满足时安静返回 undefined（不抛错）', () =
   )
   // 没有挂载器：登记出来也是空白页，不如让调用方走 DOM 入口
   assert.equal(registerSidebarTab({ ctx: createFakeHost().ctx, state: {}, react }), undefined)
+})
+
+test('卡片图标：默认 22、可换尺寸、透传 className，且没有 React 时明确报错', () => {
+  const Icon = createTabIcon(createFakeReact())
+  // 宿主 `EntryBox` 只在有描述时传 26；缺省值按无描述那档取 22。
+  assert.equal(Icon().props.width, 22)
+  assert.equal(Icon({ size: 26 }).props.width, 26)
+  assert.equal(Icon({ size: 26 }).props.height, 26)
+  assert.equal(Icon({ className: 'ursim-glyph' }).props.className, 'ursim-glyph')
+  assert.equal(Icon().props['aria-hidden'], 'true', '纯装饰图标对读屏器隐藏')
+  // 图标必须用宿主 React 造：没有它就没有可渲染的元素，宁可明确失败而不是画个假的。
+  assert.throws(() => createTabIcon(undefined), TypeError)
 })

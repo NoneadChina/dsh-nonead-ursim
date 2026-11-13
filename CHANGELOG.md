@@ -8,6 +8,29 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.3.17] - 2026-11-13
+
+### Added
+
+- **The sidebar card has an icon.** A 16×16 line-art collaborative arm — base plate, column, upper
+  arm, forearm and a filled wrist joint — stroked with `currentColor`, so it inherits the card's text
+  colour and the host's state styling with no extra props. It is deliberately a *single* glyph: earlier
+  drafts paired the arm with a dashed "digital twin" ghost, a dashed arc, or a play triangle, and at the
+  22–26 px the host actually renders, every second element either fused with the arm (a grey blob where
+  the ghost sat 3 px away) or shrank into an unrecognisable speck. `src/client/tab-icon.js` records those
+  rejected variants and why they failed, so the next attempt does not re-walk them. A host without React
+  now gets an explicit `TypeError` instead of a blank card.
+
+### Changed
+
+- **The card title follows the interface language.** Chinese reads 拓德UR仿真器, English *Nonead UR
+  Simulator*, and ja / de / fr / es / pt / ru each get their own wording, all eight shipped in
+  `src/client/strings.js` and `src/client/locales/*.js`. The title is a thunk handed to the host's tab
+  registry, so switching the interface language re-reads it without re-registering the tab.
+  `test/strings.test.mjs` pins the set: if two locales ever produce the same title, the test fails — a
+  missed translation cannot pass silently.
+- **Version line advanced** so the icon and the localised title ship as a release. The tool set (89
+  tools), the six twin routes and the peer ranges are unchanged from 0.3.16.
 ## [0.3.16] - 2026-11-13
 
 ### Changed

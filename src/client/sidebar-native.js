@@ -30,6 +30,7 @@
  */
 
 import { activeStrings } from './strings.js'
+import { createTabIcon } from './tab-icon.js'
 
 /** 注册表里的**类型 id**：宿主建议用包名，它同时是两个 keyed 席位的 key。 */
 export const TAB_ID = 'dsh-nonead-ursim'
@@ -170,6 +171,9 @@ export function registerSidebarTab(deps = {}) {
   if (!state) return undefined
 
   const component = createTabComponent(react, { state, mountPanel, logger })
+  // 引导卡片的图标：宿主 `EntryBox` 用 `entry.icon ?? CubeGlyph` 渲染，尺寸 22（无描述）
+  // 或 26（有描述）由宿主决定，这里只把 `size` 当入参用。
+  const TabIcon = createTabIcon(react)
 
   /** 注入席位解析后得到的释放器（槽位登记是异步生效的）。 */
   let stopSeat
@@ -233,6 +237,8 @@ export function registerSidebarTab(deps = {}) {
               order: TAB_ORDER,
               title: titleOf,
               description: descriptionOf,
+              // 实臂 + 虚线孪生臂（见 tab-icon.js）：不传时宿主会退回通用立方体图标。
+              icon: TabIcon,
             },
           ],
         }),
