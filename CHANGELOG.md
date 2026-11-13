@@ -8,6 +8,12 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.3.16] - 2026-11-13
+
+### Changed
+
+- **Version line advanced so the sidebar fix from 0.3.15 ships as a published release.** No behaviour change: the client bundle, the tool set (89 tools), the six twin routes and the peer ranges are identical to 0.3.15. The fix was first built and deployed into a local profile under 0.3.15; this release exists so the same content goes out under a version that was never installed anywhere as a snapshot.
+
 ## [0.3.15] - 2026-11-13
 
 ### Fixed
