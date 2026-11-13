@@ -87,7 +87,7 @@ export const de = {
   trajectoryResume: 'Bahn fortsetzen',
   trajectoryExport: 'Bahn exportieren',
 
-  dockLabel: 'NoneadURSim',
+  dockLabel: 'Nonead UR-Simulator',
   dockDescription: 'Live-Ansicht der Robotersimulation',
   dockCollapse: 'Einklappen',
 

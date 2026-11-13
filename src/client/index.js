@@ -6,7 +6,7 @@
  *   2. **优先**走宿主官方席位（`./sidebar-native.js`）：`ctx.sidebarRightTabs.register(...)`
  *      登记 tab 类型并带一个 `guide` 入口，`ctx.slots` 登记正文，大视图在正文里挂载。
  *      引导页的卡片由注册表投影而来，因此宿主（含 `dsh-better-sidebar` 的接管版引导页）
- *      会自己把「NoneadURSim」画出来 —— 这是 0.2.1+ 的正确路径。
+ *      会自己把「拓德UR仿真器」画出来 —— 这是 0.2.1+ 的正确路径。
  *   3. 宿主没有 `sidebarRightTabs`（0.2.0 / 0.2.1-alpha 等老版本）时，退回
  *      `mountRightDockEntry(...)` 的 DOM 注入：把入口卡片克隆进右栏引导列，点击时在
  *      右栏覆盖层里 `mountTwinPanel`。这条路径只为兼容保留，不再新增逻辑。

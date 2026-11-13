@@ -168,6 +168,24 @@ test('西文语言里不该混入中文（抓漏翻的键）', () => {
   }
 })
 
+test('右侧栏卡片名按语言本地化（8 种语言互不相同）', () => {
+  const labels = new Map(SUPPORTED_LOCALES.map((loc) => [loc, stringsFor(loc).dockLabel]))
+  // 中文界面是用户指定的中文名，其余语言不许再留 NoneadURSim 这种无空格写法。
+  assert.equal(labels.get('zh'), '拓德UR仿真器')
+  for (const loc of SUPPORTED_LOCALES) {
+    const label = labels.get(loc)
+    assert.equal(typeof label, 'string', `${loc}.dockLabel 不是字符串`)
+    assert.ok(label.trim().length > 0, `${loc}.dockLabel 为空`)
+    assert.ok(!/NoneadURSim/u.test(label), `${loc}.dockLabel 仍是旧的 NoneadURSim`)
+  }
+  // 两条语言取到同一个名字，说明有一条压根没翻。
+  assert.equal(
+    new Set(labels.values()).size,
+    SUPPORTED_LOCALES.length,
+    `dockLabel 有重复：${JSON.stringify([...labels])}`,
+  )
+})
+
 test('中文文案里不该出现英文占位（抓没写完的键）', () => {
   for (const [key, value] of Object.entries(zh)) {
     if (typeof value !== 'string') continue

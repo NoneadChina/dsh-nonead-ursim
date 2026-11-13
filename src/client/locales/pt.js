@@ -87,7 +87,7 @@ export const pt = {
   trajectoryResume: 'Retomar trajetória',
   trajectoryExport: 'Exportar trajetória',
 
-  dockLabel: 'NoneadURSim',
+  dockLabel: 'Simulador UR da Nonead',
   dockDescription: 'Vista da simulação do robô em tempo real',
   dockCollapse: 'Recolher',
 

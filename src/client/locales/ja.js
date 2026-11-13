@@ -87,7 +87,7 @@ export const ja = {
   trajectoryResume: '軌跡を再開',
   trajectoryExport: '軌跡を書き出す',
 
-  dockLabel: 'NoneadURSim',
+  dockLabel: 'Nonead UR シミュレータ',
   dockDescription: 'ロボットシミュレーションのライブビュー',
   dockCollapse: 'たたむ',
 

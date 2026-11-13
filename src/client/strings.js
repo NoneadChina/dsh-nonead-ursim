@@ -123,7 +123,7 @@ export const zh = {
   trajectoryExport: '导出轨迹',
 
   /* ---- 右侧 dock 入口 ---- */
-  dockLabel: 'NoneadURSim',
+  dockLabel: '拓德UR仿真器',
   dockDescription: '机器人实时仿真视图',
   dockCollapse: '收起',
 
@@ -320,7 +320,7 @@ export const en = {
   trajectoryResume: 'Resume path',
   trajectoryExport: 'Export path',
 
-  dockLabel: 'NoneadURSim',
+  dockLabel: 'Nonead UR Simulator',
   dockDescription: 'Live robot simulation view',
   dockCollapse: 'Collapse',
 

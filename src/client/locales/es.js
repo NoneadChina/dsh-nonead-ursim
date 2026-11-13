@@ -87,7 +87,7 @@ export const es = {
   trajectoryResume: 'Reanudar trayectoria',
   trajectoryExport: 'Exportar trayectoria',
 
-  dockLabel: 'NoneadURSim',
+  dockLabel: 'Simulador UR de Nonead',
   dockDescription: 'Vista en vivo de la simulación del robot',
   dockCollapse: 'Contraer',
 

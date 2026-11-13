@@ -164,7 +164,8 @@ test('登记：类型 + guide 入口 + 正文槽位，key 与类型 id 一致', 
 
   // 标题/描述是 thunk：切语言时宿主重读即可，不需要重新登记。
   assert.equal(typeof definition.title, 'function')
-  assert.equal(definition.title('whatever'), 'NoneadURSim')
+  // 标题是「按当前宿主语言解析」的 thunk：无 document / __DSH_LOCALE__ 时落到默认语言 zh
+  assert.equal(definition.title('whatever'), '拓德UR仿真器')
   assert.equal(definition.guide.length, 1, '引导页必须有一个入口框')
   const entry = definition.guide[0]
   assert.equal(entry.id, `${TAB_ID}:twin`)

@@ -87,7 +87,7 @@ export const ru = {
   trajectoryResume: 'Продолжить траекторию',
   trajectoryExport: 'Экспортировать траекторию',
 
-  dockLabel: 'NoneadURSim',
+  dockLabel: 'Симулятор UR Nonead',
   dockDescription: 'Вид симуляции робота в реальном времени',
   dockCollapse: 'Свернуть',
 
