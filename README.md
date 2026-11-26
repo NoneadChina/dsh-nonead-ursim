@@ -239,16 +239,15 @@ npm run verify:models # validate the structural contract of the 14 GLBs
   sides by *parsing* them (the snapshot that carries `op` for every tool, and `ast` for the handler),
   so parameter names, required-ness and types are all cross-checked.
 
-The most recent full run (**2026-11-13**, v0.3.17): `npm run check` green; `npm test` reports **61 items —
-39 passed / 0 failed / 22 skipped**. The 50 Node test files and the 11 gates all ran; the 17
-Python-dependent items were skipped **with the reason recorded**, because this agent session's Node
-cannot spawn child processes (`spawnSync` returns `EPERM`), so the Python probes cannot be launched
-from inside the runner — the same five Python gates were run directly in a shell and all exited 0, and
-`run-tests.mjs --allow-skip` makes the whole run exit 0. `npm run verify:host` against the running host
-(`dsh` / `dsh-tools` 0.2.2-rc.2, `cordis` 4.1.0, `schemastery` 3.19.0) reports
-**4/4 peer checks and 89/89** tools registered through the host's real DSL, with all six panel
-routes. **No end-to-end smoke run this time**: the panel was not clicked through by hand. Earlier
-evidence, the reproduction commands and the **true-robot coverage
+The most recent full run (**2026-11-26**, v0.3.18): `npm run check` green; `npm test` reports **61 items —
+61 passed / 0 failed / 0 skipped** — the 33 Node test files, the 17 Python-dependent items and the 11
+gates all ran for real (inside a restricted sandbox this runner cannot spawn child processes —
+`spawnSync` returns `EPERM` — so the Python-dependent items degrade to SKIP with the reason recorded).
+`npm run verify:models` accepts all 14 GLB files (20.86 MB, zero findings). `npm run verify:host`
+against the running host (`dsh` / `dsh-tools` 0.2.3-alpha.2, `cordis` 4.2.0-alpha.1, `schemastery`
+3.20.0-alpha.1) reports **4/4 peer checks and 89/89** tools registered through the host's real DSL,
+with all six panel routes. **No end-to-end smoke run this time**: the panel was not clicked through by
+hand. Earlier evidence, the reproduction commands and the **true-robot coverage
 boundary** are recorded in [docs/test-report-2026-10-28.md](./docs/test-report-2026-10-28.md).
 
 > `scripts/pdf-extract2.py` extracts text from `ScriptManual/*.pdf` into

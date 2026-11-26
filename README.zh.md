@@ -210,28 +210,27 @@ npm run verify:host   # 用宿主真实的 schema DSL 校验全部工具注册�
 npm run verify:models # 校验 14 个 GLB 的结构契约
 ```
 
-`npm run verify:host` 用宿主**真实**的 value-schema DSL 编译全部工具参数、驱动宿主路由注册，并校验 `dsh.client` 声明与客户端 bundle 的 `__ModuleLoader__` id；退出码 `0` 表示插件与该宿主可用。对运行中的宿主（`@deepseek-ai/dsh` / `dsh-tools` **0.2.2-alpha.3**、`cordis` **4.0.6-alpha.2**、`schemastery` **3.18.6-alpha.2**）实测报告 **4/4 项 peer 通过 + 89/89 工具注册**。
+`npm run verify:host` 用宿主**真实**的 value-schema DSL 编译全部工具参数、驱动宿主路由注册，并校验 `dsh.client` 声明与客户端 bundle 的 `__ModuleLoader__` id；退出码 `0` 表示插件与该宿主可用。对运行中的宿主（`@deepseek-ai/dsh` / `dsh-tools` **0.2.3-alpha.2**、`cordis` **4.2.0-alpha.1**、`schemastery` **3.20.0-alpha.1**）实测报告 **4/4 项 peer 通过 + 89/89 工具注册**。
 
 两种安装形态都支持：打包宿主的模块在 `resources/app.asar` 里，普通 Node 读不到，脚本会用宿主自己的可执行文件加 `ELECTRON_RUN_AS_NODE=1` 重跑自己（也就是插件实际加载的运行时）；常见安装位置找不到时逐盘扫描（本机装在 `D:\Software\Nonead DSH Desktop`）。若最终只能用仓库自带的 `@deepseek-ai/dsh-tools` dev 副本，会**明确标注**，而不是悄悄给出一个绿的结果。
 
-受支持的宿主范围 —— 逐条保留、不替换：`dsh` / `dsh-tools` `0.1.2-rc.1` → `0.2.2-alpha.3`，`cordis` `4.0.2` → `4.0.6-alpha.2`，`schemastery` `3.18.2` → `3.18.6-alpha.2`。宿主升到新的预发布族时，给 `package.json` 与 `package-lock.json` 根条目的 `peerDependencies` **各补一条该族的比较子**（semver 只放行「范围内存在同 `major.minor.patch` 三元组比较子」的预发布版本），再把版本加进 `test/host-peer-matrix.test.mjs` —— 任何受支持族丢了比较子、或两个文件不一致，它都会失败。
+受支持的宿主范围 —— 逐条保留、不替换：`dsh` / `dsh-tools` `0.1.2-rc.1` → `0.2.3-alpha.2`（并向 `0.3.x` 全谱系预留 `^0.3.0-0`），`cordis` `4.0.2` → `4.2.0-alpha.1`，`schemastery` `3.18.2` → `3.20.0-alpha.1`。宿主升到新的预发布族时，给 `package.json` 与 `package-lock.json` 根条目的 `peerDependencies` **各补一条该族的比较子**（semver 只放行「范围内存在同 `major.minor.patch` 三元组比较子」的预发布版本），再把版本加进 `test/host-peer-matrix.test.mjs` —— 任何受支持族丢了比较子、或两个文件不一致，它都会失败。
 
 `npm test` 跑两类东西，两类都必须过：
 
 - **49 个测试文件**（端到端协议自检、审批门禁、仿真路由、客户端状态机、FK、vendored 库回归）。
-  名单来自 `test/test-manifest.json`（依赖 Python 17 / 仅 Node 32），并由 `check:manifest` 保证"会调用 Python 的用例"不会被漏登记。
+  名单来自 `test/test-manifest.json`（依赖 Python 17 / 仅 Node 33，合计 50 个测试文件），并由 `check:manifest` 保证"会调用 Python 的用例"不会被漏登记。
 - **11 个门禁脚本**：`check-test-manifest` / `check-package-metadata` / `check-client-bundle` /
   `check-doc-tools` / `tool-matrix` / `check-doc-links`（Node），以及 `check-worker-ops` /
   `check-tool-params` / `check-rtde-recipe` / `check-approval-gate` / `check-new-ops`（Python）。
   解释器没有 `numpy` 时，依赖 Python 的项会以
   **SKIP + 原因**出现，绝不会显示成通过。
 
-最近一次完整回归（**2026-11-13**，v0.3.17）的实测结论：`npm run check` 全通过；`npm test` 报 **61 项 ——
-39 通过 / 0 失败 / 22 跳过**。50 个 Node 测试文件与 11 道门禁全部跑过；17 项依赖 Python 的用例
-**带原因跳过**，因为本次 agent 会话里的 Node 无法创建子进程（`spawnSync` 返回 `EPERM`），运行器
-内部起不了 Python 探针 —— 同样五道 Python 门禁直接在 shell 里跑，全部 exit 0；加
-`run-tests.mjs --allow-skip` 会让整轮以 exit 0 结束。`npm run verify:host` 对运行中的宿主
-（`dsh` / `dsh-tools` 0.2.2-rc.2、`cordis` 4.1.0、`schemastery` 3.19.0）报告
+最近一次完整回归（**2026-11-26**，v0.3.18）的实测结论：`npm run check` 全通过；`npm test` 报 **61 项 ——
+61 通过 / 0 失败 / 0 跳过** —— 33 个 Node 测试文件、17 项依赖 Python 的用例与 11 道门禁全部真实跑过
+（在受限沙箱里运行器起不了子进程：`spawnSync` 返回 `EPERM`，那些依赖 Python 的项会带原因降级为 SKIP）。
+`npm run verify:models` 接受全部 14 个 GLB（20.86 MB，0 条问题）。`npm run verify:host` 对运行中的宿主
+（`dsh` / `dsh-tools` 0.2.3-alpha.2、`cordis` 4.2.0-alpha.1、`schemastery` 3.20.0-alpha.1）报告
 **4/4 项 peer 通过 + 89/89** 工具经宿主真实 DSL 注册、6 条面板路由齐全。**本版没有做端到端冒烟**：
 面板交互未人工点验。此前的证据、复现命令与**真机未覆盖边界**见
 [docs/test-report-2026-10-28.md](./docs/test-report-2026-10-28.md)。

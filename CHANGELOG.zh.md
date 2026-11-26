@@ -6,6 +6,34 @@
 那份代码库的版本编号。此前那段历史已原样归档到 `CHANGELOG-archive.zh.md`；该文件在准备 0.1.1 时
 **已从本仓库移除**（可从导入源码的那个提交 `4c91704` 取回），并且从未进入过发布包。
 
+## [0.3.18] - 2026-11-26
+
+### 变更
+
+- **适配 `@deepseek-ai/dsh` 0.2.3-alpha.2。** peer 范围按新版本族各补一条比较子 —— `dsh` 与
+  `dsh-tools` 补 `^0.2.3-alpha.2`，`cordis` 补 `^4.2.0-alpha.1`，`schemastery` 补
+  `^3.20.0-alpha.1` —— 因为 semver 只放行「范围内存在**同** `major.minor.patch` 三元组比较子」的
+  预发布版本：`^0.2.2-rc.2` 到不了 `0.2.3-alpha.2`，而 `^0.3.0-0` 的起点在它之上。所有旧版本族逐条保留。
+
+### 验证
+
+- **先测真宿主、再改范围，不是改完再看。** 运行中的安装是 Nonead DSH Desktop 2.3.4（`dsh` /
+  `dsh-tools` 0.2.3-alpha.2、`cordis` 4.2.0-alpha.1、`schemastery` 3.20.0-alpha.1）；
+  `npm run verify:host` 报告 **4/4 项 peer 通过 + 89/89 工具**经宿主真实 DSL 注册、6 条面板路由齐全、
+  客户端 bundle 契约成立。0.2.2-rc.5 → 0.2.3-alpha.2 的产物也做了逐文件比对而不是假定兼容：
+  7 个 `sidebar.right.*` 槽位名完全一致，tab 注册契约（`register` / `get` / `guide`）未变，
+  cordis 4.2 唯一的破坏性变更（`ctx.root` 改为 `Context.root` 符号）在本插件中**没有任何调用点**。
+
+### 修复
+
+- **三处此前遗留的宿主表述滞后。** `README.md` / `README.zh.md` 仍写实测宿主为 0.2.2-rc.2 /
+  0.2.2-alpha.3，`scripts/check-host-compat.mjs` 仍把 89 个工具的表称作「当前的 87 个」，
+  `test/host-peer-matrix.test.mjs` 也没收录产物已被验证逐字节相同的 0.2.2-rc.3 / rc.4 / rc.5 三族。
+  现在全部与实际测量一致。
+- **两份 README 的测试计数把划分写错了。** 英文写「the 50 Node test files」、中文写「仅 Node 32」，
+  而 `test/test-manifest.json` 实际是 33 个 Node 测试文件 + 17 项依赖 Python 的用例 —— 合计 50 个。
+  回归段同时换成本次的真实数字（61 项、61 通过 / 0 失败 / 0 跳过）与本次实测的宿主版本。
+
 ## [0.3.17] - 2026-11-13
 
 ### 新增

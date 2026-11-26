@@ -8,6 +8,39 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.3.18] - 2026-11-26
+
+### Changed
+
+- **Adapted to `@deepseek-ai/dsh` 0.2.3-alpha.2.** The peer ranges gain one comparator per new release
+  family — `^0.2.3-alpha.2` for `dsh` and `dsh-tools`, `^4.2.0-alpha.1` for `cordis`,
+  `^3.20.0-alpha.1` for `schemastery` — because semver admits a prerelease only through a comparator
+  with the *same* `major.minor.patch` triple: `^0.2.2-rc.2` cannot reach `0.2.3-alpha.2`, and
+  `^0.3.0-0` starts above it. Every older family stays in place.
+
+### Verified
+
+- **The new host was measured before the range changed, not after.** The running installation is
+  Nonead DSH Desktop 2.3.4 (`dsh` / `dsh-tools` 0.2.3-alpha.2, `cordis` 4.2.0-alpha.1,
+  `schemastery` 3.20.0-alpha.1); `npm run verify:host` reports **4/4 peer checks and 89/89 tools**
+  through the host's real DSL, all six panel routes, and the client-bundle contract. The
+  0.2.2-rc.5 → 0.2.3-alpha.2 artefacts were also diffed file by file rather than assumed compatible:
+  the seven `sidebar.right.*` slot names are identical, the tab-registry contract
+  (`register` / `get` / `guide`) is unchanged, and cordis 4.2's one breaking change — `ctx.root`
+  becoming the `Context.root` symbol — is not used anywhere in this plugin.
+
+### Fixed
+
+- **Three stale host references left behind by earlier releases.** `README.md` / `README.zh.md` still
+  named 0.2.2-rc.2 / 0.2.2-alpha.3 as the measured host, `scripts/check-host-compat.mjs` still called
+  the 89-tool table "the current 87", and `test/host-peer-matrix.test.mjs` did not list the
+  0.2.2-rc.3 / rc.4 / rc.5 families whose contract packages had already been verified byte-identical.
+  All of them now match the measurement.
+- **The test-count line in both READMEs mis-stated the split.** The English said "the 50 Node test
+  files" and the Chinese said "Node 32"; `test/test-manifest.json` actually holds 33 Node test files
+  plus 17 Python-dependent ones — 50 in total. The regression paragraph also now carries this run's
+  real numbers (61 items, 61 passed / 0 failed / 0 skipped) and the measured host versions.
+
 ## [0.3.17] - 2026-11-13
 
 ### Added
