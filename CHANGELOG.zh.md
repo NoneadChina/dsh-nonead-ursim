@@ -6,6 +6,32 @@
 那份代码库的版本编号。此前那段历史已原样归档到 `CHANGELOG-archive.zh.md`；该文件在准备 0.1.1 时
 **已从本仓库移除**（可从导入源码的那个提交 `4c91704` 取回），并且从未进入过发布包。
 
+## [0.3.20] - 2026-11-27
+
+### 修复
+
+- **发布门禁在 Windows 上假红，卡住了 `npm publish` 的 `prepublishOnly`。** `docs/tool-matrix.md` 是
+  `node scripts/tool-matrix.mjs --write` 的生成物，而校验侧对它做**逐字节**比较。在
+  `core.autocrlf=true` 的 Windows 上，git 会按 CRLF 检出这一文件，于是内容与 blob 完全一致
+  （`git status` 报 ` M`、`git diff` 为空）、门禁却判「生成物与代码不一致」—— 把「检出方式」误判成
+  「生成物落后于代码」。两侧兜底：`.gitattributes` 把 `docs/tool-matrix.md` 与 `docs/tool-matrix.json`
+  钉成 `text eol=lf`（管**新检出**；刻意不用 `-text`，否则在 Windows 上编辑这份文件会把 CRLF 提进 blob），
+  `scripts/tool-matrix.mjs` 读入后先做 CRLF→LF 归一化再比较（管**已有检出**）。这与 `lib/client.js`
+  早先那次假红是同一根因，注释里已经记过一次，这次把同样的两层防线补到了生成物上。
+
+### 变更
+
+- **`version` 字段回到规范 semver。** `package.json` / `package-lock.json` 三处由 `v0.3.19` 改回
+  `0.3.20`：`npm pack` 实测会把该字符串**原样**写进 tarball 名（`dsh-nonead-ursim-v0.3.19.tgz`），
+  说明 npm 不做归一化，发布元数据会跟着变成非规范的 `v…`。git 标签仍是 `v0.3.20` —— `v` 前缀只属于标签。
+
+## [0.3.19] - 2026-11-27
+
+### 变更
+
+- **推进版本线，无行为变化。** 版本由 0.3.18 推进到 0.3.19：工具集（89 个）、受门禁 op（50 个）、
+  peer 范围与客户端产物都与 0.3.18 一致。宿主适配的改动由 0.3.18 的提交承载，该版本正式承接它。
+
 ## [0.3.18] - 2026-11-26
 
 ### 变更
