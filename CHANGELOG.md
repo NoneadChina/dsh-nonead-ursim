@@ -8,6 +8,24 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.3.22] - 2026-11-27
+
+### Fixed
+
+- **Brought the published docs in line with the code shipped as 0.3.21.** The tarball published to npm
+  as `dsh-nonead-ursim@0.3.21` carries `engines.dsh`, `verify:host:legacy` and all of this change set,
+  yet its `CHANGELOG.md` / `CHANGELOG.zh.md` are still the 0.3.20 revision (no `[0.3.21]` entry) and the
+  host support ranges in `README.md` / `README.zh.md` still end at `0.2.2-alpha.3`. Published versions
+  cannot be overwritten, so this release only syncs the docs and changes no code.
+
+### Verified
+
+- `npm run check` exits 0.
+- File-by-file comparison of the published tarball against this repository's HEAD: `package.json`,
+  `lib/index.js`, `lib/client.js`, `lib/tool-defs.js`, `lib/twin-routes.js`, `cordis.patch.yml`,
+  `python/ur_worker.py`, `python/ur_sim.py` all match; the only differences are the four documents
+  ⇒ 0.3.21 carries the same functional content as this release.
+
 ## [0.3.21] - 2026-11-27
 
 ### Added

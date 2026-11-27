@@ -6,6 +6,22 @@
 那份代码库的版本编号。此前那段历史已原样归档到 `CHANGELOG-archive.zh.md`；该文件在准备 0.1.1 时
 **已从本仓库移除**（可从导入源码的那个提交 `4c91704` 取回），并且从未进入过发布包。
 
+## [0.3.22] - 2026-11-27
+
+### 修复
+
+- **补齐 registry 上 0.3.21 缺失的文档。** 已发布的 `dsh-nonead-ursim@0.3.21` 带着 `engines.dsh`、
+  `verify:host:legacy` 与本次全部代码，但包内 `CHANGELOG.md` / `CHANGELOG.zh.md` 仍是 0.3.20 那一版
+  （没有 `[0.3.21]` 条目），`README.md` / `README.zh.md` 的宿主支持范围也还停在 `0.2.2-alpha.3`。
+  npm 上已发布的版本不可覆盖，因此本版只同步文档，不改任何代码。
+
+### 验证
+
+- `npm run check` 退出码 0。
+- 逐文件比对发布包与仓库 HEAD：`package.json`、`lib/index.js`、`lib/client.js`、`lib/tool-defs.js`、
+  `lib/twin-routes.js`、`cordis.patch.yml`、`python/ur_worker.py`、`python/ur_sim.py` 全部一致，
+  差异只落在 4 份文档上 ⇒ 0.3.21 的功能内容与本版相同。
+
 ## [0.3.21] - 2026-11-27
 
 ### 新增
