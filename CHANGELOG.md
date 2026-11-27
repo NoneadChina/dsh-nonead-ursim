@@ -8,6 +8,41 @@ history was archived verbatim to `CHANGELOG-archive.md`; the file was **removed 
 while preparing 0.1.1 (it is recoverable from the commit that imported the source, `4c91704`) and was
 never part of the published tarball.
 
+## [0.3.21] - 2026-11-27
+
+### Added
+
+- **Declared `engines.dsh`, putting the host support window where the new core actually reads it.**
+  The compatibility gate in DSH 0.2.3-alpha.2 checks a plugin's `engines.dsh` **first** and only falls
+  back to per-peer evaluation when that field is absent. The host's own source comment gives the reason:
+  a peers-only gate was too lenient on 62 of 2796 (package, runtime) pairs — `dsh-file-explorer-kit` and
+  `dsh-workspace-kit` declare no dsh peer at all. This plugin previously carried only `engines.node`,
+  which left the window invisible to that gate. `engines.dsh` now mirrors the `@deepseek-ai/dsh` peer
+  range exactly (including `^0.2.3-alpha.2` and the `^0.3.0-0` reservation for the whole 0.3.x line).
+  npm validates only the `node` and `npm` engines, so this declaration is inert for npm installs and for
+  older cores.
+
+### Changed
+
+- **The host self-check now asserts `engines.dsh`, and `npm run verify:host:legacy` was added.**
+  `scripts/check-host-compat.mjs` evaluates the declaration with the same call the host makes
+  (`semver.satisfies(runtimeVersion, range, { includePrerelease: true })`) and fails on a mismatch.
+  `verify:host` still targets the installed host; `verify:host:legacy` runs the same check against the
+  repository's own older dev copy (`dsh` 0.2.0-rc.2 / `cordis` 4.0.4 / `schemastery` 3.18.4), turning
+  backward compatibility from "run by hand twice" into one repeatable command.
+- `test/host-peer-matrix.test.mjs` gained two assertions: the lock root's `engines` must match
+  `package.json`, and `engines.dsh` must cover every supported host version (including every prerelease
+  family) — otherwise that host refuses the plugin.
+
+### Verified
+
+- `npm run verify:host` against the real host (0.2.3-alpha.2 / cordis 4.2.0-alpha.1 /
+  schemastery 3.20.0-alpha.1): peers 4/4, `engines.dsh` PASS, 89/89 tools, 6 routes, client bundle
+  contract PASS.
+- `npm run verify:host:legacy` (0.2.0-rc.2 grammar): green as well, so backward compatibility has
+  measured evidence rather than a claim.
+- `npm run check` exits 0; `test/host-peer-matrix.test.mjs` passes 8/8.
+
 ## [0.3.20] - 2026-11-27
 
 ### Fixed

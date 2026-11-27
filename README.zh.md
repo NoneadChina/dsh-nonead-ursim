@@ -216,6 +216,8 @@ npm run verify:models # 校验 14 个 GLB 的结构契约
 
 受支持的宿主范围 —— 逐条保留、不替换：`dsh` / `dsh-tools` `0.1.2-rc.1` → `0.2.3-alpha.2`（并向 `0.3.x` 全谱系预留 `^0.3.0-0`），`cordis` `4.0.2` → `4.2.0-alpha.1`，`schemastery` `3.18.2` → `3.20.0-alpha.1`。宿主升到新的预发布族时，给 `package.json` 与 `package-lock.json` 根条目的 `peerDependencies` **各补一条该族的比较子**（semver 只放行「范围内存在同 `major.minor.patch` 三元组比较子」的预发布版本），再把版本加进 `test/host-peer-matrix.test.mjs` —— 任何受支持族丢了比较子、或两个文件不一致，它都会失败。
 
+同一份窗口还写在 `engines.dsh` 里，取值与 `@deepseek-ai/dsh` 的 peer 范围**完全一致**。原因是新核心（0.2.3-alpha.2 起）判定插件兼容性时**先读 `engines.dsh`**，只有它未声明才回落到逐个 peer —— 只写 peer 会被这套门禁跳过。改动 peer 范围时必须同步改 `engines.dsh`（`package.json` 与 lock 根条目各一处），`test/host-peer-matrix.test.mjs` 会检查两者一致且覆盖全部受支持宿主版本。想验证“向下兼容”时用 `npm run verify:host:legacy`：它拿仓库自带的旧 dev 副本（`dsh` 0.2.0-rc.2 / `cordis` 4.0.4 / `schemastery` 3.18.4）跑同一条检查。
+
 `npm test` 跑两类东西，两类都必须过：
 
 - **49 个测试文件**（端到端协议自检、审批门禁、仿真路由、客户端状态机、FK、vendored 库回归）。

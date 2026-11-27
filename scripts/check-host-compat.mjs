@@ -299,6 +299,11 @@ for (const name of PEER_PACKAGES) {
   const installed = hostManifest(hostModules, name)
   console.log(`  ${name.padEnd(30)} host ${installed?.version ?? '(未安装)'}  declared ${manifest.peerDependencies?.[name] ?? '(无)'}`)
 }
+/*
+ * `engines.dsh` 是新核心（0.2.3-alpha.2 起）判定插件兼容性的**首选**字段，见下方 1b 的注释。
+ * 这里只把声明的窗口打出来，好让「这台宿主在不在窗口里」一眼可读。
+ */
+console.log(`  engines.dsh${' '.repeat(28)}host ${hostManifest(hostModules, '@deepseek-ai/dsh')?.version ?? '(未安装)'}  declared ${manifest.engines?.dsh ?? '(未声明)'}`)
 console.log('')
 
 // ── 1. peer 范围 ────────────────────────────────────────────────────────────
@@ -321,6 +326,31 @@ else {
     if (semver.satisfies(installed, declared)) pass(`peer ${name}`, `宿主 ${installed} 满足 ${declared}`)
     else fail(`peer ${name}`, `宿主 ${installed} 不满足 ${declared}（预发布范围只匹配自身版本三元组，需为该版本族补一条）`)
   }
+}
+
+// ── 1b. engines.dsh：新核心判定兼容性的首选字段 ───────────────────────────
+/*
+ * 0.2.3-alpha.2 的宿主先读清单的 `engines.dsh`，**只有它未声明**才回落到逐个 peer 判定。
+ * 宿主源码注释给的理由很具体：只读 peer 的门禁在 62/2796 对 (package, runtime) 上过于宽松 ——
+ * `dsh-file-explorer-kit`（engines.dsh `^0.1.1`）与 `dsh-workspace-kit`（`^0.1.2-rc.1`）根本没有
+ * dsh peer，靠 peer 一条都拦不住。于是本插件的支持窗口必须写在 `engines.dsh` 里：不声明＝不设限，
+ * 听起来无害，实则让「拒绝不兼容宿主」这件事在我们身上失效。
+ * 求值参数照抄宿主：semver.satisfies(runtimeVersion, range, { includePrerelease: true })。
+ */
+const engineRange = manifest.engines?.dsh
+const runtimeVersion = hostManifest(hostModules, '@deepseek-ai/dsh')?.version
+if (engineRange === undefined) {
+  fail('engines.dsh', '未声明 —— 新核心先读它、之后才看 peer，缺了等于把支持窗口漏在门禁外')
+} else if (typeof engineRange !== 'string' || engineRange.trim() === '') {
+  fail('engines.dsh', `必须是字符串范围（实际 ${JSON.stringify(engineRange)}）`)
+} else if (semver === undefined) {
+  note(`宿主未提供 semver，跳过 engines.dsh 求值（declared ${engineRange}）`)
+} else if (runtimeVersion === undefined) {
+  fail('engines.dsh', '宿主未安装 @deepseek-ai/dsh，无法评估运行时版本')
+} else if (semver.satisfies(runtimeVersion, engineRange, { includePrerelease: true })) {
+  pass('engines.dsh', `宿主 ${runtimeVersion} 在声明窗口内`)
+} else {
+  fail('engines.dsh', `宿主 ${runtimeVersion} 不满足 ${engineRange}（新核心会拒绝加载本插件）`)
 }
 
 // ── 2/3. 用宿主真实的编译器驱动插件 ────────────────────────────────────────

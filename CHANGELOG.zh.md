@@ -6,6 +6,34 @@
 那份代码库的版本编号。此前那段历史已原样归档到 `CHANGELOG-archive.zh.md`；该文件在准备 0.1.1 时
 **已从本仓库移除**（可从导入源码的那个提交 `4c91704` 取回），并且从未进入过发布包。
 
+## [0.3.21] - 2026-11-27
+
+### 新增
+
+- **声明 `engines.dsh`，把宿主支持窗口写到新核心真正读取的位置。** DSH 0.2.3-alpha.2 的兼容门禁
+  **先读插件清单的 `engines.dsh`**，只有它未声明才回落到逐个 peer 判定（宿主源码注释给了具体理由：
+  只读 peer 的判定在 62/2796 对 (package, runtime) 上过于宽松 —— `dsh-file-explorer-kit`、
+  `dsh-workspace-kit` 根本没有 dsh peer）。本插件此前只有 `engines.node`，等于把窗口漏在门禁之外；
+  现在 `engines.dsh` 与 `@deepseek-ai/dsh` 的 peer 范围完全一致（含 `^0.2.3-alpha.2`，并向 0.3.x
+  全谱系预留 `^0.3.0-0`）。npm 只校验 `node` / `npm` 两个 engine，因此这条声明对 npm 安装与旧核心都无副作用。
+
+### 变更
+
+- **宿主自检增加 `engines.dsh` 断言，并新增 `npm run verify:host:legacy`。**
+  `scripts/check-host-compat.mjs` 现在按宿主同样的参数（`semver.satisfies(运行时版本, 范围,
+  { includePrerelease: true })`）评估这条声明，不一致直接 FAIL。`verify:host` 仍针对已安装宿主，
+  `verify:host:legacy` 用仓库自带的旧 dev 副本（`dsh` 0.2.0-rc.2 / `cordis` 4.0.4 /
+  `schemastery` 3.18.4）跑同一条检查 —— 向下兼容从「手工跑过两次」变成一条可复跑的命令。
+- `test/host-peer-matrix.test.mjs` 增加两条断言：lock 根条目的 `engines` 必须与 `package.json` 一致；
+  `engines.dsh` 必须覆盖全部受支持宿主版本（含全部预发布族），否则该宿主上插件会被拒载。
+
+### 验证
+
+- `npm run verify:host`（真宿主 0.2.3-alpha.2 / cordis 4.2.0-alpha.1 / schemastery 3.20.0-alpha.1）：
+  peer 4/4、`engines.dsh` PASS、89/89 工具、6 条路由、客户端 bundle 契约 PASS。
+- `npm run verify:host:legacy`（0.2.0-rc.2 旧 DSL）：同样全绿 ⇒ 向下兼容有实测证据，不只是声明。
+- `npm run check` 退出码 0；`test/host-peer-matrix.test.mjs` 8/8 通过。
+
 ## [0.3.20] - 2026-11-27
 
 ### 修复

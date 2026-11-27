@@ -132,6 +132,34 @@ for (const [name, versions] of Object.entries(SUPPORTED_HOST_VERSIONS)) {
   })
 }
 
+test('package-lock.json 根条目的 engines 与 package.json 完全一致', () => {
+  assert.deepEqual(
+    lock.packages?.['']?.engines,
+    manifest.engines,
+    'engines 只改一处：CI 用 npm ci，lock 根条目才是安装期生效的那份',
+  )
+})
+
+// engines.dsh 是新核心（0.2.3-alpha.2 起）判定插件兼容性的**首选**字段：宿主先读它，
+// 只有它未声明才回落到逐个 peer。因此它必须覆盖 peer 声明的**整个**窗口，
+// 否则一台 peer 会放行的宿主会被 engines 门禁直接拒掉。
+test('engines.dsh 覆盖全部受支持宿主版本（新核心的首选门禁）', (t) => {
+  const range = manifest.engines?.dsh
+  assert.equal(typeof range, 'string', 'package.json 必须声明 engines.dsh：新核心先读它、之后才看 peer')
+  assert.ok(range.trim() !== '', 'engines.dsh 不能是空串（宿主把空串判为不满足）')
+  if (semver === undefined) {
+    t.diagnostic('仓库里没有 semver，跳过 engines.dsh 的真实求值')
+    return
+  }
+  for (const version of SUPPORTED_HOST_VERSIONS['@deepseek-ai/dsh']) {
+    assert.equal(
+      semver.satisfies(version, range, { includePrerelease: true }),
+      true,
+      `engines.dsh 覆盖不到 ${version}：${range}（该宿主上插件会被拒载）`,
+    )
+  }
+})
+
 test('semver 可用时对每个受支持宿主版本做真实 satisfies', (t) => {
   if (semver === undefined) {
     // 不静默通过：明确说明这一层没跑，且上面的比较子断言已经覆盖了预发布放行条件。
