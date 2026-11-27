@@ -8,3 +8,11 @@
 # 这里禁止 git 对这一个文件做行尾转换，任何机器上检出/回读的字节都与 blob 一致。
 # 门禁那一侧同时也做了 CRLF→LF 归一化，两边互为兜底：属性管"新检出"，归一化管"已有检出"。
 lib/client.js -text
+
+# 同类问题（2026-11-27 实测）：`docs/tool-matrix.*` 是 `scripts/tool-matrix.mjs --write` 的生成物，
+# 校验侧对 `docs/tool-matrix.md` 做逐字节比较。它在 autocrlf=true 的 Windows 上被按 CRLF 检出后，
+# 内容与 blob 完全一致（git diff 为空）却让门禁假红。这里钉死为 LF 检出，门禁侧同时做 CRLF→LF 归一化：
+# 属性管"新检出"，归一化管"已有检出"。注意用 `text eol=lf` 而不是 `-text`——生成物永远是 LF，
+# 让 blob 也保持 LF，杜绝"Windows 上改了这份文件就把 CRLF 提进仓库"。
+docs/tool-matrix.md text eol=lf
+docs/tool-matrix.json text eol=lf

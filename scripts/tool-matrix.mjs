@@ -212,7 +212,11 @@ function verify() {
   //    而 md 的页眉又写着"由本脚本校验" —— 那是一句没有实现的承诺。
   let docActual = null;
   try {
-    docActual = readFileSync(DOC, 'utf8');
+    // CRLF→LF 归一化：`core.autocrlf=true` 的 Windows 检出会把这份生成物写成 CRLF，
+    // 而 renderDoc() 产出的是 LF。不归一化就会把"检出方式"误判成"生成物落后于代码"
+    // （与 lib/client.js 假红同一类根因；那边是属性 -text + 门禁归一化两层兜底）。
+    // 属性侧另有 `docs/tool-matrix.md text eol=lf` 管"新检出"，这里管"已有检出"。
+    docActual = readFileSync(DOC, 'utf8').replace(/\r\n/g, '\n');
   } catch {
     // 缺失按"不一致"处理，错误信息里会给出重新生成的命令。
   }
